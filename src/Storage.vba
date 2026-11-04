@@ -1,0 +1,496 @@
+Option Explicit
+Option Private Module
+
+Public Function IsWebAddress(ByVal address As String) As Boolean
+    IsWebAddress = (LCase$(Left$(address, 8)) = "https://")
+End Function
+
+Public Function OpenLedger(ByVal address As String, ByVal readOnly As Boolean, ByRef message As String) As Workbook
+    Dim candidate As Workbook
+    Dim book As Workbook
+    Dim fileName As String
+    Dim normalized As String
+    Dim security As Long
+    Dim events As Boolean
+    Dim acquired As Boolean
+    Dim state As Object
+    Set state = FileState(address, message)
+    If state Is Nothing Then Exit Function
+    If Not state("Exists") Then
+        message = "ファイルが存在しません。保存先と移動状態を確認してください。保存は実行していません。"
+        Exit Function
+    End If
+    normalized = Replace(address, "\", "/")
+    fileName = Mid$(normalized, InStrRev(normalized, "/") + 1)
+    For Each candidate In Application.Workbooks
+        If StrComp(candidate.FullName, address, vbTextCompare) = 0 Or StrComp(candidate.Name, fileName, vbTextCompare) = 0 Then
+            message = "対象または同名の管理簿が既に開いています。閉じてから操作してください。保存は実行していません。"
+            Exit Function
+        End If
+    Next
+    security = Application.AutomationSecurity
+    events = Application.EnableEvents
+    On Error GoTo Failed
+    If Not readOnly And IsWebAddress(address) Then
+        message = "SharePointの排他取得不可：必須チェックアウト運用を管理担当が確認し、SharePointExclusive=Yesに設定してください。保存は実行していません。"
+        If Setting("SharePointExclusive") <> "Yes" Then Exit Function
+        If Not Application.Workbooks.CanCheckOut(address) Then
+            message = "SharePointの排他取得不可：他の利用者のチェックアウト、権限、認証を確認してください。保存は実行していません。"
+            Exit Function
+        End If
+        Application.Workbooks.CheckOut address
+        acquired = True
+    End If
+    Application.AutomationSecurity = 3
+    Application.EnableEvents = False
+    Set book = Application.Workbooks.Open(Filename:=address, UpdateLinks:=0, ReadOnly:=readOnly, _
+        Notify:=False, AddToMru:=False, IgnoreReadOnlyRecommended:=True)
+    Application.AutomationSecurity = security
+    Application.EnableEvents = events
+    If book.Date1904 Then
+        message = "1904年日付システムの管理簿は対応対象外です。日付を変更せず管理担当へ確認してください。"
+        GoTo Rejected
+    End If
+    If Not readOnly Then
+        If book.ReadOnly Then
+            message = "読み取り専用：編集権限、他の利用者の使用状況を確認してください。保存は実行していません。"
+            GoTo Rejected
+        End If
+        If IsWebAddress(address) Then
+            If Not book.CanCheckIn Then
+                message = "SharePointのチェックアウト所有を確認できません。保存は実行していません。"
+                GoTo Rejected
+            End If
+            CallByName book, "AutoSaveOn", VbLet, False
+            If CBool(CallByName(book, "AutoSaveOn", VbGet)) Then
+                message = "自動保存を停止できません。保存は実行していません。"
+                GoTo Rejected
+            End If
+        End If
+    End If
+    message = ""
+    Set OpenLedger = book
+    Exit Function
+Rejected:
+    If acquired And book.CanCheckIn Then
+        book.CheckIn SaveChanges:=False
+    Else
+        book.Close SaveChanges:=False
+    End If
+    Exit Function
+Failed:
+    message = "Excelで管理簿を開く処理または排他制御に失敗しました。エラー番号 " & Err.Number & "。保存は実行していません。"
+    If acquired Then message = message & " 本人のチェックアウトが残っていないか管理担当へ確認してください。"
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    Application.AutomationSecurity = security
+    Application.EnableEvents = events
+    On Error GoTo 0
+End Function
+
+Public Function ReadYear(ByVal year As String, ByRef message As String) As Object
+    Dim definition As Variant
+    Dim book As Workbook
+    Dim ws As Worksheet
+    Dim columns As Object
+    Dim result As Object
+    Dim data As Variant
+    Dim formulas As Variant
+    Dim rowIndex As Long
+    Dim record As CaseRecord
+    Dim key As String
+    Dim stage As String
+    Dim candidate As Worksheet
+    Dim sheetNames As String
+    Dim errorNumber As Long
+    On Error GoTo Failed
+    stage = "年度設定の取得"
+    definition = years(year)
+    stage = "常勤用・非常勤用の所在確認"
+    definition(0) = ResolveYearAddress(year, message)
+    If Len(message) > 0 Then Exit Function
+    years(year) = definition
+    stage = "管理簿を開く"
+    Set book = OpenLedger(definition(0), True, message)
+    If book Is Nothing Then Exit Function
+    stage = "管理簿内のシートを特定"
+    For Each candidate In book.Worksheets
+        If Len(sheetNames) > 0 Then sheetNames = sheetNames & "、"
+        sheetNames = sheetNames & "「" & candidate.Name & "」"
+        If StrComp(candidate.Name, CStr(definition(1)), vbTextCompare) = 0 Then Set ws = candidate
+    Next
+    If ws Is Nothing Then
+        message = year & "年度：管理簿「" & book.Name & "」に、SettingsのF列で指定したシート「" & _
+            CStr(definition(1)) & "」がありません。実在するシートは " & sheetNames & _
+            " です。この年度のF列を実際のシート名に直してください。管理簿は変更していません。"
+        GoTo Rejected
+    End If
+    stage = "管理簿1行目とFieldsの見出し照合"
+    Set columns = ColumnMap(ws, year, message)
+    If columns Is Nothing Then GoTo Rejected
+    stage = "管理簿の値と数式を配列へ取得"
+    data = ws.Range(ws.Cells(1, 1), ws.Cells(LastRow(ws), LastColumn(ws))).Value2
+    formulas = ws.Range(ws.Cells(1, 1), ws.Cells(LastRow(ws), LastColumn(ws))).Formula
+    Set result = NewDictionary()
+    For rowIndex = 2 To UBound(data, 1)
+        stage = "管理簿の行" & CStr(rowIndex) & "を事案へ変換"
+        If HasRecordData(data, rowIndex, columns) Then
+            Set record = ReadRecord(data, formulas, rowIndex, columns, year, definition)
+            key = record.Key
+            If result.Exists(key) Then
+                result(key).invalidReason = "同一年度の識別キー重複。更新禁止。"
+                record.invalidReason = "同一年度の識別キー重複。更新禁止。"
+                key = year & "|DuplicateRow|" & rowIndex
+            End If
+            result.Add key, record
+        End If
+    Next
+    book.Close SaveChanges:=False
+    Set ReadYear = result
+    Exit Function
+Rejected:
+    book.Close SaveChanges:=False
+    Exit Function
+Failed:
+    errorNumber = Err.Number
+    message = year & "年度の読込を中止しました。処理段階：" & stage & "。エラー番号 " & CStr(errorNumber) & _
+        "。この処理段階と番号を確認してください。管理簿への保存は実行していません。"
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    On Error GoTo 0
+End Function
+
+Private Function HasRecordData(ByRef data As Variant, ByVal rowIndex As Long, ByVal columns As Object) As Boolean
+    Dim id As Variant
+    For Each id In columns.Keys
+        If IsError(data(rowIndex, columns(id))) Then
+            HasRecordData = True
+            Exit Function
+        End If
+        If Len(CStr(data(rowIndex, columns(id)))) > 0 Then
+            HasRecordData = True
+            Exit Function
+        End If
+    Next
+End Function
+
+Private Function ReadRecord(ByRef data As Variant, ByRef formulas As Variant, ByVal rowIndex As Long, _
+    ByVal columns As Object, ByVal year As String, ByVal definition As Variant) As CaseRecord
+    Dim record As New CaseRecord
+    Dim id As Variant
+    Dim colIndex As Long
+    Dim original() As Variant
+    Dim normalized As Variant
+    record.sourceYear = year
+    record.sourceAddress = definition(0)
+    record.sourceSheet = definition(1)
+    record.sourceRow = rowIndex
+    Set record.sourceColumns = columns
+    ReDim original(1 To 1, 1 To UBound(data, 2))
+    For colIndex = 1 To UBound(data, 2)
+        original(1, colIndex) = formulas(rowIndex, colIndex)
+    Next
+    record.originalRow = original
+    For Each id In fields.Keys
+        record.values.Add id, ""
+        If columns.Exists(id) Then
+            If IsError(data(rowIndex, columns(id))) Then
+                record.invalidReason = "行" & rowIndex & "：" & CStr(id) & "がExcelエラーです。更新禁止。"
+            Else
+                record.values(id) = data(rowIndex, columns(id))
+                If Not NormalizeValue(CStr(id), record.values(id), normalized) Then
+                    record.invalidReason = "行" & rowIndex & "：" & CStr(id) & "の保存型が不正です。更新禁止。"
+                End If
+            End If
+        End If
+    Next
+    If Len(record.PersonKey) = 0 Then record.invalidReason = "行" & rowIndex & "：番号形式を復元できません。移行確認が必要です。更新・番号コピー禁止。"
+    Set ReadRecord = record
+End Function
+
+Private Function LocateRow(ByVal ws As Worksheet, ByVal personKey As String, ByVal isNew As Boolean, ByRef message As String) As Long
+    Dim data As Variant
+    Dim rowIndex As Long
+    Dim number As String
+    Dim count As Long
+    data = ws.Range(ws.Cells(1, 1), ws.Cells(LastRow(ws), 2)).Value2
+    For rowIndex = 2 To UBound(data, 1)
+        If Not IsError(data(rowIndex, 1)) And Not IsError(data(rowIndex, 2)) Then
+            If Len(CStr(data(rowIndex, 1))) > 0 Or Len(CStr(data(rowIndex, 2))) > 0 Then
+                If RestoreNumber(data(rowIndex, 1), number) And IsDigits(data(rowIndex, 2), 5) Then
+                    If number & CStr(data(rowIndex, 2)) = personKey Then
+                        count = count + 1
+                        LocateRow = rowIndex
+                    End If
+                ElseIf isNew Then
+                    message = "番号形式が不明な行があり、重複を否定できません。新規登録を中止します。移行確認が必要です。"
+                    Exit Function
+                End If
+            End If
+        ElseIf isNew Then
+            message = "番号にExcelエラーがあり重複確認できません。新規登録を中止します。"
+            Exit Function
+        End If
+    Next
+    If count > 1 Then message = "同一年度の識別キーが重複しています。対象行を推測せず保存を中止します。"
+End Function
+
+Public Function SaveCase(ByVal record As CaseRecord, ByVal values As Object, ByVal isNew As Boolean, ByRef message As String) As Boolean
+    Dim book As Workbook
+    Dim ws As Worksheet
+    Dim columns As Object
+    Dim definition As Variant
+    Dim rowIndex As Long
+    Dim id As Variant
+    Dim latest As Variant
+    Dim colIndex As Long
+    Dim changed As Object
+    Dim number As String
+    Dim personKey As String
+    Dim writeStarted As Boolean
+    Dim events As Boolean
+    Dim original As Variant
+    events = Application.EnableEvents
+    On Error GoTo Failed
+    If PendingSave() Then
+        message = "前回の保存結果が未確認です。『保存結果を確認』で照合してください。自動再送は行いません。"
+        Exit Function
+    End If
+    If Len(CStr(Sheet("MoveRecovery").Range("B1").Value2)) > 0 Then
+        message = "管理簿移動の結果が未確認です。常勤の管理担当が移動結果を確認するまで保存を中止します。"
+        Exit Function
+    End If
+    If Not ValidateValues(values, message) Then Exit Function
+    If Not years.Exists(record.sourceYear) Then
+        message = "有効な保存先年度がありません。Settingsを確認してください。保存は実行していません。"
+        Exit Function
+    End If
+    If yearErrors.Exists(record.sourceYear) Then
+        message = "この年度は読込に失敗しています。設定を修正し、最新を再読込してください。保存は実行していません。"
+        Exit Function
+    End If
+    definition = years(record.sourceYear)
+    If definition(2) <> "Yes" Then
+        message = "この年度のAllowWriteはYesではありません。保存は実行していません。"
+        Exit Function
+    End If
+    If Setting("ControllerRole") <> "Staff" And Setting("ControllerRole") <> "General" Then
+        message = "この役割には保存操作が許可されていません。運用責任者がSettingsを確認してください。"
+        Exit Function
+    End If
+    definition(0) = ResolveYearAddress(record.sourceYear, message)
+    If Len(message) > 0 Then Exit Function
+    years(record.sourceYear) = definition
+    If Not isNew Then
+        If Len(record.invalidReason) > 0 Then
+            message = record.invalidReason
+            Exit Function
+        End If
+        If record.sourceAddress <> definition(0) Or record.sourceSheet <> definition(1) Then
+            message = "保存先設定が読込時から変わっています。最新を再読込してください。保存は実行していません。"
+            Exit Function
+        End If
+        If Not SameValue(record.values("MaskedNumber"), values("MaskedNumber")) Or Not SameValue(record.values("Branch"), values("Branch")) Then
+            message = "既存事案の番号・枝番は通常更新では変更できません。保存は実行していません。"
+            Exit Function
+        End If
+    End If
+    If Not RestoreNumber(values("MaskedNumber"), number) Then Exit Function
+    personKey = number & values("Branch")
+    Set book = OpenLedger(definition(0), False, message)
+    If book Is Nothing Then Exit Function
+    Set ws = book.Worksheets(definition(1))
+    Set columns = ColumnMap(ws, record.sourceYear, message)
+    If columns Is Nothing Then GoTo Rejected
+    rowIndex = LocateRow(ws, personKey, isNew, message)
+    If Len(message) > 0 Then GoTo Rejected
+    If isNew Then
+        If rowIndex <> 0 Then
+            message = "同一年度に同じ識別キーが存在します。新規登録を中止しました。"
+            GoTo Rejected
+        End If
+        rowIndex = LastRow(ws) + 1
+    Else
+        If columns.Count <> record.sourceColumns.Count Then
+            message = "項目構成が読込時から変更されています。最新を再読込してください。更新は実行していません。"
+            GoTo Rejected
+        End If
+        For Each id In columns.Keys
+            If Not record.sourceColumns.Exists(id) Then
+                message = "項目構成が変更されています。最新を再読込してください。"
+                GoTo Rejected
+            End If
+            If columns(id) <> record.sourceColumns(id) Then
+                message = "管理簿の列順または見出し対応が変更されています。最新を再読込してください。"
+                GoTo Rejected
+            End If
+        Next
+        If rowIndex = 0 Then
+            message = "対象事案が管理簿にありません。最新を再読込してください。更新は実行していません。"
+            GoTo Rejected
+        End If
+        latest = ws.Range(ws.Cells(rowIndex, 1), ws.Cells(rowIndex, LastColumn(ws))).Formula
+        original = record.originalRow
+        If UBound(latest, 2) <> UBound(original, 2) Then
+            message = "管理簿の列構成が変更されています。最新を再読込してください。更新は実行していません。"
+            GoTo Rejected
+        End If
+        For colIndex = 1 To UBound(latest, 2)
+            If Not SameValue(latest(1, colIndex), original(1, colIndex)) Then
+                message = "他の職員による変更または行の内容変更を検出しました。上書きせず更新を中止しました。編集内容を控えて最新を再読込してください。"
+                GoTo Rejected
+            End If
+        Next
+    End If
+    Set changed = NewDictionary()
+    For Each id In fields.Keys
+        If Not columns.Exists(id) Then
+            If Len(CStr(values(id))) > 0 Then
+                message = "この年度に存在しない項目へ入力されています。" & CStr(id) & "。保存は実行していません。"
+                GoTo Rejected
+            End If
+        ElseIf isNew Then
+            changed.Add id, values(id)
+        ElseIf Not SameValue(values(id), record.values(id)) Then
+            changed.Add id, values(id)
+        End If
+    Next
+    If changed.Count = 0 Then
+        message = "変更はありません。書込みは実行していません。"
+        GoTo Rejected
+    End If
+    For Each id In changed.Keys
+        If ws.Cells(rowIndex, columns(id)).HasFormula Then
+            message = "変更対象の" & CStr(id) & "に数式があります。数式を保護して保存を中止しました。"
+            GoTo Rejected
+        End If
+    Next
+    If Not PrepareJournal(record.sourceYear, definition, values, message) Then GoTo Rejected
+    Application.EnableEvents = False
+    writeStarted = True
+    '非管理列・数式を保護するため、登録時も定義済み列だけに書く。
+    For Each id In changed.Keys
+        PutValue ws.Cells(rowIndex, columns(id)), changed(id), (fields(id)(1) = "Date")
+    Next
+    book.Save
+    If Not book.Saved Then Err.Raise vbObjectError + 100, "Storage", "Save not confirmed"
+    If IsWebAddress(definition(0)) Then
+        book.CheckIn SaveChanges:=True
+    Else
+        book.Close SaveChanges:=False
+    End If
+    Set book = Nothing
+    Application.EnableEvents = events
+    SaveCase = ReconcileSave(message)
+    Exit Function
+Rejected:
+    If IsWebAddress(definition(0)) And book.CanCheckIn Then
+        book.CheckIn SaveChanges:=False
+    Else
+        book.Close SaveChanges:=False
+    End If
+    Exit Function
+Failed:
+    If writeStarted Then
+        message = "保存結果不明です。入力とRecoveryを保持しています。再保存せず『保存結果を確認』を実行してください。"
+        If IsWebAddress(record.sourceAddress) Then message = message & " チェックアウトが残る場合は管理担当へ確認してください。"
+    Else
+        message = SafeFailure(record.sourceYear & "年度の保存準備", Err.Number) & " 管理簿への書込みは開始していません。"
+    End If
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    Application.EnableEvents = events
+    On Error GoTo 0
+End Function
+
+Private Function PrepareJournal(ByVal year As String, ByVal definition As Variant, ByVal values As Object, ByRef message As String) As Boolean
+    Dim ws As Worksheet
+    Dim id As Variant
+    Dim rowIndex As Long
+    On Error GoTo Failed
+    If ThisWorkbook.ReadOnly Or Len(ThisWorkbook.Path) = 0 Or ThisWorkbook.FileFormat <> 52 Then
+        message = "CONTROLLERを保存可能なxlsmとして保存してください。管理簿への書込みは実行していません。"
+        Exit Function
+    End If
+    Set ws = Sheet("Recovery")
+    ws.Cells.ClearContents
+    PutValue ws.Range("B1"), "結果確認待ち"
+    PutValue ws.Range("B2"), year
+    PutValue ws.Range("B3"), definition(0)
+    PutValue ws.Range("B4"), definition(1)
+    rowIndex = 6
+    For Each id In values.Keys
+        PutValue ws.Cells(rowIndex, 1), CStr(id)
+        PutValue ws.Cells(rowIndex, 2), values(id), (fields(id)(1) = "Date")
+        rowIndex = rowIndex + 1
+    Next
+    ThisWorkbook.Save
+    If Not ThisWorkbook.Saved Then GoTo Failed
+    PrepareJournal = True
+    Exit Function
+Failed:
+    message = "保存予定内容をCONTROLLER内へ退避できません。管理簿への書込みは実行していません。Recoveryが残る場合は確認してください。"
+End Function
+
+Public Function ReconcileSave(ByRef message As String) As Boolean
+    Dim recovery As Worksheet
+    Dim book As Workbook
+    Dim ws As Worksheet
+    Dim columns As Object
+    Dim expected As Object
+    Dim rowIndex As Long
+    Dim index As Long
+    Dim number As String
+    Dim year As String
+    Dim id As Variant
+    Dim definition As Variant
+    On Error GoTo Failed
+    If Not PendingSave() Then
+        message = "照合待ちの保存はありません。"
+        Exit Function
+    End If
+    Set recovery = Sheet("Recovery")
+    year = CStr(recovery.Range("B2").Value2)
+    If Not years.Exists(year) Then GoTo Unconfirmed
+    definition = years(year)
+    If definition(0) <> CStr(recovery.Range("B3").Value2) Or definition(1) <> CStr(recovery.Range("B4").Value2) Then GoTo Unconfirmed
+    Set expected = NewDictionary()
+    For index = 6 To LastRow(recovery)
+        id = CStr(recovery.Cells(index, 1).Value2)
+        If Len(id) > 0 Then expected.Add id, recovery.Cells(index, 2).Value2
+    Next
+    If Not RestoreNumber(expected("MaskedNumber"), number) Then GoTo Unconfirmed
+    Set book = OpenLedger(definition(0), True, message)
+    If book Is Nothing Then GoTo Unconfirmed
+    Set ws = book.Worksheets(definition(1))
+    Set columns = ColumnMap(ws, year, message)
+    If columns Is Nothing Then GoTo Unconfirmed
+    rowIndex = LocateRow(ws, number & expected("Branch"), False, message)
+    If rowIndex = 0 Or Len(message) > 0 Then GoTo Unconfirmed
+    For Each id In expected.Keys
+        If columns.Exists(id) Then
+            If Not SameValue(ws.Cells(rowIndex, columns(id)).Value2, expected(id)) Then GoTo Unconfirmed
+        ElseIf Len(CStr(expected(id))) > 0 Then
+            GoTo Unconfirmed
+        End If
+    Next
+    book.Close SaveChanges:=False
+    Set book = Nothing
+    recovery.Range("B1").ClearContents
+    ThisWorkbook.Save
+    If Not ThisWorkbook.Saved Then GoTo Unconfirmed
+    message = "保存確認済み：管理簿を開き直して保存予定の全項目との一致を確認しました。"
+    ReconcileSave = True
+    Exit Function
+Unconfirmed:
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    PutValue recovery.Range("B1"), "結果確認待ち"
+    message = "保存結果を確認できません。Recoveryと入力を保持し、再送を禁止しています。管理担当が管理簿・チェックアウト・保存予定内容を照合してください。" & vbCrLf & message
+    Exit Function
+Failed:
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    PutValue Sheet("Recovery").Range("B1"), "結果確認待ち"
+    On Error GoTo 0
+    message = "保存結果照合に失敗しました。再保存せず管理担当へ確認してください。Recoveryと入力は保持しています。"
+End Function
