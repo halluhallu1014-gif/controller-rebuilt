@@ -1,0 +1,147 @@
+Option Explicit
+
+Private Const CHOICE_MAX_ROW As Long = 501
+
+Private Function ChoiceColumn(ByVal id As String) As Long
+    Select Case id
+        Case "DocumentName": ChoiceColumn = 16
+        Case "TaxType": ChoiceColumn = 17
+        Case "Status": ChoiceColumn = 18
+    End Select
+End Function
+
+Private Function ChoiceList(ByVal id As String) As Object
+    Set ChoiceList = ConfiguredList(ChoiceColumn(id))
+End Function
+
+Public Function ValidatePresentation(ByRef message As String) As Boolean
+    Dim id As Variant
+    Dim row As Long
+    Dim column As Long
+    Dim ws As Worksheet
+    Dim fieldType As String
+    Dim preset As String
+    Dim value As String
+    Dim seen As Object
+    Dim blankSeen As Boolean
+    Set ws = Sheet("Settings")
+    For Each id In Array("DocumentName", "TaxType", "Status")
+        column = ChoiceColumn(CStr(id))
+        Set seen = NewDictionary()
+        seen.CompareMode = vbTextCompare
+        blankSeen = False
+        message = CStr(ws.Cells(1, column).Value2) & "の選択肢に重複、空き行、または上限超過があります。"
+        If ws.Cells(ws.Rows.Count, column).End(xlUp).Row > CHOICE_MAX_ROW Then Exit Function
+        For row = 2 To ws.Cells(ws.Rows.Count, column).End(xlUp).Row
+            If IsError(ws.Cells(row, column).Value2) Or ws.Cells(row, column).HasFormula Then Exit Function
+            value = Trim$(CStr(ws.Cells(row, column).Value2))
+            If Len(value) = 0 Then
+                blankSeen = True
+            Else
+                If blankSeen Or seen.Exists(value) Or Len(value) > 255 Then Exit Function
+                seen.Add value, True
+            End If
+        Next
+    Next
+    Set ws = Sheet("Fields")
+    For row = 2 To LastRow(ws)
+        id = CStr(ws.Cells(row, 1).Value2)
+        fieldType = CStr(ws.Cells(row, 3).Value2)
+        preset = CStr(ws.Cells(row, 11).Value2)
+        message = "Fields 行" & row & "：表示形式の指定が項目の保存型に適合しません。"
+        If ws.Cells(row, 11).HasFormula Then Exit Function
+        Select Case preset
+            Case ""
+            Case "text"
+                If fieldType <> "Text" Then Exit Function
+            Case "dateSlash", "dateDash", "dateJapanese"
+                If fieldType <> "Date" Then Exit Function
+            Case "digits"
+                If id <> "PostalCode" And id <> "PhoneNumber" Then Exit Function
+            Case "year4", "integer"
+                If id <> "TaxYear" Or fieldType <> "Text" Then Exit Function
+            Case Else
+                Exit Function
+        End Select
+    Next
+    message = ""
+    ValidatePresentation = True
+End Function
+
+Private Function FieldPreset(ByVal id As String) As String
+    FieldPreset = fields(id)(5)
+End Function
+
+Public Function DetailValue(ByVal id As String, ByVal raw As Variant) As Variant
+    Dim preset As String
+    Dim value As String
+    preset = FieldPreset(id)
+    DetailValue = DisplayValue(id, raw)
+    Select Case preset
+        Case "digits": DetailValue = Replace(CStr(raw), "-", "")
+        Case "year4", "integer"
+            value = CStr(raw)
+            If Len(value) > 0 And Len(value) <= 4 Then
+                If IsDigits(value, Len(value)) Then
+                    If preset = "year4" Then
+                        DetailValue = Right$("0000" & value, 4)
+                    Else
+                        DetailValue = CStr(CLng(value))
+                    End If
+                End If
+            End If
+    End Select
+End Function
+
+Public Sub ApplyDetailFormat(ByVal id As String, ByVal target As Range, ByVal enabled As Boolean)
+    Select Case FieldPreset(id)
+        Case "dateDash": target.NumberFormat = "yyyy-mm-dd"
+        Case "dateJapanese": target.NumberFormat = "yyyy""年""m""月""d""日"""
+    End Select
+    If ChoiceColumn(id) = 0 Then Exit Sub
+    With target.Validation
+        .Delete
+        If enabled Then
+            .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, Formula1:="=ControllerChoice" & id
+            .InCellDropdown = True
+            .IgnoreBlank = False
+            .ShowError = (ChoiceList(id).Count > 0)
+            .ErrorTitle = "選択肢を確認"
+            .ErrorMessage = "設定された候補から選んでください。既存の値はそのまま保存できます。"
+        End If
+    End With
+End Sub
+
+Public Function ValidateDetailChoices(ByVal values As Object, ByVal record As CaseRecord, ByRef message As String) As Boolean
+    Dim id As Variant
+    Dim choices As Object
+    Dim value As String
+    Dim wasChanged As Boolean
+    For Each id In Array("DocumentName", "TaxType", "Status")
+        If values.Exists(id) Then
+            value = CStr(values(id))
+            wasChanged = True
+            If Not record Is Nothing Then wasChanged = Not SameValue(value, record.values(id))
+            If wasChanged And Len(value) > 0 Then
+                Set choices = ChoiceList(CStr(id))
+                If choices.Count > 0 And Not choices.Exists(value) Then
+                    message = CStr(Sheet("Settings").Cells(1, ChoiceColumn(CStr(id))).Value2) & "は選択肢から選んでください。"
+                    Exit Function
+                End If
+            End If
+        End If
+    Next
+    ValidateDetailChoices = True
+End Function
+
+Public Function DetailFieldAvailable(ByVal id As String, ByVal year As String, ByVal record As CaseRecord, ByRef message As String) As Boolean
+    If Not record Is Nothing Then
+        DetailFieldAvailable = record.sourceColumns.Exists(id)
+    ElseIf Len(year) = 0 Then
+        DetailFieldAvailable = (fields(id)(0) <> "[Absent]")
+    ElseIf Not yearColumnMaps Is Nothing Then
+        If yearColumnMaps.Exists(year) Then DetailFieldAvailable = yearColumnMaps(year).Exists(id)
+    Else
+        DetailFieldAvailable = HeaderFor(id, year, message) <> "[Absent]"
+    End If
+End Function

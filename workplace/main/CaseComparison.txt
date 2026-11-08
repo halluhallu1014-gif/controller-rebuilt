@@ -1,0 +1,457 @@
+Option Explicit
+
+
+Private reportLinks As Object
+Private reportMatches As Object
+
+Public Sub OpenComparison()
+    Dim message As String
+    Dim external As Collection
+    Dim rules As Object
+    Dim leftIndex As Object
+    Dim rightIndex As Object
+    Dim rightMatches As Collection
+    Dim report As Worksheet
+    Dim caseKey As Variant
+    Dim fieldId As Variant
+    Dim source As CaseRecord
+    Dim target As CaseRecord
+    Dim row As Long
+    Dim matchKey As String
+    Dim status As String
+    Dim value As Variant
+    If Cases Is Nothing Then
+        Notify "先に管理簿を読み込んでください。"
+        Exit Sub
+    End If
+    On Error GoTo Failed
+    Set rules = ComparisonRules(message)
+    If rules Is Nothing Then GoTo Finished
+    Set external = ReadComparison(rules, message)
+    If external Is Nothing Then GoTo Finished
+    Set rightIndex = ComparisonIndex(external, rules, False)
+    Set leftIndex = ComparisonIndex(Cases.Items, rules, True)
+    Set reportLinks = NewDictionary()
+    Set reportMatches = NewDictionary()
+    Set report = Sheet("CompareResults")
+    report.Unprotect
+    report.Range("A5:J" & Application.Max(5, LastRow(report))).ClearContents
+    row = 5
+    For Each caseKey In Cases.Keys
+        Set source = Cases(caseKey)
+        matchKey = ComparisonKey(source, rules, True)
+        status = MatchStatus(matchKey, leftIndex, rightIndex)
+        If status = "照合可能" Then
+            Set rightMatches = rightIndex(matchKey)
+            Set target = rightMatches(1)
+            For Each fieldId In rules.Keys
+                If Not rules(fieldId)(1) Then
+                    status = "不一致"
+                    If SameValue(source.values(fieldId), target.values(fieldId)) Then status = "一致"
+                    value = PreferredValue(source.values(fieldId), target.values(fieldId), CStr(rules(fieldId)(3)))
+                    WriteReportRow report, row, source, target, CStr(fieldId), status, value
+                    reportLinks.Add CStr(row), Array(CStr(caseKey), CStr(fieldId))
+                    reportMatches.Add CStr(row), target
+                    row = row + 1
+                End If
+            Next
+        Else
+            WriteReportRow report, row, source, Nothing, "", status, Empty
+            row = row + 1
+        End If
+    Next
+    For Each target In external
+        matchKey = ComparisonKey(target, rules, False)
+        status = ""
+        If Len(matchKey) = 0 Then
+            status = "対応先不明"
+        ElseIf Not leftIndex.Exists(matchKey) Then
+            status = "管理簿に存在しない"
+            If rightIndex(matchKey).Count > 1 Then status = "重複候補"
+        End If
+        If Len(status) > 0 Then
+            WriteReportRow report, row, Nothing, target, "", status, Empty
+            row = row + 1
+        End If
+    Next
+    report.Protect DrawingObjects:=False, UserInterfaceOnly:=True
+    report.Visible = xlSheetVisible
+    report.Activate
+    Exit Sub
+Failed:
+    message = SafeFailure("照合", Err.Number)
+Finished:
+    If Len(message) > 0 Then Notify message
+End Sub
+
+Public Sub CloseComparison()
+    Dim report As Worksheet
+    Set report = Sheet("CompareResults")
+    If ActiveSheet Is report Then Sheet("検索").Activate
+    report.Unprotect
+    report.Range("A5:J" & Application.Max(5, LastRow(report))).ClearContents
+    report.Visible = xlSheetVeryHidden
+    Set reportLinks = Nothing
+    Set reportMatches = Nothing
+End Sub
+
+Private Sub WriteReportRow(ByVal report As Worksheet, ByVal row As Long, ByVal source As CaseRecord, _
+    ByVal target As CaseRecord, ByVal fieldId As String, ByVal status As String, ByVal adopted As Variant)
+    Dim output(1 To 1, 1 To 10) As Variant
+    If Not source Is Nothing Then
+        output(1, 1) = source.sourceYear
+        output(1, 2) = source.values("PersonName")
+        output(1, 3) = source.values("Branch")
+        output(1, 9) = source.sourceSheet & " / 行 " & source.sourceRow
+        If Len(fieldId) > 0 Then output(1, 6) = source.values(fieldId)
+    End If
+    If Not target Is Nothing Then
+        output(1, 10) = target.sourceSheet & " / 行 " & target.sourceRow
+        If Len(fieldId) > 0 Then output(1, 7) = target.values(fieldId)
+    End If
+    output(1, 4) = status
+    output(1, 5) = fieldId
+    output(1, 8) = adopted
+    With report.Cells(row, 1).Resize(1, 10)
+        .NumberFormat = "@"
+        .Value2 = output
+    End With
+End Sub
+
+Public Function ComparisonRules(ByRef message As String) As Object
+    Dim ws As Worksheet
+    Dim rules As Object
+    Dim row As Long
+    Dim fieldId As String
+    Dim header As String
+    Dim keyCount As Long
+    Dim compareCount As Long
+    Set ws = Sheet("Comparison")
+    If Len(CStr(ws.Range("B2").Value2)) = 0 Or Len(CStr(ws.Range("B3").Value2)) = 0 Then
+        message = "ComparisonのB2に比較先、B3にシート名を設定してください。"
+        Exit Function
+    End If
+    Set rules = NewDictionary()
+    For row = 8 To LastRow(ws)
+        fieldId = CStr(ws.Cells(row, 1).Value2)
+        If Len(fieldId) > 0 Then
+            message = "Comparison " & row & "行目の項目ID・見出し・Yes/Noを確認してください。"
+            If rules.Exists(fieldId) Then Exit Function
+            If fieldId <> "SourceYear" And Not fields.Exists(fieldId) Then Exit Function
+            header = CStr(ws.Cells(row, 2).Value2)
+            If Len(header) = 0 Then Exit Function
+            If ws.Cells(row, 3).Value2 <> "Yes" And ws.Cells(row, 3).Value2 <> "No" Then Exit Function
+            If ws.Cells(row, 4).Value2 <> "Yes" And ws.Cells(row, 4).Value2 <> "No" Then Exit Function
+            rules.Add fieldId, Array(header, ws.Cells(row, 3).Value2 = "Yes", ws.Cells(row, 4).Value2 = "Yes", CStr(ws.Cells(row, 5).Value2))
+            If rules(fieldId)(1) Then
+                keyCount = keyCount + 1
+                If rules(fieldId)(2) Then Exit Function
+            Else
+                If fieldId = "SourceYear" Or fieldId = "MaskedNumber" Or fieldId = "Branch" Then Exit Function
+                compareCount = compareCount + 1
+            End If
+        End If
+    Next
+    If keyCount = 0 Or compareCount = 0 Then
+        message = "Comparisonに照合キーと比較する項目を設定してください。"
+        Exit Function
+    End If
+    message = ""
+    Set ComparisonRules = rules
+End Function
+
+Public Function ReadComparison(ByVal rules As Object, ByRef message As String) As Collection
+    Dim config As Worksheet
+    Dim book As Workbook
+    Dim ws As Worksheet
+    Dim records As Collection
+    On Error GoTo Failed
+    Set config = Sheet("Comparison")
+    Set book = OpenLedger(CStr(config.Range("B2").Value2), True, message)
+    If book Is Nothing Then Exit Function
+    Set ws = LedgerSheet(book, CStr(config.Range("B3").Value2), message)
+    If Not ws Is Nothing Then Set records = ComparisonRows(ws, rules, message)
+    book.Close False
+    Set ReadComparison = records
+    Exit Function
+Failed:
+    message = SafeFailure("比較先の読込", Err.Number)
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close False
+End Function
+
+Private Function ComparisonRows(ByVal ws As Worksheet, ByVal rules As Object, ByRef message As String) As Collection
+    Dim data As Variant
+    Dim headers As Object
+    Dim columns As Object
+    Dim record As CaseRecord
+    Dim result As New Collection
+    Dim fieldId As Variant
+    Dim heading As String
+    Dim row As Long
+    Dim column As Long
+    If LastColumn(ws) < 2 Then
+        message = ws.Name & "：比較先の見出しを確認してください。"
+        Exit Function
+    End If
+    data = ws.Range(ws.Cells(1, 1), ws.Cells(LastRow(ws), LastColumn(ws))).Value2
+    Set headers = NewDictionary()
+    Set columns = NewDictionary()
+    For column = 1 To UBound(data, 2)
+        If IsError(data(1, column)) Then GoTo InvalidHeader
+        heading = CStr(data(1, column))
+        If Len(heading) > 0 Then
+            If headers.Exists(heading) Then GoTo InvalidHeader
+            headers.Add heading, column
+        End If
+    Next
+    For Each fieldId In rules.Keys
+        heading = rules(fieldId)(0)
+        If Not headers.Exists(heading) Then GoTo InvalidHeader
+        columns.Add fieldId, headers(heading)
+        headers.Remove heading
+    Next
+    For row = 2 To UBound(data, 1)
+        Set record = New CaseRecord
+        record.sourceAddress = ws.Parent.FullName
+        record.sourceSheet = ws.Name
+        record.sourceRow = row
+        Set record.sourceColumns = columns
+        For Each fieldId In columns.Keys
+            record.values.Add fieldId, data(row, columns(fieldId))
+        Next
+        result.Add record
+    Next
+    Set ComparisonRows = result
+    Exit Function
+InvalidHeader:
+    message = ws.Parent.Name & " / " & ws.Name & "：見出し不足または重複。「" & heading & "」"
+End Function
+
+Public Function ComparisonIndex(ByVal records As Variant, ByVal rules As Object, ByVal isLedger As Boolean) As Object
+    Dim result As Object
+    Dim candidate As Variant
+    Dim record As CaseRecord
+    Dim group As Collection
+    Dim key As String
+    Set result = NewDictionary()
+    For Each candidate In records
+        Set record = candidate
+        key = ComparisonKey(record, rules, isLedger)
+        If Len(key) > 0 Then
+            If Not result.Exists(key) Then
+                Set group = New Collection
+                result.Add key, group
+            End If
+            Set group = result(key)
+            group.Add record
+        End If
+    Next
+    Set ComparisonIndex = result
+End Function
+
+Public Function ComparisonKey(ByVal record As CaseRecord, ByVal rules As Object, ByVal isLedger As Boolean) As String
+    Dim fieldId As Variant
+    Dim value As Variant
+    Dim key As String
+    For Each fieldId In rules.Keys
+        If rules(fieldId)(1) Then
+            value = record.values(fieldId)
+            If isLedger Then
+                If fieldId = "SourceYear" Then value = record.sourceYear
+                If fieldId = "MaskedNumber" Then value = record.PersonKey
+            End If
+            If IsError(value) Or IsNull(value) Then Exit Function
+            If Len(CStr(value)) = 0 Then Exit Function
+            If fieldId = "MaskedNumber" And Not IsDigits(value, 13) Then Exit Function
+            If fieldId = "Branch" And Not IsDigits(value, 5) Then Exit Function
+            key = key & Len(CStr(value)) & ":" & CStr(value)
+        End If
+    Next
+    ComparisonKey = key
+End Function
+
+Public Function MatchStatus(ByVal key As String, ByVal leftIndex As Object, ByVal rightIndex As Object) As String
+    If Len(key) = 0 Then
+        MatchStatus = "対応先不明"
+    ElseIf leftIndex(key).Count <> 1 Then
+        MatchStatus = "重複候補"
+    ElseIf Not rightIndex.Exists(key) Then
+        MatchStatus = "比較先に存在しない"
+    ElseIf rightIndex(key).Count <> 1 Then
+        MatchStatus = "重複候補"
+    Else
+        MatchStatus = "照合可能"
+    End If
+End Function
+
+Private Function PreferredValue(ByVal first As Variant, ByVal second As Variant, ByVal rule As String) As Variant
+    If SameValue(first, second) Or rule = "Ledger" Then
+        PreferredValue = first
+    ElseIf rule = "Comparison" Then
+        PreferredValue = second
+    End If
+End Function
+
+Public Sub TransferSelectedComparisonField()
+    Dim report As Worksheet
+    Dim link As Variant
+    Dim source As CaseRecord
+    Dim target As CaseRecord
+    Dim rules As Object
+    Dim fieldId As String
+    Dim row As String
+    Dim message As String
+    Set report = Sheet("CompareResults")
+    If Not ActiveSheet Is report Or reportLinks Is Nothing Then Exit Sub
+    row = CStr(ActiveCell.Row)
+    If Not reportLinks.Exists(row) Then Exit Sub
+    link = reportLinks(row)
+    fieldId = CStr(link(1))
+    Set source = Cases(link(0))
+    Set target = reportMatches(row)
+    Set rules = ComparisonRules(message)
+    If rules Is Nothing Then GoTo Finished
+    If Not rules.Exists(fieldId) Then Exit Sub
+    If Not rules(fieldId)(2) Or Sheet("Comparison").Range("B4").Value2 <> "Yes" Then
+        message = "転記は許可されていません。Comparisonの設定を確認してください。"
+        GoTo Finished
+    End If
+    If IsError(target.values(fieldId)) Then Exit Sub
+    If MsgBox(target.sourceAddress & " / " & target.sourceSheet & vbCrLf & _
+        source.sourceYear & "年度 / " & source.values("PersonName") & " / " & fieldId & vbCrLf & _
+        "現在値：" & CStr(target.values(fieldId)) & vbCrLf & _
+        "転記後：" & CStr(source.values(fieldId)), vbYesNo Or vbDefaultButton2 Or vbQuestion, "手動転記") <> vbYes Then Exit Sub
+    If TransferComparisonField(source, target, fieldId, message) Then
+        message = "転記後に開き直して値を確認しました。再照合してください。" & message
+    End If
+Finished:
+    If Len(message) > 0 Then Notify message
+End Sub
+
+Public Function TransferComparisonField(ByVal source As CaseRecord, ByVal target As CaseRecord, _
+    ByVal fieldId As String, ByRef message As String) As Boolean
+    Dim rules As Object
+    Dim currentLedger As Object
+    Dim currentSource As CaseRecord
+    Dim currentRows As Collection
+    Dim index As Object
+    Dim group As Collection
+    Dim currentTarget As CaseRecord
+    Dim book As Workbook
+    Dim ws As Worksheet
+    Dim destination As Range
+    Dim key As String
+    Dim address As String
+    Dim sheetName As String
+    Dim isWriteStarted As Boolean
+    Dim year As Variant
+    Dim previousEvents As Boolean
+    previousEvents = Application.EnableEvents
+    On Error GoTo Failed
+    If Setting("ControllerRole") <> "Staff" Then
+        message = "手動転記は常勤の管理担当だけが実行できます。"
+        Exit Function
+    End If
+    If Not LoadConfiguration(message) Then Exit Function
+    Set rules = ComparisonRules(message)
+    If rules Is Nothing Then Exit Function
+    If Not rules.Exists(fieldId) Then Exit Function
+    If Not rules(fieldId)(2) Or Sheet("Comparison").Range("B4").Value2 <> "Yes" Then
+        message = "転記は許可されていません。"
+        Exit Function
+    End If
+    If PendingSave() Or Len(CStr(Sheet("MoveRecovery").Range("B1").Value2)) > 0 Then
+        message = "先に保存または移動の結果を確認してください。"
+        Exit Function
+    End If
+    If Not rules.Exists("SourceYear") Or Not rules.Exists("MaskedNumber") Or Not rules.Exists("Branch") Then GoTo Rejected
+    If Not rules("SourceYear")(1) Or Not rules("MaskedNumber")(1) Or Not rules("Branch")(1) Then GoTo Rejected
+    address = CStr(Sheet("Comparison").Range("B2").Value2)
+    For Each year In years.Keys
+        If StrComp(address, years(year)(3), vbTextCompare) = 0 Or StrComp(address, years(year)(4), vbTextCompare) = 0 Then GoTo Rejected
+    Next
+    sheetName = CStr(Sheet("Comparison").Range("B3").Value2)
+    If StrComp(target.sourceSheet, sheetName, vbTextCompare) <> 0 Then GoTo Rejected
+    If StrComp(source.sourceAddress, address, vbTextCompare) = 0 Then GoTo Rejected
+    If Len(source.invalidReason) > 0 Then GoTo Rejected
+    Set currentLedger = ReadYear(source.sourceYear, message)
+    If currentLedger Is Nothing Then Exit Function
+    If Not currentLedger.Exists(source.Key) Then GoTo Rejected
+    Set currentSource = currentLedger(source.Key)
+    If Len(currentSource.invalidReason) > 0 Or Not currentSource.sourceColumns.Exists(fieldId) Then GoTo Rejected
+    If StrComp(currentSource.sourceAddress, source.sourceAddress, vbTextCompare) <> 0 Then GoTo Rejected
+    If StrComp(currentSource.sourceSheet, source.sourceSheet, vbTextCompare) <> 0 Then GoTo Rejected
+    If Not SameValue(currentSource.values(fieldId), source.values(fieldId)) Then GoTo Rejected
+    key = ComparisonKey(currentSource, rules, True)
+    If Len(key) = 0 Or key <> ComparisonKey(target, rules, False) Then GoTo Rejected
+    Set index = ComparisonIndex(currentLedger.Items, rules, True)
+    If index(key).Count <> 1 Then GoTo Rejected
+    Set book = OpenLedger(address, False, message)
+    If book Is Nothing Then Exit Function
+    If StrComp(book.FullName, target.sourceAddress, vbTextCompare) <> 0 Then GoTo Rejected
+    Set ws = LedgerSheet(book, sheetName, message)
+    If ws Is Nothing Then GoTo Rejected
+    Set currentRows = ComparisonRows(ws, rules, message)
+    If currentRows Is Nothing Then GoTo Rejected
+    Set index = ComparisonIndex(currentRows, rules, False)
+    If Not index.Exists(key) Then GoTo Rejected
+    Set group = index(key)
+    If group.Count <> 1 Then GoTo Rejected
+    Set currentTarget = group(1)
+    If Not SameValue(currentTarget.values(fieldId), target.values(fieldId)) Then GoTo Rejected
+    Set destination = ws.Cells(currentTarget.sourceRow, currentTarget.sourceColumns(fieldId))
+    If destination.HasFormula Then GoTo Rejected
+    If SameValue(currentSource.values(fieldId), currentTarget.values(fieldId)) Then GoTo Rejected
+    '通常更新と同様に、転記先の書込・保存・閉鎖中は外部イベントを止める。
+    Application.EnableEvents = False
+    isWriteStarted = True
+    PutValue destination, currentSource.values(fieldId), (fields(fieldId)(1) = "Date")
+    book.Save
+    If Not book.Saved Then GoTo Failed
+    If IsWebAddress(address) Then
+        book.CheckIn SaveChanges:=True
+    Else
+        book.Close False
+    End If
+    Set book = Nothing
+    Application.EnableEvents = previousEvents
+    Set currentRows = ReadComparison(rules, message)
+    If currentRows Is Nothing Then GoTo Failed
+    Set index = ComparisonIndex(currentRows, rules, False)
+    If Not index.Exists(key) Then GoTo Failed
+    Set group = index(key)
+    If group.Count <> 1 Then GoTo Failed
+    Set currentTarget = group(1)
+    If Not SameValue(currentTarget.values(fieldId), currentSource.values(fieldId)) Then GoTo Failed
+    TransferComparisonField = True
+    On Error GoTo HistoryFailed
+    AppendHistory address, currentSource.Key, "手動転記", fieldId, target.values(fieldId), currentSource.values(fieldId), NewTransactionId()
+    CloseComparison
+    ThisWorkbook.Save
+    Exit Function
+HistoryFailed:
+    message = "履歴を保存できませんでした。管理担当へ確認してください。"
+    Exit Function
+Rejected:
+    If Len(message) = 0 Then message = "転記元・転記先の変更、対象の重複、書込禁止または変更なしを検出しました。再照合してください。"
+    On Error Resume Next
+    If Not book Is Nothing Then
+        If IsWebAddress(address) And book.CanCheckIn Then
+            book.CheckIn SaveChanges:=False
+        Else
+            book.Close False
+        End If
+    End If
+    Exit Function
+Failed:
+    If isWriteStarted Then
+        message = "転記結果を確認できません。再実行の前に比較先を開いて値とチェックアウトを確認してください。"
+    Else
+        message = SafeFailure("転記準備", Err.Number)
+    End If
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close False
+    Application.EnableEvents = previousEvents
+    On Error GoTo 0
+End Function

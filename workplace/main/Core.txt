@@ -1,0 +1,2182 @@
+Option Explicit
+
+Public Cases As Object
+Public fields As Object
+Public years As Object
+Public yearErrors As Object
+Public yearColumnMaps As Object
+Public currentCase As CaseRecord
+Public isBusy As Boolean
+Public lastMessage As String
+
+Private Const FIRST_RESULT_ROW As Long = 20
+Private Const PAGE_SIZE As Long = 14
+Private Const CONTROL_PREFIX As String = "ControllerFilter"
+
+Private matches As Collection
+Private pageIndex As Long
+Private selectedRow As Long
+Private hasDetail As Boolean
+Private baseline As Object
+Private originalYear As String
+Private isNavigating As Boolean
+Private currentCaseKey As String
+Private relatedKeys As Collection
+Private relatedCurrentIndex As Long
+Private isSelectingRelated As Boolean
+
+Private Const RELATED_LIST As String = "RelatedCasesList"
+
+' --- Core ---
+Public Function NewDictionary() As Object
+    Set NewDictionary = CreateObject("Scripting.Dictionary")
+End Function
+
+Public Function Sheet(ByVal sheetName As String) As Worksheet
+    Set Sheet = ThisWorkbook.Worksheets(sheetName)
+End Function
+
+Public Function LastRow(ByVal ws As Worksheet) As Long
+    Dim found As Range
+    Set found = ws.Cells.Find(What:="*", LookIn:=xlFormulas, LookAt:=xlPart, _
+        SearchOrder:=xlByRows, SearchDirection:=xlPrevious, MatchCase:=False, SearchFormat:=False)
+    LastRow = 1
+    If Not found Is Nothing Then LastRow = found.Row
+End Function
+
+Public Function LastColumn(ByVal ws As Worksheet) As Long
+    Dim found As Range
+    Set found = ws.Cells.Find(What:="*", LookIn:=xlFormulas, LookAt:=xlPart, _
+        SearchOrder:=xlByColumns, SearchDirection:=xlPrevious, MatchCase:=False, SearchFormat:=False)
+    LastColumn = 1
+    If Not found Is Nothing Then LastColumn = found.Column
+End Function
+
+Public Function SameValue(ByVal first As Variant, ByVal second As Variant) As Boolean
+    If IsError(first) Or IsError(second) Then Exit Function
+    If IsNull(first) Or IsNull(second) Then Exit Function
+    If Len(CStr(first)) = 0 And Len(CStr(second)) = 0 Then
+        SameValue = True
+    ElseIf VarType(first) = vbString Or VarType(second) = vbString Then
+        SameValue = (VarType(first) = VarType(second) And CStr(first) = CStr(second))
+    ElseIf IsNumeric(first) And IsNumeric(second) Then
+        SameValue = (CDbl(first) = CDbl(second))
+    Else
+        SameValue = (CStr(first) = CStr(second))
+    End If
+End Function
+
+Public Sub PutValue(ByVal target As Range, ByVal value As Variant, Optional ByVal isDate As Boolean = False)
+    If isDate Then
+        target.NumberFormat = "yyyy/mm/dd"
+    Else
+        target.NumberFormat = "@"
+    End If
+    target.Value2 = value
+End Sub
+
+Public Sub Notify(ByVal message As String)
+    lastMessage = message
+    MsgBox message, vbInformation, "CONTROLLER"
+End Sub
+
+Public Function BeginAction() As Boolean
+    If isBusy Then Exit Function
+    isBusy = True
+    BeginAction = True
+End Function
+
+Public Function PendingSave() As Boolean
+    PendingSave = (Len(CStr(Sheet("Recovery").Range("B1").Value2)) > 0)
+End Function
+
+Public Function SafeFailure(ByVal actionName As String, ByVal errorNumber As Long) As String
+    'Excel/COMの生の例外本文には値やURLが含まれ得るため表示しない。
+    SafeFailure = actionName & "を中止しました。エラー番号 " & CStr(errorNumber) & _
+        "。設定と対象管理簿を確認してください。画面の入力は保持しています。"
+End Function
+
+' --- Utilities ---
+Public Function IsDigits(ByVal value As Variant, ByVal size As Long) As Boolean
+    Dim index As Long
+    Dim text As String
+    If VarType(value) <> vbString Then Exit Function
+    text = CStr(value)
+    If Len(text) <> size Then Exit Function
+    For index = 1 To size
+        If Mid$(text, index, 1) < "0" Or Mid$(text, index, 1) > "9" Then Exit Function
+    Next
+    IsDigits = True
+End Function
+
+Public Function RestoreNumber(ByVal masked As Variant, ByRef number As String) As Boolean
+    Dim text As String
+    Dim body As String
+    Dim index As Long
+    number = ""
+    If VarType(masked) <> vbString Then Exit Function
+    text = CStr(masked)
+    If IsDigits(text, 13) Then
+        number = text
+        RestoreNumber = True
+        Exit Function
+    End If
+    If Len(text) <> 20 Then Exit Function
+    If Left$(text, 4) <> "MN1:" Or Mid$(text, 18, 1) <> ":" Then Exit Function
+    body = Mid$(text, 5, 13)
+    If Not IsDigits(body, 13) Then Exit Function
+    For index = 13 To 1 Step -1
+        number = number & CStr((CLng(Mid$(body, index, 1)) + 3) Mod 10)
+    Next
+    If Right$(text, 2) <> NumberChecksum(number) Then
+        number = ""
+        Exit Function
+    End If
+    RestoreNumber = True
+End Function
+
+Private Function NumberChecksum(ByVal number As String) As String
+    Dim index As Long
+    Dim total As Long
+    For index = 1 To 13
+        total = total + index * CLng(Mid$(number, index, 1))
+    Next
+    NumberChecksum = Format$(total Mod 97, "00")
+End Function
+
+Public Function NormalizeValue(ByVal fieldId As String, ByVal value As Variant, ByRef normalized As Variant) As Boolean
+    Dim text As String
+    normalized = value
+    If IsError(value) Or IsNull(value) Then Exit Function
+    If Len(CStr(value)) = 0 Then
+        normalized = ""
+    ElseIf fields(fieldId)(1) = "Date" Then
+        If VarType(value) = vbString Or VarType(value) = vbBoolean Then Exit Function
+        If Not IsNumeric(value) Then Exit Function
+        If CDbl(value) < 1 Or CDbl(value) > 2958465# Then Exit Function
+        If CDbl(value) <> Fix(CDbl(value)) Then Exit Function
+        normalized = CDbl(value)
+    Else
+        '文字列項目を数値から推測復元しない。失われた先頭0は補完しない。
+        If VarType(value) <> vbString Then Exit Function
+        text = CStr(value)
+        If fieldId = "PostalCode" Or fieldId = "PhoneNumber" Then
+            text = Replace(text, "-", "")
+            If fieldId = "PostalCode" Then
+                If Not IsDigits(text, 7) Then Exit Function
+            Else
+                If Len(text) < 9 Or Len(text) > 11 Then Exit Function
+                If Not IsDigits(text, Len(text)) Then Exit Function
+            End If
+        End If
+        normalized = text
+    End If
+    NormalizeValue = True
+End Function
+
+Public Function DisplayValue(ByVal fieldId As String, ByVal value As Variant) As Variant
+    Dim text As String
+    DisplayValue = value
+    If fieldId = "MaskedNumber" Then
+        If RestoreNumber(value, text) Then DisplayValue = text
+    ElseIf fieldId = "PostalCode" Then
+        text = CStr(value)
+        If IsDigits(text, 7) Then DisplayValue = Left$(text, 3) & "-" & Right$(text, 4)
+    ElseIf fieldId = "PhoneNumber" Then
+        DisplayValue = FormatPhone(CStr(value))
+    End If
+End Function
+
+Private Function FormatPhone(ByVal text As String) As String
+    Dim prefix As String
+    Dim rowIndex As Long
+    Dim areaLength As Long
+    Dim exchangeLength As Long
+    Dim longest As Long
+    Dim ws As Worksheet
+    FormatPhone = text
+    If Len(text) = 11 Then
+        Select Case Left$(text, 3)
+            Case "070", "080", "090", "050"
+                FormatPhone = Left$(text, 3) & "-" & Mid$(text, 4, 4) & "-" & Right$(text, 4)
+                Exit Function
+        End Select
+    End If
+    If Len(text) <> 10 Then Exit Function
+    Set ws = Sheet("Settings")
+    For rowIndex = 2 To LastRow(ws)
+        prefix = CStr(ws.Cells(rowIndex, 10).Value2)
+        If Len(prefix) > longest And Len(prefix) > 0 Then
+            If Left$(text, Len(prefix)) = prefix Then
+                If IsNumeric(ws.Cells(rowIndex, 11).Value2) And IsNumeric(ws.Cells(rowIndex, 12).Value2) Then
+                    areaLength = CLng(ws.Cells(rowIndex, 11).Value2)
+                    exchangeLength = CLng(ws.Cells(rowIndex, 12).Value2)
+                    If areaLength >= 2 And areaLength <= 5 And exchangeLength >= 1 Then
+                        If areaLength + exchangeLength + 4 = 10 Then
+                            FormatPhone = Left$(text, areaLength) & "-" & Mid$(text, areaLength + 1, exchangeLength) & "-" & Right$(text, 4)
+                            longest = Len(prefix)
+                        End If
+                    End If
+                End If
+            End If
+        End If
+    Next
+End Function
+
+Public Function WriteClipboard(ByVal text As String) As Boolean
+    Dim clipboard As Object
+    On Error GoTo Failed
+    Set clipboard = CreateObject("new:{1C3B4210-F441-11CE-B9EA-00AA006B1A69}")
+    clipboard.SetText text
+    clipboard.PutInClipboard
+    WriteClipboard = True
+Failed:
+End Function
+
+' --- OperationHistory ---
+Public Sub WriteHistory(ByVal recovery As Worksheet)
+    Dim row As Long
+    Dim operation As String
+    Dim identity As String
+    Dim transactionId As String
+    operation = CStr(recovery.Range("B5").Value2)
+    If Len(operation) = 0 Then Exit Sub
+    identity = CStr(recovery.Range("B2").Value2) & "|" & CStr(recovery.Range("D4").Value2)
+    transactionId = CStr(recovery.Range("D5").Value2)
+    For row = 6 To LastRow(recovery)
+        If recovery.Cells(row, 4).Value2 = "Yes" Then
+            AppendHistory CStr(recovery.Range("B3").Value2), identity, operation, CStr(recovery.Cells(row, 1).Value2), _
+                recovery.Cells(row, 3).Value2, recovery.Cells(row, 2).Value2, transactionId
+        End If
+    Next
+End Sub
+
+Public Sub AppendHistory(ByVal address As String, ByVal identity As String, ByVal operation As String, _
+    ByVal fieldId As String, ByVal oldValue As Variant, ByVal newValue As Variant, ByVal transactionId As String)
+    Dim history As Worksheet
+    Dim output(1 To 1, 1 To 10) As Variant
+    Dim row As Long
+    Set history = Sheet("History")
+    For row = LastRow(history) To 2 Step -1
+        If history.Cells(row, 10).Value2 <> transactionId Then Exit For
+        If history.Cells(row, 6).Value2 = fieldId Then Exit Sub
+    Next
+    output(1, 1) = Format$(Now, "yyyy/mm/dd hh:nn:ss")
+    output(1, 2) = Application.UserName
+    output(1, 3) = address
+    output(1, 4) = identity
+    output(1, 5) = operation
+    output(1, 6) = fieldId
+    output(1, 7) = oldValue
+    output(1, 8) = newValue
+    output(1, 9) = "保存確認済み"
+    output(1, 10) = transactionId
+    With history.Cells(LastRow(history) + 1, 1).Resize(1, 10)
+        .NumberFormat = "@"
+        .Value2 = output
+    End With
+End Sub
+
+Public Function NewTransactionId() As String
+    NewTransactionId = Format$(Now, "yyyymmddhhnnss") & "-" & Format$(Timer * 1000, "00000000") & "-" & CStr(LastRow(Sheet("History")))
+End Function
+
+' --- CaseService ---
+Public Sub ReloadCases(ByRef message As String)
+    Dim year As Variant
+    Dim loaded As Object
+    Dim key As Variant
+    Dim detail As String
+    Dim invalidCount As Long
+    Set Cases = NewDictionary()
+    Set yearErrors = NewDictionary()
+    Set yearColumnMaps = NewDictionary()
+    For Each year In years.Keys
+        detail = ""
+        Set loaded = ReadYear(CStr(year), detail)
+        If loaded Is Nothing Then
+            yearErrors.Add year, detail
+            message = message & CStr(year) & "年度：" & detail & vbCrLf
+        Else
+            For Each key In loaded.Keys
+                Cases.Add key, loaded(key)
+                If Len(loaded(key).invalidReason) > 0 Then invalidCount = invalidCount + 1
+            Next
+        End If
+    Next
+    message = "読込件数 " & Cases.Count & "。正常年度の検索を利用できます。" & vbCrLf & message
+    If invalidCount > 0 Then message = message & vbCrLf & "番号・型・重複などの要確認事案 " & invalidCount & "件は更新できません。詳細画面で理由を確認してください。"
+End Sub
+
+Public Function SearchRecords(ByVal query As String, ByVal office As String, ByVal excludeClosed As Boolean) As Collection
+    Dim result As New Collection
+    Dim closedStates As Object
+    Dim key As Variant
+    Dim record As CaseRecord
+    Dim normalizedQuery As String
+    Dim hasName As Boolean
+    Dim hasOffice As Boolean
+    Dim isClosed As Boolean
+    normalizedQuery = SearchText(query)
+    Set closedStates = ConfiguredList(15)
+    For Each key In Cases.Keys
+        Set record = Cases(key)
+        hasName = Len(normalizedQuery) = 0
+        If Not hasName Then
+            hasName = InStr(1, SearchText(CStr(record.values("PersonName"))), normalizedQuery, vbTextCompare) > 0
+            If Not hasName Then hasName = InStr(1, SearchText(CStr(record.values("Furigana"))), normalizedQuery, vbTextCompare) > 0
+        End If
+        hasOffice = Len(office) = 0 Or StrComp(CStr(record.values("Office")), office, vbTextCompare) = 0
+        isClosed = excludeClosed And closedStates.Exists(CStr(record.values("Status")))
+        If hasName And hasOffice And Not isClosed Then result.Add CStr(key)
+    Next
+    Set SearchRecords = result
+End Function
+
+Private Function SearchText(ByVal text As String) As String
+    Dim normalized As String
+    normalized = Replace(Replace(Trim$(text), "　", ""), " ", "")
+    On Error Resume Next
+    SearchText = StrConv(StrConv(normalized, vbWide, 1041), vbKatakana, 1041)
+    If Err.Number <> 0 Then SearchText = normalized
+    On Error GoTo 0
+End Function
+
+Public Function ScreenValues(ByVal record As CaseRecord, ByVal year As String, ByRef message As String) As Object
+    Dim result As Object
+    Dim id As Variant
+    Dim value As Variant
+    Dim normalized As Variant
+    Set result = NewDictionary()
+    For Each id In fields.Keys
+        If Not DetailFieldAvailable(CStr(id), year, record, message) And Not record Is Nothing Then
+            result.Add id, ""
+        Else
+            value = FieldCell(CStr(id)).Value2
+            If Not record Is Nothing Then
+                If SameValue(value, DetailValue(CStr(id), record.values(id))) Then value = record.values(id)
+            ElseIf Not DetailFieldAvailable(CStr(id), year, record, message) Then
+                If CStr(value) = "（保存先未設定）" Then value = ""
+            End If
+            If Not NormalizeValue(CStr(id), value, normalized) Then
+                message = "入力項目 " & CStr(id) & "の型または形式が不正です。FieldsのTypeと入力値を確認してください。"
+                Exit Function
+            End If
+            result.Add id, normalized
+        End If
+    Next
+    Set ScreenValues = result
+End Function
+
+Public Sub DisplayValues(ByVal values As Object)
+    Dim id As Variant
+    For Each id In fields.Keys
+        PutValue FieldCell(CStr(id)), DisplayValue(CStr(id), values(id)), (fields(id)(1) = "Date")
+    Next
+End Sub
+
+Public Sub RefreshOneYear(ByVal year As String, ByRef message As String)
+    Dim loaded As Object
+    Dim key As Variant
+    Dim detail As String
+    Set loaded = ReadYear(year, detail)
+    For Each key In Cases.Keys
+        If Cases(key).sourceYear = year Then Cases.Remove key
+    Next
+    If loaded Is Nothing Then
+        yearErrors(year) = detail
+        message = message & vbCrLf & "保存は照合済みですが、年度の再読込に失敗しました。" & detail
+    Else
+        If yearErrors.Exists(year) Then yearErrors.Remove year
+        For Each key In loaded.Keys
+            Cases.Add key, loaded(key)
+        Next
+    End If
+End Sub
+
+' --- Ui ---
+Public Function IsReservedUiCell(ByVal target As Range) As Boolean
+    IsReservedUiCell = target.Parent.Name <> "詳細"
+    If Not IsReservedUiCell Then
+        IsReservedUiCell = Not Intersect(target, target.Parent.Range("B2:W12,Q32,C60:V64")) Is Nothing
+    End If
+End Function
+
+Public Sub StartController()
+    Dim message As String
+    If Not BeginAction() Then Exit Sub
+    On Error GoTo Failed
+    If Not UiCanLeaveDetail() Then GoTo Finished
+    If Not LoadConfiguration(message) Then GoTo Finished
+    If PendingSave() Then
+        message = "前回の保存結果を確認してください。"
+        GoTo Finished
+    End If
+    ReloadCases message
+    hasDetail = False
+    Set currentCase = Nothing
+    ResetRelatedPanel
+    RefreshSearchControls
+    RenderSearch
+Finished:
+    isBusy = False
+    If Len(message) > 0 Then Notify message
+    Exit Sub
+Failed:
+    message = SafeFailure("読込", Err.Number)
+    Resume Finished
+End Sub
+
+Public Sub FindRecords()
+    If Cases Is Nothing Then
+        StartController
+    Else
+        RenderSearch
+    End If
+End Sub
+
+Public Sub PreviousPage()
+    If matches Is Nothing Then Exit Sub
+    If pageIndex = 0 Then Exit Sub
+    pageIndex = pageIndex - 1
+    DrawPage
+End Sub
+
+Public Sub NextPage()
+    If matches Is Nothing Then Exit Sub
+    If (pageIndex + 1) * PAGE_SIZE >= matches.Count Then Exit Sub
+    pageIndex = pageIndex + 1
+    DrawPage
+End Sub
+
+Public Sub ResultSelection(ByVal target As Range)
+    If matches Is Nothing Then Exit Sub
+    If target.CountLarge > 24 Then Exit Sub
+    If Intersect(target, Sheet("検索").Range("C20:U33")) Is Nothing Then Exit Sub
+    If target.Row = selectedRow Then Exit Sub
+    HighlightResult target.Row
+End Sub
+
+Public Sub OpenSelected()
+    Dim index As Long
+    If matches Is Nothing Or selectedRow < FIRST_RESULT_ROW Then Exit Sub
+    index = pageIndex * PAGE_SIZE + selectedRow - FIRST_RESULT_ROW + 1
+    If index > matches.Count Then Exit Sub
+    If Not UiCanLeaveDetail() Then Exit Sub
+    ShowRecord CStr(matches(index))
+End Sub
+
+Public Sub NewCase()
+    Dim year As Variant
+    Dim targetYear As String
+    If fields Is Nothing Or Cases Is Nothing Then
+        StartController
+        If fields Is Nothing Or Cases Is Nothing Then Exit Sub
+    End If
+    If Not UiCanLeaveDetail() Then Exit Sub
+    For Each year In years.Keys
+        If years(year)(2) = "Yes" And Not yearErrors.Exists(year) Then
+            If Len(targetYear) > 0 Then
+                targetYear = ""
+                Exit For
+            End If
+            targetYear = CStr(year)
+        End If
+    Next
+    Set currentCase = Nothing
+    ShowDetail targetYear
+End Sub
+
+Public Sub ReturnToSearch()
+    If Not UiCanLeaveDetail() Then Exit Sub
+    hasDetail = False
+    Set currentCase = Nothing
+    ResetRelatedPanel
+    Sheet("検索").Activate
+End Sub
+
+Public Sub SearchActivated()
+    If isNavigating Or Not hasDetail Then Exit Sub
+    isNavigating = True
+    If UiCanLeaveDetail() Then
+        hasDetail = False
+        Set currentCase = Nothing
+        ResetRelatedPanel
+    Else
+        Sheet("詳細").Activate
+    End If
+    isNavigating = False
+End Sub
+
+Private Function DetailHasChanges() As Boolean
+    Dim id As Variant
+    If Not hasDetail Or baseline Is Nothing Then Exit Function
+    For Each id In fields.Keys
+        If Not SameValue(FieldCell(CStr(id)).Value2, baseline(id)) Then
+            DetailHasChanges = True
+            Exit Function
+        End If
+    Next
+    DetailHasChanges = (CStr(Sheet("詳細").Range("Q32").Value2) <> originalYear)
+End Function
+
+Public Function UiCanLeaveDetail() As Boolean
+    UiCanLeaveDetail = True
+    If DetailHasChanges() Then
+        UiCanLeaveDetail = (MsgBox("未保存の編集を破棄しますか？", vbYesNo Or vbQuestion Or vbDefaultButton2, "CONTROLLER") = vbYes)
+    End If
+End Function
+
+Public Sub SaveDetail()
+    Dim message As String
+    CommitDetail True, message
+    If Len(message) > 0 Then Notify message
+End Sub
+
+Public Function CommitDetail(ByVal showConfirmation As Boolean, ByRef message As String) As Boolean
+    Dim record As CaseRecord
+    Dim inputValues As Object
+    Dim year As String
+    Dim identity As String
+    Dim isNew As Boolean
+    If Not hasDetail Then Exit Function
+    If Not BeginAction() Then Exit Function
+    On Error GoTo Failed
+    If relatedCurrentIndex > 0 Then
+        If Sheet("詳細").Shapes(RELATED_LIST).ControlFormat.ListIndex <> relatedCurrentIndex Then
+            message = "関連事案の選択と表示中の事案が一致していません。事案を選び直してください。"
+            GoTo Finished
+        End If
+    End If
+    year = CStr(Sheet("詳細").Range("Q32").Value2)
+    isNew = currentCase Is Nothing
+    If isNew Then
+        Set record = New CaseRecord
+        record.sourceYear = year
+    Else
+        Set record = currentCase
+        If year <> record.sourceYear Then
+            message = "既存事案の管理簿の年度は変更できません。"
+            GoTo Finished
+        End If
+    End If
+    If Not years.Exists(year) Then
+        message = "保存先となる管理簿の年度を入力してください。"
+        GoTo Finished
+    End If
+    Set inputValues = ScreenValues(currentCase, year, message)
+    If inputValues Is Nothing Then GoTo Finished
+    If Not ValidateValues(inputValues, message) Then GoTo Finished
+    If Not ValidateDetailChoices(inputValues, currentCase, message) Then GoTo Finished
+    If isNew Then
+        identity = year & "|" & inputValues("MaskedNumber") & inputValues("Branch")
+    Else
+        identity = record.Key
+    End If
+    If showConfirmation Then
+        If MsgBox(year & "年度 / " & CStr(inputValues("PersonName")) & " / 枝番 " & CStr(inputValues("Branch")) & _
+            vbCrLf & IIf(isNew, "新規登録しますか？", "変更した項目を保存しますか？"), _
+            vbYesNo Or vbQuestion Or vbDefaultButton2, "CONTROLLER") <> vbYes Then GoTo Finished
+    End If
+    If SaveCase(record, inputValues, isNew, message) Then
+        CommitDetail = True
+        RefreshOneYear year, message
+        If Cases.Exists(identity) Then
+            ShowRecord identity
+        Else
+            RememberBaseline
+        End If
+        RenderSearch
+    End If
+Finished:
+    isBusy = False
+    Exit Function
+Failed:
+    If CommitDetail Then
+        message = message & vbCrLf & "管理簿への保存は確認済みです。詳細の再表示に失敗したため、最新を再読込してください。"
+    Else
+        message = SafeFailure("保存", Err.Number)
+    End If
+    Resume Finished
+End Function
+
+Public Sub ConfirmSaveResult()
+    Dim message As String
+    If LoadConfiguration(message) Then
+        If ReconcileSave(message) Then message = message & vbCrLf & "最新を再読込して確認してください。"
+    End If
+    Notify message
+End Sub
+
+Public Sub CopyNumber()
+    Dim number As String
+    Dim branch As String
+    If Not hasDetail Then Exit Sub
+    number = CStr(FieldCell("MaskedNumber").Value2)
+    branch = CStr(FieldCell("Branch").Value2)
+    If Not IsDigits(number, 13) Or Not IsDigits(branch, 5) Then
+        Notify "13桁番号と5桁枝番を確認してください。"
+    ElseIf Not WriteClipboard(number & branch) Then
+        Notify "番号をコピーできません。Officeのクリップボード部品を確認してください。"
+    End If
+End Sub
+
+Public Sub CopySelectedField()
+    Dim id As String
+    id = SelectedField()
+    If Len(id) = 0 Then Exit Sub
+    If Not WriteClipboard(CStr(FieldCell(id).Value2)) Then Notify "クリップボードにコピーできません。"
+End Sub
+
+Private Function SelectedField() As String
+    Dim id As Variant
+    If Not hasDetail Then Exit Function
+    If Not ActiveSheet Is Sheet("詳細") Then Exit Function
+    For Each id In fields.Keys
+        If ActiveCell.Address = FieldCell(CStr(id)).Address Then
+            SelectedField = CStr(id)
+            Exit Function
+        End If
+    Next
+    Notify "対象の入力欄を選んでください。"
+End Function
+
+Private Sub BuildSearchFilters()
+    Dim ws As Worksheet
+    Dim offices As Object
+    Dim office As Variant
+    Dim index As Long
+
+    Dim button As OptionButton
+    Dim check As CheckBox
+    Dim frame As GroupBox
+    Dim anchor As Range
+    Dim groupHeight As Double
+    Set ws = Sheet("検索")
+    Set offices = ConfiguredList(14)
+    If SearchFiltersMatch(ws, offices) Then Exit Sub
+    For index = ws.Shapes.Count To 1 Step -1
+        If Left$(ws.Shapes(index).Name, Len(CONTROL_PREFIX)) = CONTROL_PREFIX Then ws.Shapes(index).Delete
+    Next
+    groupHeight = ws.Rows("12:13").Height + 2
+
+    Set frame = ws.GroupBoxes.Add(ws.Range("F12").Left, ws.Range("F12").Top - 1, ws.Range("F12:U13").Width * (1 + offices.Count \ 8), groupHeight)
+    frame.Name = CONTROL_PREFIX & "Group"
+    frame.Caption = ""
+    frame.Visible = False
+    AddOfficeOption ws, 0, "すべて"
+    index = 1
+    For Each office In offices.Keys
+        AddOfficeOption ws, index, CStr(office)
+        index = index + 1
+    Next
+    ws.OptionButtons(CONTROL_PREFIX & "Office0").Value = xlOn
+    Set anchor = ws.Range("C14")
+    Set check = ws.CheckBoxes.Add(anchor.Left + 3, anchor.Top + (anchor.Height - 18) / 2, 120, 18)
+    check.Name = CONTROL_PREFIX & "Closed"
+    check.Caption = "終了分を除く"
+    check.Value = xlOff
+    check.OnAction = MacroAddress("FindRecords")
+End Sub
+
+Private Function SearchFiltersMatch(ByVal ws As Worksheet, ByVal offices As Object) As Boolean
+    Dim index As Long
+    Dim office As Variant
+    On Error GoTo MissingControl
+    If ws.OptionButtons.Count <> offices.Count + 1 Or ws.CheckBoxes.Count <> 1 Then Exit Function
+    If ws.GroupBoxes(CONTROL_PREFIX & "Group").Name <> CONTROL_PREFIX & "Group" Then Exit Function
+    If ws.CheckBoxes(CONTROL_PREFIX & "Closed").Caption <> "終了分を除く" Then Exit Function
+    If ws.OptionButtons(CONTROL_PREFIX & "Office0").Caption <> "すべて" Then Exit Function
+    index = 1
+    For Each office In offices.Keys
+        If ws.OptionButtons(CONTROL_PREFIX & "Office" & index).Caption <> CStr(office) Then Exit Function
+        index = index + 1
+    Next
+    SearchFiltersMatch = True
+MissingControl:
+End Function
+
+Private Sub AddOfficeOption(ByVal ws As Worksheet, ByVal index As Long, ByVal caption As String)
+    Dim anchor As Range
+    Dim button As OptionButton
+    Dim rowIndex As Long
+    rowIndex = 12 + (index Mod 8) \ 4
+    Set anchor = ws.Cells(rowIndex, 6 + 4 * (index Mod 4) + 16 * (index \ 8))
+    Set button = ws.OptionButtons.Add(anchor.Left + 5, anchor.Top + (anchor.Height - 18) / 2, anchor.Resize(1, 4).Width - 10, 18)
+    button.Name = CONTROL_PREFIX & "Office" & index
+    button.Caption = caption
+    button.OnAction = MacroAddress("FindRecords")
+End Sub
+
+Private Function MacroAddress(ByVal name As String) As String
+    MacroAddress = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!" & name
+End Function
+
+Private Sub RenderSearch()
+    Dim ws As Worksheet
+    Dim button As OptionButton
+    Dim office As String
+    Dim excludeClosed As Boolean
+    Set ws = Sheet("検索")
+    For Each button In ws.OptionButtons
+        If Left$(button.Name, Len(CONTROL_PREFIX & "Office")) = CONTROL_PREFIX & "Office" Then
+            If button.Value = xlOn And button.Name <> CONTROL_PREFIX & "Office0" Then office = button.Caption
+        End If
+    Next
+    If ws.CheckBoxes.Count > 0 Then excludeClosed = (ws.CheckBoxes(CONTROL_PREFIX & "Closed").Value = xlOn)
+    Set matches = SearchRecords(CStr(ws.Range("E9").Value2), office, excludeClosed)
+    pageIndex = 0
+    DrawPage
+End Sub
+
+Private Sub DrawPage()
+    Dim ws As Worksheet
+    Dim rowIndex As Long
+    Dim index As Long
+    Dim record As CaseRecord
+    Set ws = Sheet("検索")
+    ws.Range("C20:U33").ClearContents
+    ResetResultColors
+    If ActiveSheet Is ws Then
+        If Not Intersect(ActiveCell, ws.Range("C20:U33")) Is Nothing Then ws.Range("E9").Select
+    End If
+    For rowIndex = FIRST_RESULT_ROW To FIRST_RESULT_ROW + PAGE_SIZE - 1
+        index = pageIndex * PAGE_SIZE + rowIndex - FIRST_RESULT_ROW + 1
+        If index > matches.Count Then Exit For
+        Set record = Cases(CStr(matches(index)))
+        ws.Cells(rowIndex, 3).Value2 = record.values("Office")
+        ws.Cells(rowIndex, 6).Value2 = record.values("PersonName")
+        ws.Cells(rowIndex, 11).Value2 = record.values("Furigana")
+        ws.Cells(rowIndex, 16).Value2 = record.values("DocumentName")
+        ws.Cells(rowIndex, 20).Value2 = record.values("Status")
+    Next
+    ws.Range("C17").Value2 = "検索結果 " & matches.Count & "件　" & (pageIndex + 1) & " / " & _
+        Application.Max(1, (matches.Count + PAGE_SIZE - 1) \ PAGE_SIZE) & "ページ"
+    ws.Range("C35").Value2 = "一覧の行を選択すると、詳細を開けます。"
+End Sub
+
+Private Sub HighlightResult(ByVal rowIndex As Long)
+    Dim ws As Worksheet
+    Dim index As Long
+    Dim record As CaseRecord
+    Set ws = Sheet("検索")
+    RestoreRowColor ws
+    selectedRow = 0
+    index = pageIndex * PAGE_SIZE + rowIndex - FIRST_RESULT_ROW + 1
+    If index > matches.Count Then Exit Sub
+    Set record = Cases(CStr(matches(index)))
+    selectedRow = rowIndex
+    ws.Range(ws.Cells(rowIndex, 3), ws.Cells(rowIndex, 21)).Interior.Color = ws.Range("X19").Interior.Color
+    ws.Range("C35").Value2 = CStr(record.values("PersonName")) & " / " & record.sourceYear & "年度 / " & _
+        CStr(record.values("DocumentName")) & " / 枝番 " & CStr(record.values("Branch"))
+End Sub
+
+Private Sub ResetResultColors()
+    Dim ws As Worksheet
+    Dim rowIndex As Long
+    Set ws = Sheet("検索")
+    For rowIndex = FIRST_RESULT_ROW To FIRST_RESULT_ROW + PAGE_SIZE - 1
+        ws.Range(ws.Cells(rowIndex, 3), ws.Cells(rowIndex, 21)).Interior.Color = ws.Cells(rowIndex, 24).Interior.Color
+    Next
+    selectedRow = 0
+End Sub
+
+Private Sub RestoreRowColor(ByVal ws As Worksheet)
+    Dim rowRange As Range
+    If selectedRow < FIRST_RESULT_ROW Then Exit Sub
+    Set rowRange = ws.Range(ws.Cells(selectedRow, 3), ws.Cells(selectedRow, 21))
+    rowRange.Interior.Color = ws.Cells(selectedRow, 24).Interior.Color
+End Sub
+
+Private Sub ShowRecord(ByVal key As String)
+    currentCaseKey = key
+    Set currentCase = Cases(key)
+    ShowDetail currentCase.sourceYear
+End Sub
+
+Private Sub ShowDetail(ByVal year As String)
+    Dim ws As Worksheet
+    Dim id As Variant
+    Dim data As Object
+    Dim field As Range
+    Dim message As String
+    Dim canEdit As Boolean
+    Set ws = Sheet("詳細")
+    ws.Unprotect
+    If currentCase Is Nothing Then
+        Set data = NewDictionary()
+    Else
+        Set data = currentCase.values
+    End If
+    For Each id In fields.Keys
+        Set field = FieldCell(CStr(id))
+        canEdit = DetailFieldAvailable(CStr(id), year, currentCase, message)
+        If Not canEdit Then
+            field.Value2 = "（保存先未設定）"
+        Else
+            PutValue field, DetailValue(CStr(id), data(id)), (fields(id)(1) = "Date")
+        End If
+        ApplyDetailFormat CStr(id), field, canEdit
+        If Not currentCase Is Nothing Then
+            If id = "MaskedNumber" Or id = "Branch" Then canEdit = False
+        End If
+        field.MergeArea.Locked = Not canEdit
+    Next
+    PutValue ws.Range("Q32"), year
+    ws.Range("Q32").MergeArea.Locked = Not currentCase Is Nothing
+    ws.Protect DrawingObjects:=False, UserInterfaceOnly:=True
+    hasDetail = True
+    RememberBaseline
+    ws.Activate
+    ShowRelatedCases ws
+    FieldCell("PersonName").Select
+    ThisWorkbook.Windows(1).ScrollColumn = 1
+    ThisWorkbook.Windows(1).ScrollRow = 1
+End Sub
+
+Private Sub RememberBaseline()
+    Dim id As Variant
+    Set baseline = NewDictionary()
+    For Each id In fields.Keys
+        baseline.Add id, FieldCell(CStr(id)).Value2
+    Next
+    originalYear = CStr(Sheet("詳細").Range("Q32").Value2)
+End Sub
+Public Sub InitializeControllerUi()
+    Dim sheetName As Variant
+    Dim button As Shape
+    Dim action As String
+    For Each sheetName In Array("検索", "詳細", "CompareResults")
+        For Each button In Sheet(CStr(sheetName)).Shapes
+            If button.Name <> CONTROL_PREFIX & "Group" Then
+                action = button.OnAction
+                If Len(action) > 0 Then
+                    If action <> MacroAddress(Mid$(action, InStrRev(action, "!") + 1)) Then
+                        button.OnAction = MacroAddress(Mid$(action, InStrRev(action, "!") + 1))
+                    End If
+                End If
+            End If
+        Next
+    Next
+    ResetResultColors
+    ResetRelatedPanel
+    RefreshSearchControls
+End Sub
+
+Private Sub RefreshSearchControls()
+    BuildSearchFilters
+    Sheet("検索").Shapes("ControllerOperations").Visible = (Setting("ControllerRole") = "Staff")
+End Sub
+
+Public Sub OpenOperations()
+    Dim choice As Variant
+    If Setting("ControllerRole") <> "Staff" Then Exit Sub
+    choice = Application.InputBox("1  業務開始" & vbCrLf & "2  業務終了" & vbCrLf & _
+        "3  移動結果確認" & vbCrLf & "4  バックアップ復元", "常勤の管理", Type:=1)
+    If VarType(choice) = vbBoolean Then Exit Sub
+    Select Case choice
+        Case 1: StartBusiness
+        Case 2: FinishBusiness
+        Case 3: ConfirmMoveResult
+        Case 4: RestoreBackup
+    End Select
+End Sub
+Private Sub ResetRelatedPanel()
+    Dim ws As Worksheet
+    Dim wasProtected As Boolean
+    Set ws = Sheet("詳細")
+    wasProtected = ws.ProtectContents
+    If wasProtected Then ws.Unprotect
+    Set relatedKeys = New Collection
+    DrawRelatedList ws
+    If wasProtected Then ws.Protect DrawingObjects:=False, UserInterfaceOnly:=True
+End Sub
+
+Private Sub ShowRelatedCases(ByVal ws As Worksheet)
+    Dim number As String
+    Dim key As Variant
+    Dim record As CaseRecord
+    Dim members As Object
+    Dim orderedKeys As Collection
+    Set orderedKeys = New Collection
+    If Not currentCase Is Nothing Then
+        number = currentCase.PersonKey
+        If Len(number) > 0 And Not Cases Is Nothing Then
+            Set members = NewDictionary()
+            For Each key In Cases.Keys
+                Set record = Cases(key)
+                If record.PersonKey = number Then members.Add key, True
+            Next
+            If Not relatedKeys Is Nothing Then
+                For Each key In relatedKeys
+                    If members.Exists(key) Then
+                        orderedKeys.Add CStr(key)
+                        members.Remove key
+                    End If
+                Next
+            End If
+            For Each key In members.Keys
+                orderedKeys.Add CStr(key)
+            Next
+        End If
+    End If
+    ' A new list opens at the first row. Keep the current case visible on its first display.
+    Set relatedKeys = orderedKeys
+    DrawRelatedList ws
+End Sub
+
+Private Sub DrawRelatedList(ByVal ws As Worksheet)
+    Dim control As ControlFormat
+    Dim key As Variant
+    Dim record As CaseRecord
+    Dim caption As String
+    Dim index As Long
+    Dim needsRebuild As Boolean
+    Dim wasSelecting As Boolean
+    wasSelecting = isSelectingRelated
+    isSelectingRelated = True
+    On Error GoTo Failed
+    Set control = ws.Shapes(RELATED_LIST).ControlFormat
+    needsRebuild = (control.ListCount <> relatedKeys.Count)
+    Dim captions As New Collection
+    relatedCurrentIndex = 0
+    For Each key In relatedKeys
+        Set record = Cases(key)
+        index = index + 1
+        caption = "  " & RelatedColumn(record.sourceYear, 18) & RelatedColumn(CStr(record.values("Branch")), 21) & _
+            RelatedColumn(CStr(record.values("DocumentName")), 50) & CStr(record.values("Status"))
+        captions.Add caption
+        If Not needsRebuild Then needsRebuild = (control.List(index) <> caption)
+        If CStr(key) = currentCaseKey Then relatedCurrentIndex = index
+    Next
+    If needsRebuild Then
+        If relatedCurrentIndex > 3 Then
+            caption = captions(relatedCurrentIndex)
+            captions.Remove relatedCurrentIndex
+            captions.Add caption, Before:=1
+            relatedKeys.Remove relatedCurrentIndex
+            relatedKeys.Add currentCaseKey, Before:=1
+            relatedCurrentIndex = 1
+        End If
+        control.RemoveAllItems
+        For Each key In captions
+            control.AddItem CStr(key)
+        Next
+    End If
+    If control.ListIndex <> relatedCurrentIndex Then control.ListIndex = relatedCurrentIndex
+    ws.Range("C8").Value2 = "関連事案　全" & relatedKeys.Count & "件"
+    UpdateDetailSummary ws
+    isSelectingRelated = wasSelecting
+    Exit Sub
+Failed:
+    Dim failure As Long
+    failure = Err.Number
+    isSelectingRelated = wasSelecting
+    Err.Raise failure
+End Sub
+
+Private Sub UpdateDetailSummary(ByVal ws As Worksheet)
+    Dim status As String
+    Dim document As String
+    Dim captionSize As Long
+    Dim caption As String
+    ws.Range("C6").Value2 = ""
+    ws.Range("J6").Value2 = ""
+    ws.Range("P6").Value2 = ""
+    caption = "表示中の事案はありません"
+    captionSize = 11
+    If hasDetail Then
+        If currentCase Is Nothing Then
+            ws.Range("C6").Value2 = "新規登録"
+            status = "入力中"
+            caption = "新規登録中 ／ 保存後に表示します"
+        Else
+            With currentCase
+                ws.Range("C6").Value2 = .values("PersonName")
+                ws.Range("J6").Value2 = "13桁番号  " & .PersonKey
+                ws.Range("P6").Value2 = "署  " & .values("Office")
+                status = CStr(.values("Status"))
+                If Len(.invalidReason) > 0 Then status = "要確認"
+                document = Replace(Replace(CStr(.values("DocumentName")), vbCr, " "), vbLf, " ")
+                If Len(document) > 31 Or Len(.invalidReason) > 0 Then captionSize = 9
+                If Len(document) > 42 Then document = Left$(document, 41) & "…"
+                caption = .sourceYear & "年度 ／ 枝番" & .values("Branch") & vbLf & _
+                    document & " ／ " & .values("Status")
+                If Len(.invalidReason) > 0 Then caption = caption & vbLf & .invalidReason
+            End With
+        End If
+    End If
+    ws.Shapes("DetailStatusBadge").TextFrame2.TextRange.Text = status
+    ws.Range("Q9").Font.Size = captionSize
+    ws.Range("Q9").Value2 = caption
+End Sub
+
+Private Function RelatedColumn(ByVal value As String, ByVal width As Long) As String
+    Dim normalized As String
+    Dim letter As String
+    Dim used As Long
+    Dim units As Long
+    Dim index As Long
+    normalized = Replace(Replace(value, vbCr, " "), vbLf, " ")
+    For index = 1 To Len(normalized)
+        letter = Mid$(normalized, index, 1)
+        units = 1
+        If (AscW(letter) And &HFFFF&) > 255 Then units = 2
+        If used + units > width - 5 Then
+            RelatedColumn = RelatedColumn & "…"
+            used = used + 2
+            Exit For
+        End If
+        RelatedColumn = RelatedColumn & letter
+        used = used + units
+    Next
+    RelatedColumn = RelatedColumn & Space$(width - used)
+End Function
+
+Public Sub RelatedListChanged(Optional ByVal confirmedDecision As VbMsgBoxResult = 0)
+    Dim control As ControlFormat
+    Dim index As Long
+    Dim key As String
+    Dim decision As VbMsgBoxResult
+    Dim message As String
+    If isSelectingRelated Or isBusy Or Not hasDetail Then Exit Sub
+    If relatedKeys Is Nothing Or currentCase Is Nothing Then Exit Sub
+    isSelectingRelated = True
+    On Error GoTo Failed
+    Set control = Sheet("詳細").Shapes(RELATED_LIST).ControlFormat
+    index = control.ListIndex
+    If index = relatedCurrentIndex Then GoTo Finished
+    If index < 1 Or index > relatedKeys.Count Then GoTo Finished
+    key = CStr(relatedKeys(index))
+    decision = vbNo
+    If RelatedHasDraft() Then
+        control.ListIndex = relatedCurrentIndex
+        If confirmedDecision = 0 Then
+            decision = MsgBox("変更が保存されていません。" & vbCrLf & _
+                "はい：保存して切替" & vbCrLf & "いいえ：破棄して切替" & vbCrLf & "キャンセル：切替中止", _
+                vbYesNoCancel Or vbQuestion Or vbDefaultButton3, "関連事案の切替")
+        Else
+            decision = confirmedDecision
+        End If
+    End If
+    If Not SwitchRelatedCase(key, decision, message) Then control.ListIndex = relatedCurrentIndex
+Finished:
+    isSelectingRelated = False
+    If Len(message) > 0 Then Notify message
+    Exit Sub
+Failed:
+    message = SafeFailure("関連事案の切替", Err.Number)
+    Resume Finished
+End Sub
+
+
+Private Function RelatedHasDraft() As Boolean
+    RelatedHasDraft = DetailHasChanges()
+End Function
+
+Public Function SwitchRelatedCase(ByVal key As String, ByVal decision As VbMsgBoxResult, ByRef message As String) As Boolean
+    Dim record As CaseRecord
+    If Not hasDetail Or currentCase Is Nothing Or Cases Is Nothing Then Exit Function
+    If Not Cases.Exists(key) Or key = currentCaseKey Then Exit Function
+    Set record = Cases(key)
+    If Len(currentCase.PersonKey) = 0 Or record.PersonKey <> currentCase.PersonKey Then Exit Function
+    If decision = vbCancel Then Exit Function
+    If RelatedHasDraft() Then
+        Select Case decision
+            Case vbYes
+                If Not CommitDetail(False, message) Then Exit Function
+                If Not Cases.Exists(key) Then
+                    message = message & vbCrLf & "切替先が見つかりません。検索から開き直してください。"
+                    Exit Function
+                End If
+                Set record = Cases(key)
+                If currentCase Is Nothing Then Exit Function
+                If record.PersonKey <> currentCase.PersonKey Then Exit Function
+            Case vbNo
+            Case Else
+                Exit Function
+        End Select
+    End If
+    ShowRecord key
+    SwitchRelatedCase = True
+End Function
+
+' --- Operations ---
+Private Function ElapsedSeconds(ByVal started As Double) As Double
+    ElapsedSeconds = Timer - started
+    If ElapsedSeconds < 0 Then ElapsedSeconds = ElapsedSeconds + 86400#
+End Function
+
+Private Function FilesEqual(ByVal first As String, ByVal second As String) As Boolean
+    Dim stream As Object
+    Dim firstBytes As Variant
+    Dim secondBytes As Variant
+    Set stream = CreateObject("ADODB.Stream")
+    stream.Type = 1
+    stream.Open
+    stream.LoadFromFile first
+    firstBytes = stream.Read
+    stream.Close
+    stream.Open
+    stream.LoadFromFile second
+    secondBytes = stream.Read
+    stream.Close
+    FilesEqual = BinaryEqual(firstBytes, secondBytes)
+End Function
+
+Private Function BinaryEqual(ByVal first As Variant, ByVal second As Variant) As Boolean
+    Dim index As Long
+    If UBound(first) <> UBound(second) Then Exit Function
+    For index = LBound(first) To UBound(first)
+        If first(index) <> second(index) Then Exit Function
+    Next
+    BinaryEqual = True
+End Function
+
+Private Function CreateBackup(ByVal book As Workbook, ByVal year As String, ByRef message As String) As String
+    Dim folder As String
+    Dim expanded As String
+    Dim zipFile As String
+    Dim destination As String
+    Dim fileSystem As Object
+    Dim file As Object
+    Dim ws As Worksheet
+    Dim manifest As String
+    Dim index As Long
+    Dim restored As Workbook
+    Dim state As Object
+    Dim separator As String
+    On Error GoTo Failed
+    If Not IsDigits(year, Len(year)) Or Len(year) = 0 Or Len(year) > 8 Then
+        message = "バックアップ対象年度は1～8桁の数字で設定してください。"
+        Exit Function
+    End If
+    If Len(Setting("BackupFolder")) = 0 Then
+        message = "BackupFolderが未設定です。バックアップを作成できないため移動は実行しません。"
+        Exit Function
+    End If
+    folder = NewTempFolder()
+    expanded = NewTempFolder()
+    Set fileSystem = CreateObject("Scripting.FileSystemObject")
+    For Each ws In book.Worksheets
+        index = index + 1
+        WriteUtf8 folder & "\sheet" & index & ".csv", SheetCsv(ws)
+        manifest = manifest & CsvCell("sheet" & index & ".csv") & vbCrLf
+    Next
+    WriteUtf8 folder & "\fields.csv", SheetCsv(Sheet("Fields"))
+    WriteUtf8 folder & "\manifest.csv", manifest
+    WriteUtf8 folder & "\format.txt", "ControllerBackup/3 UTF-8-BOM CRLF CSV typed cells; Date1904=" & CStr(book.Date1904) & "; Year=" & year
+    zipFile = NewEvidencePath("Backup.zip")
+    CreateZip folder, zipFile
+    ExpandZip zipFile, expanded
+    For Each file In fileSystem.GetFolder(folder).Files
+        If Not fileSystem.FileExists(expanded & "\" & file.Name) Then GoTo Failed
+        If Not FilesEqual(file.Path, expanded & "\" & file.Name) Then GoTo Failed
+    Next
+    Set restored = RestoreFolder(expanded)
+    If Not CompareBooks(book, restored) Then GoTo Failed
+    restored.Close SaveChanges:=False
+    Set restored = Nothing
+    separator = "\"
+    If IsWebAddress(Setting("BackupFolder")) Then separator = "/"
+    destination = Setting("BackupFolder")
+    If Right$(destination, 1) = separator Then destination = Left$(destination, Len(destination) - 1)
+    destination = destination & separator & "CaseBackup_" & year & "_" & Format$(Date, "yyyymmdd") & "_" & Format$(Now, "hhnnss") & "_" & CStr(CLng(Timer * 10)) & ".zip"
+    Set state = FileState(destination, message)
+    If state Is Nothing Then Exit Function
+    If state("Exists") Then
+        message = "同名バックアップが存在します。上書きせず移動を中止しました。"
+        Exit Function
+    End If
+    If Not UploadBackup(zipFile, destination, message) Then Exit Function
+    CreateBackup = destination
+    '一時ファイルは照合後も残す。必要なら管理担当がTemp内の該当成果を整理する。
+    Exit Function
+Failed:
+    On Error Resume Next
+    If Not restored Is Nothing Then restored.Close SaveChanges:=False
+    On Error GoTo 0
+    message = "バックアップの作成・ZIP展開・復元照合に失敗しました。管理簿は移動しません。WindowsのZIP機能、保存先、セルエラーを確認してください。"
+End Function
+
+Private Function UploadBackup(ByVal localFile As String, ByVal destination As String, ByRef message As String) As Boolean
+    Dim fileSystem As Object
+    Dim stream As Object
+    Dim bytes As Variant
+    Dim request As Object
+    Dim digestValue As String
+    Dim folderUrl As String
+    Dim relative As String
+    Dim fileName As String
+    Dim endpoint As String
+    On Error GoTo Failed
+    If IsWebAddress(destination) Then
+        If Len(ApiFile(destination)) = 0 Then
+            message = "バックアップ先URLが不正です。同一SharePointサイトの直接フォルダURLを設定してください。"
+            Exit Function
+        End If
+        digestValue = Digest(message)
+        If Len(digestValue) = 0 Then Exit Function
+        folderUrl = Left$(destination, InStrRev(destination, "/") - 1)
+        fileName = Mid$(destination, InStrRev(destination, "/") + 1)
+        relative = Mid$(folderUrl, InStr(9, folderUrl, "/"))
+        endpoint = Setting("SharePointSite") & "/_api/web/GetFolderByServerRelativeUrl('" & _
+            Application.WorksheetFunction.EncodeURL(Replace(relative, "'", "''")) & "')/Files/add(url='" & _
+            Application.WorksheetFunction.EncodeURL(Replace(fileName, "'", "''")) & "',overwrite=false)"
+        Set stream = CreateObject("ADODB.Stream")
+        stream.Type = 1
+        stream.Open
+        stream.LoadFromFile localFile
+        bytes = stream.Read
+        stream.Close
+        Set request = HttpRequest("POST", endpoint, bytes, message, digestValue)
+        If request Is Nothing Then Exit Function
+        If request.status <> 200 And request.status <> 201 Then GoTo Failed
+        Set request = HttpRequest("GET", ApiFile(destination) & "/$value", Empty, message)
+        If request Is Nothing Then Exit Function
+        If request.status <> 200 Then GoTo Failed
+        If Not BinaryEqual(bytes, request.responseBody) Then GoTo Failed
+    Else
+        Set fileSystem = CreateObject("Scripting.FileSystemObject")
+        fileSystem.CopyFile localFile, destination, False
+        If Not FilesEqual(localFile, destination) Then GoTo Failed
+    End If
+    UploadBackup = True
+    Exit Function
+Failed:
+    message = "バックアップ保存結果を確認できません。管理簿は移動しません。バックアップ先の同名ファイルを確認してください。"
+End Function
+
+Private Function PruneBackups(ByVal year As String, ByRef message As String) As Boolean
+    Dim names As New Collection
+    Dim dates As Object
+    Dim days As Variant
+    Dim name As Variant
+    Dim folder As String
+    Dim prefix As String
+    Dim fileSystem As Object
+    Dim file As Object
+    Dim request As Object
+    Dim node As Object
+    Dim dateKey As String
+    Dim index As Long
+    Dim secondIndex As Long
+    Dim swap As String
+    Dim relative As String
+    Dim state As Object
+    Dim digestValue As String
+    On Error GoTo Failed
+    folder = Setting("BackupFolder")
+    prefix = "CaseBackup_" & year & "_"
+    Set dates = NewDictionary()
+    Set fileSystem = CreateObject("Scripting.FileSystemObject")
+    If IsWebAddress(folder) Then
+        relative = Mid$(folder, InStr(9, folder, "/"))
+        Set request = HttpRequest("GET", Setting("SharePointSite") & "/_api/web/GetFolderByServerRelativeUrl('" & _
+            Application.WorksheetFunction.EncodeURL(Replace(relative, "'", "''")) & "')/Files?$select=Name&$top=5000", Empty, message)
+        If request Is Nothing Then Exit Function
+        If request.status <> 200 Then GoTo Failed
+        Set node = request.responseXML.SelectSingleNode("//*[local-name()='link' and @rel='next']")
+        If Not node Is Nothing Then GoTo Failed
+        For Each node In request.responseXML.SelectNodes("//*[local-name()='Name']")
+            names.Add node.Text
+        Next
+    Else
+        For Each file In fileSystem.GetFolder(folder).Files
+            names.Add file.Name
+        Next
+    End If
+    For Each name In names
+        If ManagedBackupName(CStr(name), prefix) Then
+            dateKey = Mid$(CStr(name), Len(prefix) + 1, 8)
+            dates(dateKey) = True
+        End If
+    Next
+    If dates.Count <= 5 Then
+        PruneBackups = True
+        Exit Function
+    End If
+    days = dates.Keys
+    For index = 0 To UBound(days) - 1
+        For secondIndex = index + 1 To UBound(days)
+            If days(index) < days(secondIndex) Then
+                swap = days(index)
+                days(index) = days(secondIndex)
+                days(secondIndex) = swap
+            End If
+        Next
+    Next
+    If IsWebAddress(folder) Then
+        digestValue = Digest(message)
+        If Len(digestValue) = 0 Then Exit Function
+    End If
+    For Each name In names
+        If ManagedBackupName(CStr(name), prefix) Then
+            dateKey = Mid$(CStr(name), Len(prefix) + 1, 8)
+            If dateKey < days(4) Then
+                If IsWebAddress(folder) Then
+                    Set state = FileState(folder & "/" & name, message)
+                    If state Is Nothing Then Exit Function
+                    Set request = HttpRequest("DELETE", ApiFile(folder & "/" & name), Empty, message, digestValue, state("ETag"))
+                    If request Is Nothing Then Exit Function
+                    If request.status <> 200 And request.status <> 204 Then GoTo Failed
+                Else
+                    fileSystem.DeleteFile fileSystem.BuildPath(folder, name), False
+                End If
+            End If
+        End If
+    Next
+    PruneBackups = True
+    Exit Function
+Failed:
+    message = "新しいバックアップと移動は照合済みですが、古いZIPの整理に失敗しました。残ったZIPを保持してください。直近5作成日を超えた自システム形式だけが整理対象です。"
+End Function
+
+Public Sub RestoreBackup()
+    Dim dialog As Object
+    Dim folder As String
+    Dim book As Workbook
+    Dim message As String
+    Dim events As Boolean
+    If Not BeginAction() Then Exit Sub
+    events = Application.EnableEvents
+    On Error GoTo Failed
+    If Setting("ControllerRole") <> "Staff" Then
+        message = "バックアップ復元は常勤（Staff）だけが実行できます。"
+        GoTo Finished
+    End If
+    Set dialog = Application.FileDialog(3)
+    dialog.Title = "バックアップZIPを別の確認用ブックへ復元"
+    dialog.Filters.Clear
+    dialog.Filters.Add "CONTROLLERバックアップ", "*.zip"
+    dialog.AllowMultiSelect = False
+    If dialog.Show <> -1 Then GoTo Finished
+    folder = NewTempFolder()
+    ExpandZip dialog.SelectedItems(1), folder
+    Application.EnableEvents = False
+    Set book = RestoreFolder(folder)
+    RestoreDefinitionSheet folder & "\fields.csv", book, "_復元項目定義"
+    If Left$(ReadUtf8(folder & "\format.txt"), 18) = "CaseLedgerBackup/2" Then
+        RestoreDefinitionSheet folder & "\mappings.csv", book, "_復元年度対応"
+    End If
+    book.Worksheets(1).Activate
+    message = "別の確認用ブックへ復元しました。正式管理簿へは上書きしていません。値・型・数式を確認し、管理担当が保存先を決めてください。書式・図形はCSVバックアップの対象外です。"
+Finished:
+    Application.EnableEvents = events
+    isBusy = False
+    If Len(message) > 0 Then Notify message
+    Exit Sub
+Failed:
+    message = SafeFailure("バックアップ復元", Err.Number)
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    On Error GoTo 0
+    GoTo Finished
+End Sub
+
+Public Function ResolveYearAddress(ByVal year As String, ByRef message As String) As String
+    Dim definition As Variant
+    Dim first As Object
+    Dim second As Object
+    definition = years(year)
+    If Len(CStr(definition(5))) > 0 Then
+        message = year & "年度：" & CStr(definition(5))
+        Exit Function
+    End If
+    If Setting("Transport") = "SharePoint" Then
+        If Not IsWebAddress(definition(3)) Or Not IsWebAddress(definition(4)) Then
+            message = year & "年度：正式運用の保存先はSharePointの直接URLで設定してください。"
+            Exit Function
+        End If
+    ElseIf Setting("Transport") <> "Local" Then
+        message = "Transportは自宅試験のLocalまたは正式運用のSharePointを設定してください。"
+        Exit Function
+    End If
+    If StrComp(definition(3), definition(4), vbTextCompare) = 0 Then
+        message = year & "年度：常勤用と非常勤用の保存先が同一です。"
+        Exit Function
+    End If
+    Set first = FileState(CStr(definition(3)), message)
+    If first Is Nothing Then Exit Function
+    Set second = FileState(CStr(definition(4)), message)
+    If second Is Nothing Then Exit Function
+    If first("Exists") And second("Exists") Then
+        message = year & "年度：複数の候補に管理簿が存在します。正式データを確認してください。推測で保存しません。"
+    ElseIf Not first("Exists") And Not second("Exists") Then
+        message = year & "年度：両方の保存先に管理簿が存在しません。保存先と移動状態を確認してください。"
+    ElseIf first("Exists") Then
+        ResolveYearAddress = definition(3)
+    Else
+        ResolveYearAddress = definition(4)
+    End If
+End Function
+
+Private Function ApiFile(ByVal address As String) As String
+    Dim siteUrl As String
+    Dim hostEnd As Long
+    Dim relative As String
+    siteUrl = Setting("SharePointSite")
+    If Right$(siteUrl, 1) = "/" Then siteUrl = Left$(siteUrl, Len(siteUrl) - 1)
+    If Not IsWebAddress(siteUrl) Then Exit Function
+    If LCase$(Left$(address, Len(siteUrl) + 1)) <> LCase$(siteUrl & "/") Then Exit Function
+    If InStr(address, "%") > 0 Or InStr(address, "?") > 0 Or InStr(address, "#") > 0 Then Exit Function
+    hostEnd = InStr(9, address, "/")
+    If hostEnd = 0 Then Exit Function
+    relative = Mid$(address, hostEnd)
+    ApiFile = siteUrl & "/_api/web/GetFileByServerRelativeUrl('" & Application.WorksheetFunction.EncodeURL(Replace(relative, "'", "''")) & "')"
+End Function
+
+Private Function HttpRequest(ByVal method As String, ByVal endpoint As String, ByVal body As Variant, _
+    ByRef message As String, Optional ByVal digest As String = "", Optional ByVal etag As String = "") As Object
+    Dim request As Object
+    Dim started As Double
+    Dim elapsed As Double
+    On Error GoTo Failed
+    If Len(endpoint) = 0 Then
+        message = "URL不正：SettingsのSharePointSiteと復号済み直接URLを確認してください。"
+        Exit Function
+    End If
+    Set request = CreateObject("MSXML2.XMLHTTP.6.0")
+    request.Open method, endpoint, True
+    request.setRequestHeader "Accept", "application/atom+xml"
+    If Len(digest) > 0 Then request.setRequestHeader "X-RequestDigest", digest
+    If Len(etag) > 0 Then request.setRequestHeader "IF-MATCH", etag
+    If IsEmpty(body) Then
+        request.send
+    Else
+        request.send body
+    End If
+    started = Timer
+    Do While request.readyState <> 4
+        DoEvents
+        elapsed = Timer - started
+        If elapsed < 0 Then elapsed = elapsed + 86400#
+        If elapsed > 20 Then
+            request.abort
+            message = "通信タイムアウト。変更要求の場合は結果不明です。再送せず照合してください。"
+            Exit Function
+        End If
+    Loop
+    Set HttpRequest = request
+    Exit Function
+Failed:
+    message = "通信失敗：認証・接続を確認してください。エラー番号 " & Err.Number & "。変更要求の場合は結果を照合してください。"
+End Function
+
+Private Function XmlText(ByVal xml As Object, ByVal name As String) As String
+    Dim node As Object
+    Set node = xml.SelectSingleNode("//*[local-name()='" & name & "']")
+    If Not node Is Nothing Then XmlText = node.Text
+End Function
+
+Public Function FileState(ByVal address As String, ByRef message As String) As Object
+    Dim result As Object
+    Dim fileSystem As Object
+    Dim file As Object
+    Dim request As Object
+    Dim status As Long
+    On Error GoTo Failed
+    Set result = NewDictionary()
+    result.Add "Exists", False
+    result.Add "Id", ""
+    result.Add "Size", ""
+    result.Add "ETag", ""
+    result.Add "Checkout", ""
+    If IsWebAddress(address) Then
+        Set request = HttpRequest("GET", ApiFile(address), Empty, message)
+        If request Is Nothing Then Exit Function
+        status = request.status
+        Select Case status
+            Case 200
+                result("Id") = XmlText(request.responseXML, "UniqueId")
+                result("Size") = XmlText(request.responseXML, "Length")
+                result("ETag") = XmlText(request.responseXML, "ETag")
+                result("Checkout") = XmlText(request.responseXML, "CheckOutType")
+                If Len(result("Id")) = 0 Or Len(result("ETag")) = 0 Or Len(result("Size")) = 0 Then
+                    message = "認証または応答形式未確認：SharePointのファイル情報を取得できません。"
+                    Exit Function
+                End If
+                result("Exists") = True
+            Case 404
+                '404でもサインインHTML等は不存在の根拠にしない。
+                If Len(XmlText(request.responseXML, "code")) = 0 Then
+                    message = "所在未確認：404応答ですがSharePointのエラー情報を確認できません。"
+                    Exit Function
+                End If
+            Case 401
+                message = "認証失敗（HTTP 401）：SharePointへサインインし直してください。"
+                Exit Function
+            Case 403
+                message = "アクセス権なし（HTTP 403）：管理担当へ権限を確認してください。"
+                Exit Function
+            Case 400
+                message = "URL不正（HTTP 400）：直接ファイルURLを確認してください。"
+                Exit Function
+            Case Else
+                message = "SharePoint通信失敗：HTTP " & status & "。所在を確定できません。"
+                Exit Function
+        End Select
+    Else
+        If InStr(address, ":\") <> 2 And Left$(address, 2) <> "\\" Then
+            message = "アドレス不正：絶対パスを設定してください。"
+            Exit Function
+        End If
+        Set fileSystem = CreateObject("Scripting.FileSystemObject")
+        'GetFileの例外で不存在と権限エラーを分ける。FileExistsだけで欠落と判定しない。
+        On Error Resume Next
+        Err.Clear
+        Set file = fileSystem.GetFile(address)
+        status = Err.Number
+        On Error GoTo Failed
+        If status = 53 Or status = 76 Then
+            result("Exists") = False
+        ElseIf status <> 0 Then
+            message = "ファイル所在確認失敗：アクセス権またはネットワークを確認してください。エラー番号 " & status
+            Exit Function
+        Else
+            result("Exists") = True
+            result("Size") = CStr(file.Size)
+            result("ETag") = CStr(CDbl(file.DateLastModified)) & "|" & CStr(file.Size)
+            result("Checkout") = "2"
+        End If
+    End If
+    Set FileState = result
+    Exit Function
+Failed:
+    message = "所在情報を取得できません。エラー番号 " & Err.Number & "。認証・権限・通信を確認してください。"
+End Function
+
+Private Function Digest(ByRef message As String) As String
+    Dim request As Object
+    Set request = HttpRequest("POST", Setting("SharePointSite") & "/_api/contextinfo", "", message)
+    If request Is Nothing Then Exit Function
+    If request.status <> 200 Then
+        message = "SharePointの変更用認証を取得できません。HTTP " & request.status
+        Exit Function
+    End If
+    Digest = XmlText(request.responseXML, "FormDigestValue")
+    If Len(Digest) = 0 Then message = "SharePointの認証応答が不正です。"
+End Function
+
+Public Sub StartBusiness()
+    ShowBusinessResult True
+End Sub
+
+Public Sub FinishBusiness()
+    ShowBusinessResult False
+End Sub
+
+Private Sub ShowBusinessResult(ByVal isStart As Boolean)
+    Dim message As String
+    ExecuteBusiness isStart, message
+    If Len(message) > 0 Then Notify message
+End Sub
+
+Public Function ExecuteBusiness(ByVal isStart As Boolean, ByRef message As String) As Boolean
+    Dim warnings As String
+    Dim year As String
+    Dim definition As Variant
+    Dim source As String
+    Dim destination As String
+    Dim state As Object
+    Dim afterState As Object
+    Dim book As Workbook
+    Dim evidence As String
+    Dim backup As String
+    Dim fileSystem As Object
+    Dim moved As Boolean
+    Dim ws As Worksheet
+    If Not BeginAction() Then Exit Function
+    On Error GoTo Failed
+    If Setting("ControllerRole") <> "Staff" Then
+        message = "業務開始・終了は常勤（Staff）だけが実行できます。非常勤（General）は管理機能を実行できません。"
+        GoTo Finished
+    End If
+    If PendingSave() Then
+        message = "保存結果が未確認です。保存結果の照合を先に行ってください。移動は実行していません。"
+        GoTo Finished
+    End If
+    If ThisWorkbook.ReadOnly Or Len(ThisWorkbook.Path) = 0 Or ThisWorkbook.FileFormat <> 52 Then
+        message = "CONTROLLERを保存可能なxlsmとして保存してください。管理簿は移動していません。"
+        GoTo Finished
+    End If
+    If Not UiCanLeaveDetail() Then GoTo Finished
+    If Not LoadConfiguration(message) Then GoTo Finished
+    If Not ReconcileMove(message) Then GoTo Finished
+    Set fileSystem = CreateObject("Scripting.FileSystemObject")
+    year = LatestEnabledYear(message)
+    If Len(year) = 0 Or Len(message) > 0 Then GoTo Finished
+    definition = years(year)
+    source = ResolveYearAddress(CStr(year), message)
+    If Len(message) > 0 Then GoTo Finished
+    If isStart Then
+        destination = definition(4)
+    Else
+        destination = definition(3)
+    End If
+    If StrComp(source, destination, vbTextCompare) <> 0 Then
+        Set state = FileState(source, message)
+        If state Is Nothing Then GoTo Finished
+        If state("Checkout") <> "2" Then
+            message = CStr(year) & "年度がチェックアウトされています。移動を中止しました。"
+            GoTo Finished
+        End If
+        'OpenLedgerの書込用はSharePointをチェックアウトするため、移動前は読取専用で検証。
+        Set book = OpenLedger(source, True, message)
+        If book Is Nothing Then GoTo Finished
+        If Not book.Saved Then
+            message = CStr(year) & "年度：Excelが開いた時点で未保存状態です。再計算・リンク・管理簿の内容を確認してください。移動は実行しません。"
+            GoTo Finished
+        End If
+        evidence = NewEvidencePath(book.Name)
+        book.SaveCopyAs evidence
+        If isStart Then
+            backup = CreateBackup(book, CStr(year), message)
+            If Len(message) > 0 Then GoTo Finished
+        End If
+        book.Close SaveChanges:=False
+        Set book = Nothing
+        Set afterState = FileState(source, message)
+        If afterState Is Nothing Then GoTo Finished
+        If state("ETag") <> afterState("ETag") Then
+            message = CStr(year) & "年度：バックアップ中に管理簿が変更されました。移動は実行していません。"
+            GoTo Finished
+        End If
+        Set ws = Sheet("MoveRecovery")
+        PutValue ws.Range("B1"), "移動結果確認待ち"
+        PutValue ws.Range("B2"), source
+        PutValue ws.Range("B3"), destination
+        PutValue ws.Range("B4"), state("Id")
+        PutValue ws.Range("B5"), state("Size")
+        PutValue ws.Range("B6"), state("ETag")
+        PutValue ws.Range("B7"), evidence
+        ThisWorkbook.Save
+        If Not ThisWorkbook.Saved Then
+            message = "移動予定を退避できないため、管理簿は移動しません。"
+            GoTo Finished
+        End If
+        moved = MoveFile(source, destination, state, message)
+        If Not moved Then GoTo Finished
+        If Not ReconcileMove(message) Then GoTo Finished
+        If isStart Then
+            If Not PruneBackups(CStr(year), message) Then
+                warnings = warnings & vbCrLf & CStr(year) & "年度：" & message
+                message = ""
+            End If
+        End If
+    End If
+    Set Cases = Nothing
+    Set currentCase = Nothing
+    SetSetting "BusinessState", IIf(isStart, "業務開始", "業務終了") & " " & Format$(Now, "yyyy-mm-dd hh:nn:ss")
+    ThisWorkbook.Save
+    ExecuteBusiness = True
+    message = year & "年度の" & IIf(isStart, "業務開始", "業務終了") & "の移動確認が完了しました。過年度の管理簿は移動していません。StartControllerで最新を再読込してください。" & warnings
+Finished:
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    On Error GoTo 0
+    isBusy = False
+    Exit Function
+Failed:
+    message = SafeFailure("最新年度の管理簿移動", Err.Number) & " 移動結果を確認するまで再操作しないでください。"
+    Resume Finished
+End Function
+
+Private Function LatestEnabledYear(ByRef message As String) As String
+    Dim year As Variant
+    Dim latestValue As Double
+    If years Is Nothing Then
+        message = "年度設定が未読込です。管理簿は移動しません。"
+        Exit Function
+    End If
+    For Each year In years.Keys
+        If Len(CStr(year)) = 0 Or Len(CStr(year)) > 8 Then
+            LatestEnabledYear = ""
+            message = "最新年度を特定できません。Settingsの有効年度は1～8桁の西暦数字で設定してください。管理簿は移動しません。"
+            Exit Function
+        End If
+        If Not IsDigits(CStr(year), Len(CStr(year))) Then
+            LatestEnabledYear = ""
+            message = "最新年度を特定できません。Settingsの有効年度は西暦数字で設定してください。管理簿は移動しません。"
+            Exit Function
+        End If
+        If CDbl(year) > latestValue Or Len(LatestEnabledYear) = 0 Then
+            latestValue = CDbl(year)
+            LatestEnabledYear = CStr(year)
+        End If
+    Next
+    If Len(LatestEnabledYear) = 0 Then message = "有効な年度がありません。管理簿は移動しません。"
+End Function
+
+Private Function MoveFile(ByVal source As String, ByVal destination As String, ByVal expected As Object, ByRef message As String) As Boolean
+    Dim current As Object
+    Dim target As Object
+    Dim fileSystem As Object
+    Dim request As Object
+    Dim digestValue As String
+    Dim relative As String
+    On Error GoTo Failed
+    Set current = FileState(source, message)
+    If current Is Nothing Then Exit Function
+    Set target = FileState(destination, message)
+    If target Is Nothing Then Exit Function
+    If Not current("Exists") Or target("Exists") Or current("ETag") <> expected("ETag") Then
+        message = "移動元・移動先が確認時から変化しています。移動は実行しません。"
+        Exit Function
+    End If
+    If IsWebAddress(source) Then
+        If Not IsWebAddress(destination) Or Len(ApiFile(destination)) = 0 Then
+            message = "SharePoint内の同一サイトへの移動だけを扱います。移動先設定を確認してください。"
+            Exit Function
+        End If
+        digestValue = Digest(message)
+        If Len(digestValue) = 0 Then Exit Function
+        relative = Mid$(destination, InStr(9, destination, "/"))
+        Set request = HttpRequest("POST", ApiFile(source) & "/moveto(newurl='" & _
+            Application.WorksheetFunction.EncodeURL(Replace(relative, "'", "''")) & "',flags=0)", "", message, digestValue, expected("ETag"))
+        If request Is Nothing Then Exit Function
+        If request.status <> 200 And request.status <> 204 Then
+            message = "移動要求の結果未確認：HTTP " & request.status & "。再送せず移動結果を確認してください。"
+            Exit Function
+        End If
+    Else
+        If IsWebAddress(destination) Then
+            message = "ローカルとSharePointの間では移動しません。"
+            Exit Function
+        End If
+        Set fileSystem = CreateObject("Scripting.FileSystemObject")
+        If StrComp(fileSystem.GetDriveName(source), fileSystem.GetDriveName(destination), vbTextCompare) <> 0 Then
+            message = "ローカル試験は同一ドライブ内のフォルダ間移動に限定します。"
+            Exit Function
+        End If
+        fileSystem.MoveFile source, destination
+    End If
+    MoveFile = True
+    Exit Function
+Failed:
+    message = "移動結果未確認です。エラー番号 " & Err.Number & "。再送せず移動結果を確認してください。"
+End Function
+
+Public Sub ConfirmMoveResult()
+    Dim message As String
+    If Not BeginAction() Then Exit Sub
+    On Error GoTo Failed
+    If Setting("ControllerRole") <> "Staff" Then
+        message = "移動結果の管理操作は常勤（Staff）だけが実行できます。"
+    ElseIf ReconcileMove(message) Then
+        message = "移動待ち記録の照合が完了しました。最新を再読込してください。"
+    End If
+Finished:
+    isBusy = False
+    If Len(message) > 0 Then Notify message
+    Exit Sub
+Failed:
+    message = SafeFailure("移動結果確認", Err.Number)
+    Resume Finished
+End Sub
+
+Private Function ReconcileMove(ByRef message As String) As Boolean
+    Dim ws As Worksheet
+    Dim first As Object
+    Dim second As Object
+    Dim book As Workbook
+    Dim evidence As Workbook
+    Dim address As String
+    On Error GoTo Failed
+    Set ws = Sheet("MoveRecovery")
+    If Len(CStr(ws.Range("B1").Value2)) = 0 Then
+        ReconcileMove = True
+        Exit Function
+    End If
+    Set first = FileState(CStr(ws.Range("B2").Value2), message)
+    If first Is Nothing Then Exit Function
+    Set second = FileState(CStr(ws.Range("B3").Value2), message)
+    If second Is Nothing Then Exit Function
+    If CBool(first("Exists")) = CBool(second("Exists")) Then GoTo Unconfirmed
+    If second("Exists") Then
+        If second("Size") <> CStr(ws.Range("B5").Value2) Then GoTo Unconfirmed
+        If Len(CStr(ws.Range("B4").Value2)) > 0 Then
+            If second("Id") <> CStr(ws.Range("B4").Value2) Then GoTo Unconfirmed
+        End If
+        address = CStr(ws.Range("B3").Value2)
+    Else
+        If first("ETag") <> CStr(ws.Range("B6").Value2) Then GoTo Unconfirmed
+        address = CStr(ws.Range("B2").Value2)
+    End If
+    Set book = OpenLedger(address, True, message)
+    If book Is Nothing Then Exit Function
+    Set evidence = OpenLedger(CStr(ws.Range("B7").Value2), True, message)
+    If evidence Is Nothing Then GoTo Unconfirmed
+    If Not CompareBooks(book, evidence) Then GoTo Unconfirmed
+    book.Close SaveChanges:=False
+    Set book = Nothing
+    evidence.Close SaveChanges:=False
+    Set evidence = Nothing
+    ws.Range("B1").ClearContents
+    ThisWorkbook.Save
+    If Not ThisWorkbook.Saved Then GoTo Unconfirmed
+    '照合用の自動削除は行わない。移動証跡は担当者が照合後に整理する。
+    ReconcileMove = True
+    message = ""
+    Exit Function
+Unconfirmed:
+    message = "移動結果を照合できません。元・先・証跡を管理担当が確認してください。上書き・再送は行いません。"
+    GoTo Cleanup
+Failed:
+    message = SafeFailure("移動結果照合", Err.Number)
+Cleanup:
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    If Not evidence Is Nothing Then evidence.Close SaveChanges:=False
+    PutValue ws.Range("B1"), "移動結果確認待ち"
+    On Error GoTo 0
+End Function
+
+Private Function NewEvidencePath(ByVal fileName As String) As String
+    Dim fileSystem As Object
+    Dim folder As String
+    Set fileSystem = CreateObject("Scripting.FileSystemObject")
+    folder = fileSystem.BuildPath(fileSystem.GetSpecialFolder(2), "Controller_" & fileSystem.GetTempName)
+    fileSystem.CreateFolder folder
+    NewEvidencePath = folder & "\Evidence_" & fileName
+End Function
+
+Private Sub SetSetting(ByVal name As String, ByVal value As String)
+    Dim rowIndex As Long
+    For rowIndex = 2 To LastRow(Sheet("Settings"))
+        If CStr(Sheet("Settings").Cells(rowIndex, 1).Value2) = name Then
+            PutValue Sheet("Settings").Cells(rowIndex, 2), value
+            Exit Sub
+        End If
+    Next
+End Sub
+
+
+Private Function EncodeValue(ByVal value As Variant) As String
+    If IsError(value) Then
+        Err.Raise vbObjectError + 120, "Backup", "Excelエラー値はバックアップできません。元データを確認してください。"
+    End If
+    Select Case VarType(value)
+        Case vbEmpty
+        EncodeValue = "E:"
+        Case vbString
+        EncodeValue = "S:" & CStr(value)
+        Case vbBoolean
+        EncodeValue = "B:" & IIf(value, "1", "0")
+        Case Else
+            If Not (IsNumeric(value)) Then
+                Err.Raise vbObjectError + 120, "Backup", "未対応のデータ型です。"
+            End If
+            EncodeValue = "N:" & Trim$(Str$(CDbl(value)))
+    End Select
+End Function
+
+Private Function DecodeValue(ByVal value As String) As Variant
+    Select Case Left$(value, 2)
+        Case "E:"
+        DecodeValue = Empty
+        Case "S:"
+        DecodeValue = Mid$(value, 3)
+        Case "B:"
+        DecodeValue = (Mid$(value, 3) = "1")
+        Case "N:"
+        DecodeValue = Val(Mid$(value, 3))
+        Case Else
+            Err.Raise vbObjectError + 120, "Backup", "バックアップの型情報が不正です。"
+    End Select
+End Function
+
+Private Function CsvCell(ByVal value As String) As String
+    CsvCell = """" & Replace(value, """", """""") & """"
+End Function
+
+Private Sub WriteUtf8(ByVal address As String, ByVal value As String)
+    Dim stream As Object
+    Set stream = CreateObject("ADODB.Stream")
+    stream.Type = 2
+    stream.Charset = "utf-8"
+    stream.Open
+    stream.WriteText value
+    stream.SaveToFile address, 2
+    stream.Close
+End Sub
+
+Private Function ReadUtf8(ByVal address As String) As String
+    Dim stream As Object
+    Set stream = CreateObject("ADODB.Stream")
+    stream.Type = 2
+    stream.Charset = "utf-8"
+    stream.Open
+    stream.LoadFromFile address
+    ReadUtf8 = stream.ReadText
+    stream.Close
+End Function
+
+Private Function ParseCsv(ByVal text As String) As Collection
+    Dim rows As New Collection
+    Dim row As Collection
+    Dim rowIndex As Long
+    Dim ch As String
+    Dim value As String
+    Dim quoted As Boolean
+    Set row = New Collection
+    rowIndex = 1
+    Do While rowIndex <= Len(text)
+        ch = Mid$(text, rowIndex, 1)
+        If ch = """" Then
+            If quoted And Mid$(text, rowIndex + 1, 1) = """" Then
+                value = value & """"
+                rowIndex = rowIndex + 1
+            Else
+                quoted = Not quoted
+            End If
+        ElseIf ch = "," And Not quoted Then
+            row.Add value
+            value = ""
+        ElseIf ch = vbCr And Not quoted Then
+            If Not (Mid$(text, rowIndex + 1, 1) = vbLf) Then
+                Err.Raise vbObjectError + 120, "Backup", "CSVの改行が不正です。"
+            End If
+            row.Add value
+            rows.Add row
+            Set row = New Collection
+            value = ""
+            rowIndex = rowIndex + 1
+        Else
+            value = value & ch
+        End If
+        rowIndex = rowIndex + 1
+    Loop
+    If quoted Then
+        Err.Raise vbObjectError + 120, "Backup", "CSVの引用符が閉じていません。"
+    End If
+    If Len(value) > 0 Or row.Count > 0 Then
+        row.Add value
+        rows.Add row
+    End If
+    Set ParseCsv = rows
+End Function
+
+Private Function SheetCsv(ByVal ws As Worksheet) As String
+    Dim data As Variant
+    Dim formulas As Variant
+    Dim lines() As String
+    Dim cells() As String
+    Dim rowIndex As Long
+    Dim colIndex As Long
+    Dim rowCount As Long
+    Dim columnCount As Long
+    Dim value As String
+    rowCount = LastRow(ws)
+    columnCount = LastColumn(ws)
+    '最低2x2として取得し、単一セルでも必ず2次元配列にする。
+    data = ws.Cells(1, 1).Resize(Application.Max(2, rowCount), Application.Max(2, columnCount)).Value2
+    formulas = ws.Cells(1, 1).Resize(Application.Max(2, rowCount), Application.Max(2, columnCount)).Formula
+    ReDim lines(0 To rowCount)
+    lines(0) = CsvCell(ws.Name) & "," & CsvCell(CStr(rowCount)) & "," & CsvCell(CStr(columnCount)) & "," & CsvCell(CStr(ws.Visible))
+    ReDim cells(0 To columnCount - 1)
+    For rowIndex = 1 To rowCount
+        For colIndex = 1 To columnCount
+            value = EncodeValue(data(rowIndex, colIndex))
+            If VarType(formulas(rowIndex, colIndex)) = vbString Then
+                If Left$(CStr(formulas(rowIndex, colIndex)), 1) = "=" And ws.Cells(rowIndex, colIndex).HasFormula Then value = "F:" & formulas(rowIndex, colIndex)
+            End If
+            cells(colIndex - 1) = CsvCell(value)
+        Next
+        lines(rowIndex) = Join(cells, ",")
+    Next
+    SheetCsv = Join(lines, vbCrLf) & vbCrLf
+End Function
+
+Private Function NewTempFolder() As String
+    Dim fileSystem As Object
+    Dim folder As String
+    Set fileSystem = CreateObject("Scripting.FileSystemObject")
+    folder = fileSystem.BuildPath(fileSystem.GetSpecialFolder(2), fileSystem.GetTempName)
+    fileSystem.CreateFolder folder
+    NewTempFolder = folder
+End Function
+
+Private Sub CreateZip(ByVal sourceFolder As String, ByVal zipFile As String)
+    Dim shell As Object
+    Dim folder As Object
+    Dim destination As Object
+    Dim stream As Object
+    Dim bytes(0 To 21) As Byte
+    Dim started As Double
+    Dim fileSystem As Object
+    Set fileSystem = CreateObject("Scripting.FileSystemObject")
+    If fileSystem.FileExists(zipFile) Then
+        Err.Raise vbObjectError + 120, "Backup", "ZIPの上書きは行いません。"
+    End If
+    'Windows標準の圧縮フォルダー機能。Windows API・外部実行ファイルは使わない。
+    bytes(0) = 80
+    bytes(1) = 75
+    bytes(2) = 5
+    bytes(3) = 6
+    Set stream = CreateObject("ADODB.Stream")
+    stream.Type = 1
+    stream.Open
+    stream.Write bytes
+    stream.SaveToFile zipFile, 1
+    stream.Close
+    Set shell = CreateObject("Shell.Application")
+    Set folder = shell.Namespace(CVar(sourceFolder))
+    Set destination = shell.Namespace(CVar(zipFile))
+    If Not (Not folder Is Nothing And Not destination Is Nothing) Then
+        Err.Raise vbObjectError + 120, "Backup", "WindowsのZIP機能を利用できません。バックアップ未作成のため移動しません。"
+    End If
+    destination.CopyHere folder.Items, 1556
+    started = Timer
+    Do
+        DoEvents
+        If destination.Items.Count = folder.Items.Count Then Exit Do
+        If Not (ElapsedSeconds(started) < 30) Then
+            Err.Raise vbObjectError + 120, "Backup", "ZIP作成が完了しませんでした。管理簿は移動しません。"
+        End If
+    Loop
+End Sub
+
+Private Sub ExpandZip(ByVal zipFile As String, ByVal folderPath As String)
+    Dim shell As Object
+    Dim source As Object
+    Dim target As Object
+    Dim started As Double
+    Set shell = CreateObject("Shell.Application")
+    Set source = shell.Namespace(CVar(zipFile))
+    Set target = shell.Namespace(CVar(folderPath))
+    If Not (Not source Is Nothing And Not target Is Nothing) Then
+        Err.Raise vbObjectError + 120, "Backup", "ZIPの展開機能を利用できません。"
+    End If
+    target.CopyHere source.Items, 1556
+    started = Timer
+    Do
+        DoEvents
+        If target.Items.Count = source.Items.Count Then Exit Do
+        If Not (ElapsedSeconds(started) < 30) Then
+            Err.Raise vbObjectError + 120, "Backup", "ZIPの展開が完了しませんでした。"
+        End If
+    Loop
+End Sub
+
+Private Function RestoreFolder(ByVal folder As String) As Workbook
+    Dim book As Workbook
+    Dim ws As Worksheet
+    Dim manifest As Collection
+    Dim entry As Variant
+    Dim rows As Collection
+    Dim header As Collection
+    Dim line As Collection
+    Dim rowIndex As Long
+    Dim colIndex As Long
+    Dim count As Long
+    Dim data() As Variant
+    Dim value As String
+    Dim formulaCells As New Collection
+    Dim cell As Variant
+    Dim description As String
+    Dim errorNumber As Long
+    On Error GoTo Failed
+    If Left$(ReadUtf8(folder & "\format.txt"), 18) <> "ControllerBackup/3" And Left$(ReadUtf8(folder & "\format.txt"), 18) <> "CaseLedgerBackup/2" Then
+        Err.Raise vbObjectError + 120, "Backup", "復元形式が違います。"
+    End If
+    Set manifest = ParseCsv(ReadUtf8(folder & "\manifest.csv"))
+    Set book = Application.Workbooks.Add(xlWBATWorksheet)
+    book.Date1904 = (InStr(ReadUtf8(folder & "\format.txt"), "Date1904=True") > 0)
+    For Each entry In manifest
+        If Not (Left$(CStr(entry(1)), 5) = "sheet" And InStr(CStr(entry(1)), "\") = 0 And InStr(CStr(entry(1)), "/") = 0) Then
+            Err.Raise vbObjectError + 120, "Backup", "復元ファイル名が不正です。"
+        End If
+        Set rows = ParseCsv(ReadUtf8(folder & "\" & entry(1)))
+        Set header = rows(1)
+        count = count + 1
+        If count = 1 Then Set ws = book.Worksheets(1) Else Set ws = book.Worksheets.Add(After:=book.Worksheets(book.Worksheets.Count))
+        ws.Name = CStr(header(1))
+        ReDim data(1 To CLng(header(2)), 1 To CLng(header(3)))
+        Set formulaCells = New Collection
+        If Not (rows.Count = UBound(data, 1) + 1) Then
+            Err.Raise vbObjectError + 120, "Backup", "復元行数が一致しません。"
+        End If
+        For rowIndex = 1 To UBound(data, 1)
+            Set line = rows(rowIndex + 1)
+            If Not (line.Count = UBound(data, 2)) Then
+                Err.Raise vbObjectError + 120, "Backup", "復元列数が一致しません。"
+            End If
+            For colIndex = 1 To UBound(data, 2)
+                value = CStr(line(colIndex))
+                If Left$(value, 2) = "F:" Then
+                    formulaCells.Add Array(rowIndex, colIndex, Mid$(value, 3))
+                Else
+                    data(rowIndex, colIndex) = DecodeValue(value)
+                End If
+            Next
+        Next
+        '先に全体を文字形式にし、数式として解釈される文字列の実行を防ぐ。
+        ws.Cells(1, 1).Resize(UBound(data, 1), UBound(data, 2)).NumberFormat = "@"
+        ws.Cells(1, 1).Resize(UBound(data, 1), UBound(data, 2)).Value2 = data
+        For Each cell In formulaCells
+            ws.Cells(cell(0), cell(1)).NumberFormat = "General"
+            ws.Cells(cell(0), cell(1)).Formula = cell(2)
+        Next
+    Next
+    count = 0
+    For Each entry In manifest
+        count = count + 1
+        Set rows = ParseCsv(ReadUtf8(folder & "\" & entry(1)))
+        Set header = rows(1)
+        book.Worksheets(count).Visible = CLng(header(4))
+    Next
+    Set RestoreFolder = book
+    Exit Function
+Failed:
+
+    errorNumber = Err.Number
+    description = Err.Description
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close False
+    On Error GoTo 0
+    Err.Raise errorNumber, "RestoreFolder", description
+End Function
+
+Private Function CompareBooks(ByVal first As Workbook, ByVal second As Workbook) As Boolean
+    Dim rowIndex As Long
+    If first.Date1904 <> second.Date1904 Or first.Worksheets.Count <> second.Worksheets.Count Then Exit Function
+    For rowIndex = 1 To first.Worksheets.Count
+        If SheetCsv(first.Worksheets(rowIndex)) <> SheetCsv(second.Worksheets(rowIndex)) Then Exit Function
+    Next
+    CompareBooks = True
+End Function
+
+Private Function ManagedBackupName(ByVal name As String, ByVal prefix As String) As Boolean
+    Dim suffix As String
+    Dim sequence As String
+    If StrComp(Left$(name, Len(prefix)), prefix, vbBinaryCompare) <> 0 Then Exit Function
+    suffix = Mid$(name, Len(prefix) + 1)
+    If Not suffix Like "########_######_*.zip" Or Len(suffix) < 21 Then Exit Function
+    sequence = Mid$(suffix, 17, Len(suffix) - 20)
+    ManagedBackupName = Not sequence Like "*[!0-9]*"
+End Function
+
+Private Sub RestoreDefinitionSheet(ByVal address As String, ByVal book As Workbook, ByVal name As String)
+    Dim rows As Collection
+    Dim header As Collection
+    Dim line As Collection
+    Dim data() As Variant
+    Dim ws As Worksheet
+    Dim rowIndex As Long
+    Dim colIndex As Long
+    Set rows = ParseCsv(ReadUtf8(address))
+    Set header = rows(1)
+    ReDim data(1 To CLng(header(2)), 1 To CLng(header(3)))
+    For rowIndex = 1 To UBound(data, 1)
+        Set line = rows(rowIndex + 1)
+        For colIndex = 1 To UBound(data, 2)
+            data(rowIndex, colIndex) = DecodeValue(CStr(line(colIndex)))
+        Next
+    Next
+    Set ws = book.Worksheets.Add(After:=book.Worksheets(book.Worksheets.Count))
+    ws.Name = name
+    ws.Cells(1, 1).Resize(UBound(data, 1), UBound(data, 2)).NumberFormat = "@"
+    ws.Cells(1, 1).Resize(UBound(data, 1), UBound(data, 2)).Value2 = data
+    ws.Visible = xlSheetVeryHidden
+End Sub

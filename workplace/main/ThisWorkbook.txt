@@ -1,0 +1,32 @@
+Option Explicit
+
+Private Sub Workbook_Open()
+    On Error GoTo Failed
+    InitializeControllerUi
+    Exit Sub
+Failed:
+    Sheet("検索").Range("C35").Value2 = "操作画面の初期化に失敗しました。最新を再読込してください。"
+End Sub
+
+Private Sub Workbook_SheetSelectionChange(ByVal Sh As Object, ByVal Target As Range)
+    If Sh.Name = "検索" Then ResultSelection Target
+End Sub
+
+Private Sub Workbook_SheetBeforeDoubleClick(ByVal Sh As Object, ByVal Target As Range, Cancel As Boolean)
+    If Sh.Name <> "検索" Then Exit Sub
+    If Intersect(Target, Sh.Range("C20:U33")) Is Nothing Then Exit Sub
+    Cancel = True
+    ResultSelection Target
+    OpenSelected
+End Sub
+
+Private Sub Workbook_SheetActivate(ByVal Sh As Object)
+    If Sh.Name = "検索" Then SearchActivated
+End Sub
+Private Sub Workbook_BeforeSave(ByVal SaveAsUI As Boolean, Cancel As Boolean)
+    If Sheet("CompareResults").Visible = xlSheetVisible Then CloseComparison
+End Sub
+
+Private Sub Workbook_BeforeClose(Cancel As Boolean)
+    If Not UiCanLeaveDetail() Then Cancel = True
+End Sub

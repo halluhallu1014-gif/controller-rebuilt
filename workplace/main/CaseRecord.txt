@@ -1,0 +1,36 @@
+Option Explicit
+
+Public sourceYear As String
+Public sourceAddress As String
+Public sourceSheet As String
+Public sourceRow As Long
+Public originalRow As Variant
+Public sourceColumns As Object
+Public values As Object
+Public invalidReason As String
+
+Private Sub Class_Initialize()
+    Set values = CreateObject("Scripting.Dictionary")
+End Sub
+
+Public Property Get PersonKey() As String
+    Dim number As String
+    If RestoreNumber(values("MaskedNumber"), number) Then PersonKey = number
+End Property
+
+Public Property Get CaseIdentity() As String
+    Dim number As String
+    number = PersonKey
+    If Len(number) = 0 Or Not IsDigits(values("Branch"), 5) Then Exit Property
+    CaseIdentity = number & CStr(values("Branch"))
+End Property
+
+Public Property Get Key() As String
+    Dim identity As String
+    identity = CaseIdentity
+    If Len(identity) = 0 Then
+        Key = sourceYear & "|InvalidRow|" & CStr(sourceRow)
+    Else
+        Key = sourceYear & "|" & identity
+    End If
+End Property

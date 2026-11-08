@@ -1,0 +1,13 @@
+Option Explicit
+
+Private Sub Workbook_Open()
+    Dim wasSaved As Boolean
+    Dim action As String
+    Dim button As Shape
+    wasSaved = ThisWorkbook.Saved
+    action = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!OpenSetup"
+    Set button = ThisWorkbook.Worksheets("設定").Shapes("OpenSetupButton")
+    If button.OnAction <> action Then button.OnAction = action
+    If wasSaved Then ThisWorkbook.Saved = True
+    OpenSetup
+End Sub

@@ -1,0 +1,3424 @@
+Option Explicit
+
+Public Sub InstallControllerMain()
+    Dim book As Workbook
+    Dim page As Worksheet
+    Dim sheetName As Variant
+    Dim previousEvents As Boolean
+    Dim previousScreen As Boolean
+    Dim phase As String
+    previousEvents = Application.EnableEvents
+    previousScreen = Application.ScreenUpdating
+    On Error GoTo Failed
+    Set book = ThisWorkbook
+    phase = "空のブックを確認"
+    If book.ReadOnly Or book.Worksheets.Count <> 1 Or book.Sheets.Count <> 1 Then Err.Raise 5
+    Set page = book.Worksheets(1)
+    If Application.CountA(page.UsedRange) <> 0 Or page.Shapes.Count <> 0 Or book.Names.Count <> 0 Then Err.Raise 5
+    Application.EnableEvents = False
+    Application.ScreenUpdating = False
+    book.Styles("Normal").Font.Name = "Carlito"
+    book.Styles("Normal").Font.Size = 11
+    phase = "シートを作成"
+    page.Name = "検索"
+    For Each sheetName In Array("詳細", "Settings", "Fields", "Comparison", "Recovery", "MoveRecovery", "CompareResults", "History", "Calendar")
+        Set page = book.Worksheets.Add(After:=page)
+        page.Name = CStr(sheetName)
+    Next
+    phase = "検索"
+    Set page = book.Worksheets("検索")
+    InstallSheet1 page
+    phase = "詳細"
+    Set page = book.Worksheets("詳細")
+    InstallSheet2 page
+    AlignInstalledDetail page
+    phase = "Settings"
+    Set page = book.Worksheets("Settings")
+    InstallSheet3 page
+    phase = "Fields"
+    Set page = book.Worksheets("Fields")
+    InstallSheet4 page
+    phase = "Comparison"
+    Set page = book.Worksheets("Comparison")
+    InstallSheet5 page
+    phase = "Recovery"
+    Set page = book.Worksheets("Recovery")
+    InstallSheet6 page
+    phase = "MoveRecovery"
+    Set page = book.Worksheets("MoveRecovery")
+    InstallSheet7 page
+    phase = "CompareResults"
+    Set page = book.Worksheets("CompareResults")
+    InstallSheet8 page
+    phase = "History"
+    Set page = book.Worksheets("History")
+    InstallSheet9 page
+    phase = "Calendar"
+    Set page = book.Worksheets("Calendar")
+    InstallSheet10 page
+    phase = "選択肢の名前と入力規則"
+    AddInstallChoice book, "P", "DocumentName", "F29"
+    AddInstallChoice book, "Q", "TaxType", "F27"
+    AddInstallChoice book, "R", "Status", "F36"
+    book.Worksheets("詳細").Protect DrawingObjects:=False, UserInterfaceOnly:=True
+    book.Worksheets("検索").Activate
+    phase = "構成と起動を確認"
+    InitializeControllerUi
+    VerifyControllerInstall book
+    Application.EnableEvents = previousEvents
+    Application.ScreenUpdating = previousScreen
+    MsgBox "CONTROLLERの構築と構成確認が完了しました。", vbInformation
+    Exit Sub
+Failed:
+    Dim message As String
+    message = "導入不合格。工程 " & phase & "、エラー番号 " & Err.Number & " " & Err.Description & _
+        "。ブックを保存せず閉じてください。"
+    Application.EnableEvents = previousEvents
+    Application.ScreenUpdating = previousScreen
+    MsgBox message, vbCritical
+End Sub
+
+Private Sub AddInstallChoice(ByVal book As Workbook, ByVal column As String, ByVal fieldId As String, ByVal address As String)
+    Dim first As String
+    Dim source As String
+    first = "Settings!$" & column & "$2"
+    source = first & ":$" & column & "$501"
+    book.Names.Add Name:="ControllerChoice" & fieldId, _
+        RefersTo:="=" & first & ":INDEX(" & source & ",MAX(1,COUNTA(" & source & ")))"
+    With book.Worksheets("詳細").Range(address).Validation
+        .Add Type:=xlValidateList, Formula1:="=ControllerChoice" & fieldId
+        .ShowError = False
+        .InCellDropdown = True
+    End With
+End Sub
+
+Private Sub VerifyControllerInstall(ByVal book As Workbook)
+    Dim shape As Shape
+    Dim id As Variant
+    Dim message As String
+    If book.Worksheets.Count <> 10 Or book.Names.Count <> 3 Then Err.Raise 5, , "シートまたは名前定義"
+    Set shape = book.Worksheets("詳細").Shapes("RelatedCasesList")
+    If shape.Type <> msoFormControl Then Err.Raise 5, , "関連事案一覧の種類"
+    If shape.FormControlType <> xlListBox Or Not shape.OnAction Like "*!RelatedListChanged" Then Err.Raise 5, , "関連事案一覧の割当"
+    For Each id In Array("Calendar_ReceivedDate", "Calendar_DraftDate", "Calendar_ApprovedDate", _
+        "Calendar_IssuedDate", "UI_コピー取込", "UI_選択項目へ取込")
+        If Len(book.Worksheets("詳細").Shapes(CStr(id)).OnAction) > 0 Then Err.Raise 5, , "未接続ボタン"
+    Next
+    For Each id In Array("F29", "F27", "F36")
+        If book.Worksheets("詳細").Range(CStr(id)).Validation.Type <> xlValidateList Then Err.Raise 5, , "入力規則"
+    Next
+    If Not ValidatePresentation(message) Then Err.Raise 5, , message
+End Sub
+
+Private Sub InstallButtonFont(ByVal shape As Shape, ByVal caption As String, ByVal fontName As String, ByVal size As Single)
+    With shape.TextFrame2.TextRange
+        .Text = caption
+        .Font.Name = fontName
+        .Font.Size = size
+    End With
+End Sub
+
+
+Private Sub InstallSheet1(ByVal page As Worksheet)
+    page.Activate
+    ThisWorkbook.Windows(1).Zoom = 95
+    ThisWorkbook.Windows(1).DisplayGridlines = False
+    page.Rows("1:54").RowHeight = 14.25
+    page.Range(page.Columns(1), page.Columns(2)).ColumnWidth = 2.5
+    page.Range(page.Columns(3), page.Columns(22)).ColumnWidth = 5.38
+    page.Range(page.Columns(23), page.Columns(23)).ColumnWidth = 2.5
+    page.Range(page.Columns(24), page.Columns(24)).ColumnWidth = 2
+    page.Range(page.Columns(24), page.Columns(24)).EntireColumn.Hidden = True
+    page.Rows(1).RowHeight = 9
+    page.Rows(2).RowHeight = 14.1
+    page.Rows(3).RowHeight = 14.1
+    page.Rows(4).RowHeight = 14.1
+    page.Rows(5).RowHeight = 8.1
+    page.Rows(6).RowHeight = 3.95
+    page.Rows(7).RowHeight = 32.1
+    page.Rows(8).RowHeight = 6
+    page.Rows(9).RowHeight = 15
+    page.Rows(10).RowHeight = 15
+    page.Rows(11).RowHeight = 6
+    page.Rows(12).RowHeight = 20.1
+    page.Rows(13).RowHeight = 20.1
+    page.Rows(14).RowHeight = 21.95
+    page.Rows(15).RowHeight = 3.95
+    page.Rows(16).RowHeight = 3.95
+    page.Rows(17).RowHeight = 27.95
+    page.Rows(18).RowHeight = 2.1
+    page.Rows(19).RowHeight = 24
+    page.Rows(20).RowHeight = 21
+    page.Rows(21).RowHeight = 21
+    page.Rows(22).RowHeight = 21
+    page.Rows(23).RowHeight = 21
+    page.Rows(24).RowHeight = 21
+    page.Rows(25).RowHeight = 21
+    page.Rows(26).RowHeight = 21
+    page.Rows(27).RowHeight = 21
+    page.Rows(28).RowHeight = 21
+    page.Rows(29).RowHeight = 21
+    page.Rows(30).RowHeight = 21
+    page.Rows(31).RowHeight = 21
+    page.Rows(32).RowHeight = 21
+    page.Rows(33).RowHeight = 21
+    page.Rows(34).RowHeight = 6
+    page.Rows(35).RowHeight = 9.95
+    page.Rows(36).RowHeight = 9.95
+    page.Rows(37).RowHeight = 9.95
+    page.Rows(38).RowHeight = 9.95
+    page.Rows(39).RowHeight = 17.1
+    page.Rows(40).RowHeight = 30
+    page.Rows(41).RowHeight = 5.1
+    page.Rows(42).RowHeight = 5.1
+    page.Rows(43).RowHeight = 18.75
+    page.Rows(44).RowHeight = 18.75
+    page.Rows(45).RowHeight = 18.75
+    page.Rows(46).RowHeight = 18.75
+    page.Rows(47).RowHeight = 18.75
+    page.Rows(48).RowHeight = 18.75
+    page.Rows(49).RowHeight = 18.75
+    page.Rows(50).RowHeight = 18.75
+    page.Rows(51).RowHeight = 18.75
+    page.Rows(52).RowHeight = 18.75
+    page.Rows(53).RowHeight = 18.75
+    page.Rows(54).RowHeight = 18.75
+    InstallCells1_1 page
+    InstallCells1_2 page
+    InstallShapes1 page
+    page.Range("C9").Value2 = "氏名"
+    page.Shapes("ControllerFilterOffice0").ControlFormat.Value = xlOn
+End Sub
+
+Private Sub InstallCells1_1(ByVal page As Worksheet)
+    ApplyInstallStyle page.Range("A1,B1,C1,D1,E1,F1,G1,H1,I1,J1,K1,L1,M1,N1,O1,P1,Q1,R1,S1,T1,U1,V1,W1,X1,A2,X2,A3,X3,A4,X4,A5,X5,A6,X6,A7,X7,A8,X8,A9,X9,A10,X10,A11,X11,A12,X12,A13,X13,A14,X14,A15,X15,A16,X16,A17,X17,A18,X18,A19,A20,A21,A22,A23,A24,A25"), 1
+    ApplyInstallStyle page.Range("A26,A27,A28,A29,A30,A31,A32,A33,A34,X34,A35,X35,A36,X36,A37,X37,A38,X38,A39,X39,A40,X40,A41,X41,A42,X42,A43,B43,C43,D43,E43,F43,G43,H43,I43,J43,K43,L43,M43,N43,O43,P43,Q43,R43,S43,T43,U43,V43,W43,X43,A44,B44,C44,D44,E44"), 1
+    ApplyInstallStyle page.Range("F44,G44,H44,I44,J44,K44,L44,M44,N44,O44,P44,Q44,R44,S44,T44,U44,V44,W44,X44,A45,B45,C45,D45,E45,F45,G45,H45,I45,J45,K45,L45,M45,N45,O45,P45,Q45,R45,S45,T45,U45,V45,W45,X45,A46,B46,C46,D46,E46,F46,G46,H46,I46,J46,K46,L46"), 1
+    ApplyInstallStyle page.Range("M46,N46,O46,P46,Q46,R46,S46,T46,U46,V46,W46,X46,A47,B47,C47,D47,E47,F47,G47,H47,I47,J47,K47,L47,M47,N47,O47,P47,Q47,R47,S47,T47,U47,V47,W47,X47,A48,B48,C48,D48,E48,F48,G48,H48,I48,J48,K48,L48,M48,N48,O48,P48,Q48,R48,S48"), 1
+    ApplyInstallStyle page.Range("T48,U48,V48,W48,X48,A49,B49,C49,D49,E49,F49,G49,H49,I49,J49,K49,L49,M49,N49,O49,P49,Q49,R49,S49,T49,U49,V49,W49,X49,A50,B50,C50,D50,E50,F50,G50,H50,I50,J50,K50,L50,M50,N50,O50,P50,Q50,R50,S50,T50,U50,V50,W50,X50,A51,B51"), 1
+    ApplyInstallStyle page.Range("C51,D51,E51,F51,G51,H51,I51,J51,K51,L51,M51,N51,O51,P51,Q51,R51,S51,T51,U51,V51,W51,X51,A52,B52,C52,D52,E52,F52,G52,H52,I52,J52,K52,L52,M52,N52,O52,P52,Q52,R52,S52,T52,U52,V52,W52,X52,A53,B53,C53,D53,E53,F53,G53,H53,I53"), 1
+    ApplyInstallStyle page.Range("J53,K53,L53,M53,N53,O53,P53,Q53,R53,S53,T53,U53,V53,W53,X53,A54,B54,C54,D54,E54,F54,G54,H54,I54,J54,K54,L54,M54,N54,O54,P54,Q54,R54,S54,T54,U54,V54,W54,X54"), 1
+    ApplyInstallStyle page.Range("X20,X22,X24,X26,X28,X30,X32"), 3
+    ApplyInstallStyle page.Range("X21,X23,X25,X27,X29,X31,X33"), 4
+    ApplyInstallStyle page.Range("P7,Q7,R7,S7,T7,U7"), 14
+    ApplyInstallStyle page.Range("B6,C6,D6,E6,F6,G6,H6,I6,J6,K6,L6,M6,N6,O6,P6,Q6,R6,S6,T6,U6,V6,W6,B7,V7,W7,B8,C8,D8,E8,F8,G8,H8,I8,J8,K8,L8,M8,N8,O8,P8,Q8,R8,S8,T8,U8,V8,W8,B9,Q9,R9,S9,T9,U9,V9,W9,B10,Q10,R10,S10,T10,U10,V10,W10,B11,C11,D11,E11,F11,G11"), 15
+    ApplyInstallStyle page.Range("H11,I11,J11,K11,L11,M11,N11,O11,P11,Q11,R11,S11,T11,U11,V11,W11,B12,V12,W12,B13,C13,D13,E13,F13,G13,H13,I13,J13,K13,L13,M13,N13,O13,P13,Q13,R13,S13,T13,U13,V13,W13,B14,M14,N14,O14,P14,Q14,R14,S14,T14,U14,V14,W14,B15,C15"), 15
+    ApplyInstallStyle page.Range("D15,E15,F15,G15,H15,I15,J15,K15,L15,M15,N15,O15,P15,Q15,R15,S15,T15,U15,V15,W15,B16,C16,D16,E16,F16,G16,H16,I16,J16,K16,L16,M16,N16,O16,P16,Q16,R16,S16,T16,U16,V16,W16,B17,P17,Q17,R17,S17,T17,U17,V17,W17,B18,P18,Q18,R18"), 15
+    ApplyInstallStyle page.Range("S18,T18,U18,V18,W18,B19,V19,W19,B20,V20,W20,B21,V21,W21,B22,V22,W22,B23,V23,W23,B24,V24,W24,B25,V25,W25,B26,V26,W26,B27,V27,W27,B28,V28,W28,B29,V29,W29,B30,V30,W30,B31,V31,W31,B32,V32,W32,B33,V33,W33,B34,C34,D34,E34,F34"), 15
+    ApplyInstallStyle page.Range("G34,H34,I34,J34,K34,L34,M34,N34,O34,P34,Q34,R34,S34,T34,U34,V34,W34,B35,Q35,R35,S35,T35,U35,V35,W35,B36,Q36,R36,S36,T36,U36,V36,W36,B37,Q37,R37,S37,T37,U37,V37,W37,B38,C38,D38,E38,F38,G38,H38,I38,J38,K38,L38,M38,N38,O38"), 15
+    ApplyInstallStyle page.Range("P38,Q38,R38,S38,T38,U38,V38,W38,B39,D39,E39,F39,G39,H39,I39,J39,K39,L39,M39,N39,O39,P39,Q39,R39,S39,T39,U39,V39,W39,B40,C40,D40,E40,F40,G40,H40,I40,J40,K40,L40,M40,N40,O40,P40,Q40,R40,S40,T40,U40,V40,W40,B41,C41,D41,E41"), 15
+    ApplyInstallStyle page.Range("F41,G41,H41,I41,J41,K41,L41,M41,N41,O41,P41,Q41,R41,S41,T41,U41,V41,W41,B42,C42,D42,E42,F42,G42,H42,I42,J42,K42,L42,M42,N42,O42,P42,Q42,R42,S42,T42,U42,V42,W42"), 15
+    ApplyInstallStyle page.Range("C39"), 16
+    ApplyInstallStyle page.Range("X19"), 20
+    ApplyInstallStyle page.Range("C35"), 35
+    ApplyInstallStyle page.Range("D35,E35,F35,G35,H35,I35,J35,K35,L35,M35,N35,O35,P35,C36,D36,E36,F36,G36,H36,I36,J36,K36,L36,M36,N36,O36,P36,C37,D37,E37,F37,G37,H37,I37,J37,K37,L37,M37,N37,O37,P37"), 36
+    ApplyInstallStyle page.Range("C21,D21,E21,F21,G21,H21,I21,J21,K21,L21,M21,N21,O21,P21,Q21,R21,S21,T21,U21,C23,D23,E23,F23,G23,H23,I23,J23,K23,L23,M23,N23,O23,P23,Q23,R23,S23,T23,U23,C25,D25,E25,F25,G25,H25,I25,J25,K25,L25,M25,N25,O25,P25,Q25,R25,S25"), 37
+    ApplyInstallStyle page.Range("T25,U25,C27,D27,E27,F27,G27,H27,I27,J27,K27,L27,M27,N27,O27,P27,Q27,R27,S27,T27,U27,C29,D29,E29,F29,G29,H29,I29,J29,K29,L29,M29,N29,O29,P29,Q29,R29,S29,T29,U29,C31,D31,E31,F31,G31,H31,I31,J31,K31,L31,M31,N31,O31,P31,Q31"), 37
+    ApplyInstallStyle page.Range("R31,S31,T31,U31,C33,D33,E33,F33,G33,H33,I33,J33,K33,L33,M33,N33,O33,P33,Q33,R33,S33,T33,U33"), 37
+    ApplyInstallStyle page.Range("C22,D22,E22,F22,G22,H22,I22,J22,K22,L22,M22,N22,O22,P22,Q22,R22,S22,T22,U22,C24,D24,E24,F24,G24,H24,I24,J24,K24,L24,M24,N24,O24,P24,Q24,R24,S24,T24,U24,C26,D26,E26,F26,G26,H26,I26,J26,K26,L26,M26,N26,O26,P26,Q26,R26,S26"), 38
+    ApplyInstallStyle page.Range("T26,U26,C28,D28,E28,F28,G28,H28,I28,J28,K28,L28,M28,N28,O28,P28,Q28,R28,S28,T28,U28,C30,D30,E30,F30,G30,H30,I30,J30,K30,L30,M30,N30,O30,P30,Q30,R30,S30,T30,U30,C32,D32,E32,F32,G32,H32,I32,J32,K32,L32,M32,N32,O32,P32,Q32"), 38
+    ApplyInstallStyle page.Range("R32,S32,T32,U32"), 38
+    ApplyInstallStyle page.Range("C19,D19,E19,F19,G19,H19,I19,J19,K19,L19,M19,N19,O19,P19,Q19,R19,S19,T19,U19"), 39
+    ApplyInstallStyle page.Range("C20,D20,E20,F20,G20,H20,I20,J20,K20,L20,M20,N20,O20,P20,Q20,R20,S20,T20,U20"), 40
+    ApplyInstallStyle page.Range("B5,C5,D5,E5,F5,G5,H5,I5,J5,K5,L5,M5,N5,O5,P5,Q5,R5,S5,T5,U5,V5,W5,F12,G12,H12,I12,J12,K12,L12,M12,N12,O12,P12,Q12,R12,S12,T12,U12,C14,D14,E14,F14,G14,H14,I14,J14,K14,L14"), 41
+    ApplyInstallStyle page.Range("C17,D17,E17,F17,G17,H17,I17,J17,K17,L17,M17,N17,O17,C18,D18,E18,F18,G18,H18,I18,J18,K18,L18,M18,N18,O18"), 42
+    ApplyInstallStyle page.Range("C9,D9,C10,D10,C12,D12,E12"), 43
+    ApplyInstallStyle page.Range("B2,C2,D2,E2,F2,G2,H2,I2,J2,K2,L2,M2,N2,O2,P2,Q2,R2,S2,T2,U2,V2,W2,B3,C3,D3,E3,F3,G3,H3,I3,J3,K3,L3,M3,N3,O3,P3,Q3,R3,S3,T3,U3,V3,W3,B4,C4,D4,E4,F4,G4,H4,I4,J4,K4,L4,M4,N4,O4,P4,Q4,R4,S4,T4,U4,V4,W4"), 44
+    ApplyInstallStyle page.Range("E9,F9,G9,H9,I9,J9,K9,L9,M9,N9,O9,P9,E10,F10,G10,H10,I10,J10,K10,L10,M10,N10,O10,P10"), 45
+    ApplyInstallStyle page.Range("C7,D7,E7,F7,G7,H7,I7,J7,K7,L7,M7,N7,O7"), 46
+    page.Range("B2").Value2 = "CONTROLLER / 検索"
+    page.Range("C7").Value2 = "氏名・ふりがなで検索"
+    page.Range("C12").Value2 = "署"
+    page.Range("C19").Value2 = "署"
+    page.Range("F19").Value2 = "氏名"
+    page.Range("K19").Value2 = "ふりがな"
+    page.Range("P19").Value2 = "文書名"
+    page.Range("T19").Value2 = "状態"
+    page.Range("C39").Value2 = "補助操作"
+    page.Range("C17").Value2 = "検索結果 0件　1 / 1ページ"
+    page.Range("C35").Value2 = "一覧の行を選択すると、詳細を開けます。"
+    page.Range("B2:W4").Merge
+    page.Range("B5:W5").Merge
+    page.Range("C9:D10").Merge
+    page.Range("E9:P10").Merge
+    page.Range("C7:O7").Merge
+    page.Range("C12:E12").Merge
+    page.Range("F12:I12").Merge
+    page.Range("J12:M12").Merge
+    page.Range("N12:Q12").Merge
+    page.Range("R12:U12").Merge
+    page.Range("C14:L14").Merge
+    page.Range("C19:E19").Merge
+    page.Range("C20:E20").Merge
+    page.Range("C21:E21").Merge
+    page.Range("K19:O19").Merge
+    page.Range("K20:O20").Merge
+    page.Range("K21:O21").Merge
+    page.Range("C17:O18").Merge
+    page.Range("C22:E22").Merge
+    page.Range("C23:E23").Merge
+    page.Range("C24:E24").Merge
+    page.Range("C25:E25").Merge
+    page.Range("C26:E26").Merge
+    page.Range("F32:J32").Merge
+    page.Range("C27:E27").Merge
+    page.Range("C28:E28").Merge
+    page.Range("C29:E29").Merge
+    page.Range("C30:E30").Merge
+    page.Range("C31:E31").Merge
+End Sub
+
+Private Sub InstallCells1_2(ByVal page As Worksheet)
+    page.Range("K33:O33").Merge
+    page.Range("C32:E32").Merge
+    page.Range("C33:E33").Merge
+    page.Range("F19:J19").Merge
+    page.Range("F20:J20").Merge
+    page.Range("F21:J21").Merge
+    page.Range("F22:J22").Merge
+    page.Range("F23:J23").Merge
+    page.Range("F24:J24").Merge
+    page.Range("F25:J25").Merge
+    page.Range("F26:J26").Merge
+    page.Range("F27:J27").Merge
+    page.Range("F28:J28").Merge
+    page.Range("F29:J29").Merge
+    page.Range("F30:J30").Merge
+    page.Range("F31:J31").Merge
+    page.Range("K24:O24").Merge
+    page.Range("K25:O25").Merge
+    page.Range("K26:O26").Merge
+    page.Range("K27:O27").Merge
+    page.Range("K28:O28").Merge
+    page.Range("K22:O22").Merge
+    page.Range("K23:O23").Merge
+    page.Range("P19:S19").Merge
+    page.Range("P20:S20").Merge
+    page.Range("P21:S21").Merge
+    page.Range("P22:S22").Merge
+    page.Range("P23:S23").Merge
+    page.Range("P24:S24").Merge
+    page.Range("P25:S25").Merge
+    page.Range("P26:S26").Merge
+    page.Range("P27:S27").Merge
+    page.Range("P28:S28").Merge
+    page.Range("T19:U19").Merge
+    page.Range("T20:U20").Merge
+    page.Range("T21:U21").Merge
+    page.Range("T22:U22").Merge
+    page.Range("T23:U23").Merge
+    page.Range("T24:U24").Merge
+    page.Range("T25:U25").Merge
+    page.Range("T26:U26").Merge
+    page.Range("T27:U27").Merge
+    page.Range("T28:U28").Merge
+    page.Range("C35:P37").Merge
+    page.Range("T29:U29").Merge
+    page.Range("T30:U30").Merge
+    page.Range("T31:U31").Merge
+    page.Range("T32:U32").Merge
+    page.Range("T33:U33").Merge
+    page.Range("P29:S29").Merge
+    page.Range("P30:S30").Merge
+    page.Range("P31:S31").Merge
+    page.Range("P32:S32").Merge
+    page.Range("P33:S33").Merge
+    page.Range("F33:J33").Merge
+    page.Range("K29:O29").Merge
+    page.Range("K30:O30").Merge
+    page.Range("K31:O31").Merge
+    page.Range("K32:O32").Merge
+End Sub
+
+Private Sub InstallShapes1(ByVal page As Worksheet)
+    Dim shape As Shape
+
+    Set shape = page.Shapes.AddShape(5, 579.5000, 98.2499, 140.0000, 30.0000)
+    shape.Name = "SearchButton"
+    InstallButtonFont shape, "検索", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 16777215
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!FindRecords"
+
+    Set shape = page.Shapes.AddShape(5, 507.5000, 61.4999, 212.0000, 30.0000)
+    shape.Name = "NewCaseButton"
+    InstallButtonFont shape, "＋ 新規登録", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 16777215
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!NewCase"
+
+    Set shape = page.Shapes.AddShape(5, 579.5000, 555.3751, 140.0000, 30.0000)
+    shape.Name = "OpenSelectedButton"
+    InstallButtonFont shape, "詳細を開く", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 16777215
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!OpenSelected"
+
+    Set shape = page.Shapes.AddShape(5, 507.5000, 205.1250, 104.0000, 24.0000)
+    shape.Name = "ControllerPrevious"
+    InstallButtonFont shape, "前へ", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 4861207
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 16248031
+    shape.Line.ForeColor.RGB = 16248031
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!PreviousPage"
+
+    Set shape = page.Shapes.AddShape(5, 615.5000, 205.1250, 104.0000, 24.0000)
+    shape.Name = "ControllerNext"
+    InstallButtonFont shape, "次へ", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 4861207
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 16248031
+    shape.Line.ForeColor.RGB = 16248031
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!NextPage"
+
+    Set shape = page.Shapes.AddShape(5, 39.5000, 613.2500, 140.0000, 26.0000)
+    shape.Name = "ControllerReload"
+    InstallButtonFont shape, "最新を再読込", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 4861207
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 16777215
+    shape.Line.ForeColor.RGB = 16183273
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!StartController"
+
+    Set shape = page.Shapes.AddShape(5, 219.5000, 613.2500, 140.0000, 26.0000)
+    shape.Name = "ControllerSaveRecovery"
+    InstallButtonFont shape, "保存を再確認", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 4861207
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 16777215
+    shape.Line.ForeColor.RGB = 16183273
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!ConfirmSaveResult"
+
+    Set shape = page.Shapes.AddShape(5, 579.5000, 613.2500, 140.0000, 26.0000)
+    shape.Name = "ControllerOperations"
+    InstallButtonFont shape, "常勤の管理", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 4861207
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 16777215
+    shape.Line.ForeColor.RGB = 16183273
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = 0
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!OpenOperations"
+
+    Set shape = page.Shapes.AddShape(5, 399.5000, 613.2500, 140.0000, 26.0000)
+    shape.Name = "ControllerCompare"
+    InstallButtonFont shape, "整理簿と照合", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 4861207
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 16777215
+    shape.Line.ForeColor.RGB = 16183273
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!OpenComparison"
+
+    Set shape = page.Shapes.AddFormControl(4, 145.5000, 132.7500, 576.0000, 41.2500)
+    shape.Name = "ControllerFilterGroup"
+    shape.DrawingObject.Caption = ""
+    shape.Placement = 2
+    shape.Locked = True
+    shape.Visible = 0
+
+    Set shape = page.Shapes.AddFormControl(7, 150.0000, 135.0000, 134.2500, 18.7500)
+    shape.Name = "ControllerFilterOffice0"
+    shape.DrawingObject.Caption = "すべて"
+    shape.Placement = 2
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!FindRecords"
+
+    Set shape = page.Shapes.AddFormControl(1, 40.5000, 174.7500, 120.0000, 18.7500)
+    shape.Name = "ControllerFilterClosed"
+    shape.DrawingObject.Caption = "終了分を除く"
+    shape.Placement = 2
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!FindRecords"
+End Sub
+
+Private Sub InstallSheet2(ByVal page As Worksheet)
+    page.Activate
+    ThisWorkbook.Windows(1).Zoom = 95
+    ThisWorkbook.Windows(1).DisplayGridlines = False
+    page.Rows("1:65").RowHeight = 14.25
+    page.Range(page.Columns(1), page.Columns(2)).ColumnWidth = 2.5
+    page.Range(page.Columns(3), page.Columns(22)).ColumnWidth = 5.38
+    page.Range(page.Columns(23), page.Columns(23)).ColumnWidth = 2.5
+    page.Range(page.Columns(24), page.Columns(25)).ColumnWidth = 0.92
+    page.Rows(1).RowHeight = 9
+    page.Rows(2).RowHeight = 14.1
+    page.Rows(3).RowHeight = 14.1
+    page.Rows(4).RowHeight = 14.1
+    page.Rows(5).RowHeight = 8.1
+    page.Rows(6).RowHeight = 30.95
+    page.Rows(7).RowHeight = 12
+    page.Rows(8).RowHeight = 26.1
+    page.Rows(9).RowHeight = 17.1
+    page.Rows(10).RowHeight = 36.95
+    page.Rows(11).RowHeight = 42.95
+    page.Rows(12).RowHeight = 23.1
+    page.Rows(13).RowHeight = 5.1
+    page.Rows(14).RowHeight = 12.95
+    page.Rows(15).RowHeight = 12.95
+    page.Rows(16).RowHeight = 5.1
+    page.Rows(17).RowHeight = 12.95
+    page.Rows(18).RowHeight = 12.95
+    page.Rows(19).RowHeight = 5.1
+    page.Rows(20).RowHeight = 12.95
+    page.Rows(21).RowHeight = 12.95
+    page.Rows(22).RowHeight = 5.1
+    page.Rows(23).RowHeight = 26.1
+    page.Rows(24).RowHeight = 26.1
+    page.Rows(24).Hidden = True
+    page.Rows(25).RowHeight = 15
+    page.Rows(26).RowHeight = 23.1
+    page.Rows(27).RowHeight = 26.1
+    page.Rows(28).RowHeight = 5.1
+    page.Rows(29).RowHeight = 12.95
+    page.Rows(30).RowHeight = 12.95
+    page.Rows(31).RowHeight = 5.1
+    page.Rows(32).RowHeight = 26.1
+    page.Rows(33).RowHeight = 5.1
+    page.Rows(34).RowHeight = 8.1
+    page.Rows(35).RowHeight = 23.1
+    page.Rows(36).RowHeight = 26.1
+    page.Rows(37).RowHeight = 5.1
+    page.Rows(38).RowHeight = 12.95
+    page.Rows(39).RowHeight = 12.95
+    page.Rows(40).RowHeight = 5.1
+    page.Rows(41).RowHeight = 26.1
+    page.Rows(42).RowHeight = 5.1
+    page.Rows(43).RowHeight = 17.25
+    page.Rows(43).Hidden = True
+    page.Rows(44).RowHeight = 17.25
+    page.Rows(44).Hidden = True
+    page.Rows(45).RowHeight = 9.75
+    page.Rows(45).Hidden = True
+    page.Rows(46).RowHeight = 19.5
+    page.Rows(46).Hidden = True
+    page.Rows(47).RowHeight = 18.75
+    page.Rows(47).Hidden = True
+    page.Rows(48).RowHeight = 1.7
+    page.Rows(49).RowHeight = 1.7
+    page.Rows(50).RowHeight = 1.7
+    page.Rows(51).RowHeight = 1.7
+    page.Rows(52).RowHeight = 1.7
+    page.Rows(53).RowHeight = 27
+    page.Rows(54).RowHeight = 27
+    page.Rows(55).RowHeight = 27
+    page.Rows(56).RowHeight = 8.1
+    page.Rows(57).RowHeight = 20.1
+    page.Rows(58).RowHeight = 30
+    page.Rows(59).RowHeight = 6
+    page.Rows(59).Hidden = True
+    page.Rows(60).RowHeight = 18.95
+    page.Rows(60).Hidden = True
+    page.Rows(61).RowHeight = 9.95
+    page.Rows(61).Hidden = True
+    page.Rows(62).RowHeight = 9.95
+    page.Rows(62).Hidden = True
+    page.Rows(63).RowHeight = 9.95
+    page.Rows(63).Hidden = True
+    page.Rows(64).RowHeight = 9.95
+    page.Rows(64).Hidden = True
+    page.Rows(65).RowHeight = 6.95
+    InstallCells2_1 page
+    InstallCells2_2 page
+    InstallCells2_3 page
+    InstallCells2_4 page
+    InstallShapes2 page
+End Sub
+
+Private Sub InstallCells2_1(ByVal page As Worksheet)
+    ApplyInstallStyle page.Range("A1,B1,C1,D1,E1,F1,G1,H1,I1,J1,K1,L1,M1,N1,O1,P1,Q1,R1,S1,T1,U1,V1,W1,X1,Y1,A2,X2,Y2,A3,X3,Y3,A4,X4,Y4,A5,X5,Y5,A6,X6,Y6,A7,X7,Y7,A8,X8,Y8,A9,X9,Y9,A10,X10,Y10,A11,X11,Y11,A12,X12,Y12,A13,X13,Y13,A14,X14,Y14,A15,X15,Y15"), 2
+    ApplyInstallStyle page.Range("A16,X16,Y16,A17,X17,Y17,A18,X18,Y18,A19,X19,Y19,A20,X20,Y20,A21,X21,Y21,A22,X22,Y22,A23,X23,Y23,A24,X24,Y24,A25,X25,Y25,A26,X26,Y26,A27,X27,Y27,A28,X28,Y28,A29,X29,Y29,A30,X30,Y30,A31,X31,Y31,A32,X32,Y32,A33,X33,Y33,A34"), 2
+    ApplyInstallStyle page.Range("X34,Y34,A35,X35,Y35,A36,X36,Y36,A37,X37,Y37,A38,X38,Y38,A39,X39,Y39,A40,X40,Y40,A41,X41,Y41,A42,X42,Y42,A43,X43,Y43,A44,X44,Y44,A45,X45,Y45,A46,X46,Y46,A47,X47,Y47,A48,X48,Y48,A49,X49,Y49,A50,X50,Y50,A51,X51,Y51,A52,X52"), 2
+    ApplyInstallStyle page.Range("Y52,A53,X53,Y53,A54,X54,Y54,A55,X55,Y55,A56,X56,Y56,A57,X57,Y57,A58,X58,Y58"), 2
+    ApplyInstallStyle page.Range("B5,C5,D5,E5,F5,G5,H5,I5,J5,K5,L5,M5,N5,O5,P5,Q5,R5,S5,T5,U5,V5,W5,C7,D7,E7,F7,G7,H7,I7,J7,K7,L7,M7,N7,O7,P7,Q7,R7,C13,D13,E13,F13,G13,H13,I13,J13,K13,L13,M13,N13,O13,P13,Q13,M15,M17,M18,M23,C24,D24,E24,F24,L24,M24,M27,M32"), 14
+    ApplyInstallStyle page.Range("C33,D33,E33,F33,L33,M33,N33,O33,C34,D34,E34,F34,G34,H34,I34,J34,K34,L34,M34,N34,O34,P34,Q34,R34,S34,T34,U34,M36,C37,D37,E37,F37,L37,M37,N37,O37,M41,C42,D42,E42,F42,G42,H42,I42,J42,K42,L42,M42,N42,O42,P42,Q42,R42,S42,T42"), 14
+    ApplyInstallStyle page.Range("U42"), 14
+    ApplyInstallStyle page.Range("B6,W6,B7,V7,W7,B9,W9,B11,W11,B12,W12,B13,R13,S13,T13,U13,V13,W13,B14,M14,W14,B15,W15,B16,C16,D16,E16,F16,G16,H16,I16,J16,K16,L16,M16,N16,O16,P16,Q16,R16,S16,T16,U16,V16,W16,B17,W17,B18,W18,B19,C19,D19,E19,F19,G19,H19,I19"), 15
+    ApplyInstallStyle page.Range("J19,K19,L19,M19,N19,O19,P19,Q19,R19,S19,T19,U19,V19,W19,B20,W20,B21,W21,B22,C22,D22,E22,F22,G22,H22,I22,J22,K22,L22,M22,N22,O22,P22,Q22,R22,S22,T22,U22,V22,W22,B23,W23,B24,W24,B25,C25,D25,E25,F25,G25,H25,I25,J25,K25,L25"), 15
+    ApplyInstallStyle page.Range("M25,N25,O25,P25,Q25,R25,S25,T25,U25,V25,W25,B26,W26,B27,W27,B28,C28,D28,E28,F28,G28,H28,I28,J28,K28,L28,M28,N28,O28,P28,Q28,R28,S28,T28,U28,V28,W28,B29,W29,B30,W30,B31,C31,D31,E31,F31,G31,H31,I31,J31,K31,L31,M31,N31,O31"), 15
+    ApplyInstallStyle page.Range("P31,Q31,R31,S31,T31,U31,V31,W31,B32,W32,B33,V33,W33,B34,V34,W34,B35,W35,B36,W36,B37,V37,W37,B38,M38,W38,B39,M39,W39,B40,C40,D40,E40,F40,G40,H40,I40,J40,K40,L40,M40,N40,O40,P40,Q40,R40,S40,T40,U40,V40,W40,B41,W41,B42,V42"), 15
+    ApplyInstallStyle page.Range("W42,B43,W43,B44,W44,B45,W45,B46,W46,B47,W47,B48,C48,D48,E48,F48,G48,H48,I48,J48,K48,L48,M48,N48,O48,P48,Q48,R48,S48,T48,U48,V48,W48,B49,C49,D49,E49,F49,G49,H49,I49,J49,K49,L49,M49,N49,O49,P49,Q49,R49,S49,T49,U49,V49,W49"), 15
+    ApplyInstallStyle page.Range("B50,C50,D50,E50,F50,G50,H50,I50,J50,K50,L50,M50,N50,O50,P50,Q50,R50,S50,T50,U50,V50,W50,B51,C51,D51,E51,F51,G51,H51,I51,J51,K51,L51,M51,N51,O51,P51,Q51,R51,S51,T51,U51,V51,W51,B52,C52,D52,E52,F52,G52,H52,I52,J52,K52,L52"), 15
+    ApplyInstallStyle page.Range("M52,N52,O52,P52,Q52,R52,S52,T52,U52,V52,W52,B53,W53,B54,W54,B55,W55,B56,C56,D56,E56,F56,G56,H56,I56,J56,K56,L56,M56,N56,O56,P56,Q56,R56,S56,T56,U56,V56,W56,B57,W57,B58,C58,D58,E58,F58,G58,H58,I58,J58,K58,L58,M58,N58,O58"), 15
+    ApplyInstallStyle page.Range("P58,Q58,R58,S58,T58,U58,V58,W58"), 15
+    ApplyInstallStyle page.Range("G24,H24,I24,J24,K24,G33,H33,I33,J33,K33,P33,Q33,R33,S33,T33,U33,G37,H37,I37,J37,K37,P37,Q37,R37,S37,T37,U37"), 17
+    ApplyInstallStyle page.Range("S7,T7,U7"), 18
+    ApplyInstallStyle page.Range("B59,C59,D59,E59,F59,G59,H59,I59,J59,K59,L59,M59,N59,O59,P59,Q59,R59,S59,T59,U59,V59,W59,B60,W60,B61,W61,B62,W62,B63,W63,B64,W64,B65,C65,D65,E65,F65,G65,H65,I65,J65,K65,L65,M65,N65,O65,P65,Q65,R65,S65,T65,U65,V65,W65"), 19
+    ApplyInstallStyle page.Range("N24"), 22
+    ApplyInstallStyle page.Range("O24,P24"), 23
+    ApplyInstallStyle page.Range("Q24"), 24
+    ApplyInstallStyle page.Range("R24,S24,T24,U24,V24"), 25
+    ApplyInstallStyle page.Range("B8"), 26
+    ApplyInstallStyle page.Range("P8,W8"), 27
+    ApplyInstallStyle page.Range("P9"), 28
+    ApplyInstallStyle page.Range("B10,P10,W10"), 29
+    ApplyInstallStyle page.Range("C10,D10,E10,F10,G10,H10,I10,J10,K10,L10,M10,N10,O10"), 30
+    ApplyInstallStyle page.Range("C11,D11,E11,F11,G11,H11,I11,J11,K11,L11,M11,N11,O11,P11,Q11"), 31
+    ApplyInstallStyle page.Range("R11,S11,T11,U11,V11"), 32
+    ApplyInstallStyle page.Range("M20,M29,N29,O29,P29,M30,N30,O30,P30"), 33
+    ApplyInstallStyle page.Range("M21"), 34
+    ApplyInstallStyle page.Range("C57,D57,E57,F57,G57,H57,I57,J57,K57,L57,M57,N57,O57,P57,Q57,R57,S57,T57,U57,V57"), 36
+    ApplyInstallStyle page.Range("C43,D43,E43,F43,G43,H43,I43,J43,K43,L43,M43,N43,O43,P43,Q43,R43,S43,T43,U43"), 41
+    ApplyInstallStyle page.Range("B2,C2,D2,E2,F2,G2,H2,I2,J2,K2,L2,M2,N2,O2,P2,Q2,R2,S2,T2,U2,V2,W2,B3,C3,D3,E3,F3,G3,H3,I3,J3,K3,L3,M3,N3,O3,P3,Q3,R3,S3,T3,U3,V3,W3,B4,C4,D4,E4,F4,G4,H4,I4,J4,K4,L4,M4,N4,O4,P4,Q4,R4,S4,T4,U4,V4,W4"), 44
+    ApplyInstallStyle page.Range("Q9"), 47
+    ApplyInstallStyle page.Range("R9,S9,T9,U9"), 48
+    ApplyInstallStyle page.Range("V9"), 49
+    ApplyInstallStyle page.Range("Q10"), 50
+    ApplyInstallStyle page.Range("R10,S10,T10,U10"), 51
+    ApplyInstallStyle page.Range("V10"), 52
+    ApplyInstallStyle page.Range("C8,D8,E8,F8,G8,H8,I8,J8,K8,L8,M8,N8,O8,C12,D12,E12,F12,G12,H12,I12,J12,K12,L12,M12,N12,O12,P12,Q12,C26,D26,E26,F26,G26,H26,I26,J26,K26,L26,M26,N26,O26,P26,Q26,C35,D35,E35,F35,L35,M35,N35,O35"), 53
+    ApplyInstallStyle page.Range("R12,S12,T12,U12,V12,R26,S26,T26,U26,V26,V35"), 54
+    ApplyInstallStyle page.Range("F14,Q14,F20,F53,F54"), 55
+    ApplyInstallStyle page.Range("G20,H20,I20,J20,K20"), 56
+    ApplyInstallStyle page.Range("L20"), 57
+    ApplyInstallStyle page.Range("F21"), 58
+    ApplyInstallStyle page.Range("G21,H21,I21,J21,K21"), 59
+    ApplyInstallStyle page.Range("L21"), 60
+    ApplyInstallStyle page.Range("N20,O20,P20,N21,O21,P21"), 61
+    ApplyInstallStyle page.Range("Q20"), 62
+    ApplyInstallStyle page.Range("R20,S20,T20,U20"), 63
+    ApplyInstallStyle page.Range("V20"), 64
+    ApplyInstallStyle page.Range("Q21"), 65
+    ApplyInstallStyle page.Range("R21,S21,T21,U21"), 66
+    ApplyInstallStyle page.Range("V21"), 67
+    ApplyInstallStyle page.Range("C61"), 68
+    ApplyInstallStyle page.Range("D61,E61,F61,G61,H61,I61,J61,K61,L61,M61,N61,O61,P61,Q61,R61,S61,T61,U61"), 69
+    ApplyInstallStyle page.Range("V61"), 70
+    ApplyInstallStyle page.Range("C62,C63"), 71
+    ApplyInstallStyle page.Range("D62,E62,F62,G62,H62,I62,J62,K62,L62,M62,N62,O62,P62,Q62,R62,S62,T62,U62,D63,E63,F63,G63,H63,I63,J63,K63,L63,M63,N63,O63,P63,Q63,R63,S63,T63,U63"), 72
+    ApplyInstallStyle page.Range("V62,V63"), 73
+    ApplyInstallStyle page.Range("C64"), 74
+    ApplyInstallStyle page.Range("D64,E64,F64,G64,H64,I64,J64,K64,L64,M64,N64,O64,P64,Q64,R64,S64,T64,U64"), 75
+    ApplyInstallStyle page.Range("V64"), 76
+    ApplyInstallStyle page.Range("C54"), 77
+    ApplyInstallStyle page.Range("D54,E54"), 78
+    ApplyInstallStyle page.Range("G14,H14,I14,J14,K14,R14,S14,T14,U14,G53,H53,I53,J53,K53,L53,M53,N53,O53,P53,Q53,R53,S53,T53,U53,G54,H54,I54,J54,K54,L54,M54,N54,O54,P54,Q54,R54,S54,T54,U54"), 79
+    ApplyInstallStyle page.Range("L14,V14,V53,V54"), 80
+    ApplyInstallStyle page.Range("C55"), 81
+    ApplyInstallStyle page.Range("C14,D14,E14,N14,O14,P14,C15,D15,E15,N15,O15,P15,C17,D17,E17,N17,O17,P17,C18,D18,E18,N18,O18,C20,D20,E20,C21,D21,E21,C23,D23,E23,N23,O23,P23,C27,D27,E27,N27,O27,C29,D29,E29,C30,D30,E30,C32,D32,E32,N32,O32,P32,C36,D36,E36"), 82
+    ApplyInstallStyle page.Range("N36,O36,P36,C38,D38,E38,N38,O38,P38,C39,D39,E39,N39,O39,P39,C41,D41,E41,N41,O41,P41,D55,E55"), 82
+    ApplyInstallStyle page.Range("F55"), 83
+    ApplyInstallStyle page.Range("G55,H55,I55,J55,K55,L55,M55,N55,O55,P55,Q55,R55,S55,T55,U55"), 84
+    ApplyInstallStyle page.Range("V55"), 85
+    ApplyInstallStyle page.Range("C60"), 86
+End Sub
+
+Private Sub InstallCells2_2(ByVal page As Worksheet)
+    ApplyInstallStyle page.Range("D60,E60,F60,G60,H60,I60,J60,K60,L60,M60,N60,O60,P60,Q60,R60,S60,T60,U60,V60"), 87
+    ApplyInstallStyle page.Range("V43"), 88
+    ApplyInstallStyle page.Range("C44,D44,E44,F44,G44,H44,I44,J44,K44,L44,M44,N44,O44,P44,Q44,R44,S44,T44,U44,V44,C45,D45,E45,F45,G45,H45,I45,J45,K45,L45,M45,N45,O45,P45,Q45,R45,S45,T45,U45,V45,C46,D46,E46,F46,G46,H46,I46,J46,K46,L46,M46,N46,O46,P46,Q46"), 89
+    ApplyInstallStyle page.Range("R46,S46,T46,U46,V46"), 89
+    ApplyInstallStyle page.Range("C47,D47,E47,F47,G47,H47,I47,J47,K47,L47,M47,N47,O47,P47,Q47,R47,S47,T47,U47,V47"), 90
+    ApplyInstallStyle page.Range("C53"), 91
+    ApplyInstallStyle page.Range("D53,E53"), 92
+    ApplyInstallStyle page.Range("F38,Q38"), 93
+    ApplyInstallStyle page.Range("F32,F41"), 94
+    ApplyInstallStyle page.Range("G23,H23,I23,J23,K23,R27,S27,T27,U27,G36,H36,I36,J36,K36,R36,S36,T36,U36,R41,S41,T41,U41"), 95
+    ApplyInstallStyle page.Range("L23,V27,L36,V36,V41"), 96
+    ApplyInstallStyle page.Range("F23,Q27,F36,Q36,Q41"), 97
+    ApplyInstallStyle page.Range("G35,H35,I35,J35,K35,P35,Q35"), 98
+    ApplyInstallStyle page.Range("R35,S35,T35,U35"), 99
+    ApplyInstallStyle page.Range("F27"), 100
+    ApplyInstallStyle page.Range("G27,H27,I27,J27,K27,R32,S32,T32,U32"), 101
+    ApplyInstallStyle page.Range("L27,V32"), 102
+    ApplyInstallStyle page.Range("P18,P27"), 103
+    ApplyInstallStyle page.Range("Q32"), 104
+    ApplyInstallStyle page.Range("Q23"), 105
+    ApplyInstallStyle page.Range("R23,S23,T23,U23"), 106
+    ApplyInstallStyle page.Range("V23"), 107
+    ApplyInstallStyle page.Range("F17,Q17"), 108
+    ApplyInstallStyle page.Range("G17,H17,I17,J17,K17,R17,S17,T17,U17"), 109
+    ApplyInstallStyle page.Range("L17,V17"), 110
+    ApplyInstallStyle page.Range("F18,Q18"), 111
+    ApplyInstallStyle page.Range("G18,H18,I18,J18,K18,R18,S18,T18,U18"), 112
+    ApplyInstallStyle page.Range("L18,V18"), 113
+    ApplyInstallStyle page.Range("F15,Q15"), 114
+    ApplyInstallStyle page.Range("G15,H15,I15,J15,K15,R15,S15,T15,U15"), 115
+    ApplyInstallStyle page.Range("L15,V15"), 116
+    ApplyInstallStyle page.Range("C6,D6,E6,F6,G6,H6,I6,J6"), 117
+    ApplyInstallStyle page.Range("K6,L6,M6,N6,O6,P6,Q6,R6,S6"), 118
+    ApplyInstallStyle page.Range("T6,U6,V6"), 119
+    ApplyInstallStyle page.Range("C9,D9,E9,F9,G9,H9,I9,J9,K9,L9,M9,N9,O9"), 120
+    ApplyInstallStyle page.Range("Q8,R8,S8,T8,U8,V8"), 121
+    ApplyInstallStyle page.Range("Q29,R29,S29,T29,U29,V29,Q30,R30,S30,T30,U30,V30"), 123
+    ApplyInstallStyle page.Range("F29"), 124
+    ApplyInstallStyle page.Range("G29,H29,I29,J29,K29"), 125
+    ApplyInstallStyle page.Range("L29"), 126
+    ApplyInstallStyle page.Range("F30"), 127
+    ApplyInstallStyle page.Range("G30,H30,I30,J30,K30"), 128
+    ApplyInstallStyle page.Range("L30"), 129
+    ApplyInstallStyle page.Range("G32,H32,I32,J32,K32,G41,H41,I41,J41,K41"), 130
+    ApplyInstallStyle page.Range("L32,L41"), 131
+    ApplyInstallStyle page.Range("G38,H38,I38,J38,K38,R38,S38,T38,U38"), 132
+    ApplyInstallStyle page.Range("F39,Q39"), 133
+    ApplyInstallStyle page.Range("G39,H39,I39,J39,K39,R39,S39,T39,U39"), 134
+    ApplyInstallStyle page.Range("L38,V38"), 135
+    ApplyInstallStyle page.Range("L39,V39"), 136
+    page.Range("B2").Value2 = "CONTROLLER / 事案詳細"
+    page.Range("C8").Value2 = "関連事案　全0件"
+    page.Range("Q8").Value2 = "現在表示中の事案"
+    page.Range("C9").Value2 = "年度"
+    page.Range("E9").Value2 = "枝番"
+    page.Range("G9").Value2 = "文書名"
+    page.Range("L9").Value2 = "処理状態"
+    page.Range("C12").Value2 = "01  基本情報"
+    page.Range("R12").Value2 = "本人・連絡先"
+    page.Range("C14").Value2 = "氏名"
+    page.Range("N14").Value2 = "ふりがな"
+    page.Range("C17").Value2 = "13桁番号"
+    page.Range("N17").Value2 = "枝番"
+    page.Range("C20").Value2 = "住所"
+    page.Range("N20").Value2 = "署"
+    page.Range("C23").Value2 = "電話番号"
+    page.Range("N23").Value2 = "郵便番号"
+    page.Range("C26").Value2 = "02  事案内容"
+    page.Range("R26").Value2 = "対象となる申請・請求等"
+    page.Range("C27").Value2 = "税目"
+    page.Range("N27").Value2 = "年分"
+    page.Range("C29").Value2 = "文書名"
+    page.Range("C32").Value2 = "収受日"
+    page.Range("N32").Value2 = "管理簿の年度"
+    page.Range("C35").Value2 = "03  処理"
+End Sub
+
+Private Sub InstallCells2_3(ByVal page As Worksheet)
+    page.Range("R35").Value2 = "処理の状態と経過"
+    page.Range("C36").Value2 = "処理状態"
+    page.Range("N36").Value2 = "決裁番号"
+    page.Range("C38").Value2 = "起案日"
+    page.Range("N38").Value2 = "決裁日"
+    page.Range("C41").Value2 = "施行日"
+    page.Range("N41").Value2 = "問い合わせ番号"
+    page.Range("C44").Value2 = "（保存先未設定）"
+    page.Range("C53").Value2 = "メモ1"
+    page.Range("C54").Value2 = "メモ2"
+    page.Range("C55").Value2 = "メモ3"
+    page.Range("C57").Value2 = "コピー・取込"
+    page.Range("Q9").Value2 = "表示中の事案はありません"
+    page.Range("Q8:V8").Merge
+    page.Range("F32:K32").Merge
+    page.Range("F38:K39").Merge
+    page.Range("Q38:U39").Merge
+    page.Range("F41:K41").Merge
+    page.Range("C8:O8").Merge
+    page.Range("C9:D9").Merge
+    page.Range("E9:F9").Merge
+    page.Range("G9:K9").Merge
+    page.Range("L9:O9").Merge
+    page.Range("B2:W4").Merge
+    page.Range("C6:I6").Merge
+    page.Range("J6:O6").Merge
+    page.Range("P6:S6").Merge
+    page.Range("T6:V6").Merge
+    page.Range("Q17:V18").Merge
+    page.Range("C20:E21").Merge
+    page.Range("C14:E15").Merge
+    page.Range("F14:L15").Merge
+    page.Range("N14:P15").Merge
+    page.Range("Q14:V15").Merge
+    page.Range("C36:E36").Merge
+    page.Range("F36:L36").Merge
+    page.Range("N36:P36").Merge
+    page.Range("Q36:V36").Merge
+    page.Range("C29:E30").Merge
+    page.Range("C32:E32").Merge
+    page.Range("N32:P32").Merge
+    page.Range("Q32:V32").Merge
+    page.Range("F29:L30").Merge
+    page.Range("C35:Q35").Merge
+    page.Range("R35:V35").Merge
+    page.Range("C27:E27").Merge
+    page.Range("F27:L27").Merge
+    page.Range("N27:P27").Merge
+    page.Range("Q27:V27").Merge
+    page.Range("C43:V43").Merge
+    page.Range("C44:V47").Merge
+    page.Range("C53:E53").Merge
+    page.Range("F53:V53").Merge
+    page.Range("C38:E39").Merge
+    page.Range("N38:P39").Merge
+    page.Range("C41:E41").Merge
+    page.Range("N41:P41").Merge
+    page.Range("Q41:V41").Merge
+    page.Range("C61:V64").Merge
+    page.Range("C54:E54").Merge
+    page.Range("F54:V54").Merge
+    page.Range("C55:E55").Merge
+    page.Range("F55:V55").Merge
+    page.Range("C60:V60").Merge
+    page.Range("C57:V57").Merge
+    page.Range("Q9:V10").Merge
+    page.Range("C12:Q12").Merge
+    page.Range("R12:V12").Merge
+    page.Range("F20:L21").Merge
+    page.Range("N20:P21").Merge
+    page.Range("Q20:V21").Merge
+    page.Range("C23:E23").Merge
+    page.Range("F23:L23").Merge
+    page.Range("N23:P23").Merge
+    page.Range("Q23:V23").Merge
+End Sub
+
+Private Sub InstallCells2_4(ByVal page As Worksheet)
+    page.Range("C26:Q26").Merge
+    page.Range("R26:V26").Merge
+    page.Range("C17:E18").Merge
+    page.Range("F17:L18").Merge
+    page.Range("N17:P18").Merge
+End Sub
+
+Private Sub InstallShapes2(ByVal page As Worksheet)
+    Dim shape As Shape
+
+    Set shape = page.Shapes.AddShape(5, 364.7369, 184.6382, 126.9473, 30.3157)
+    shape.Name = "UI_検索へ戻る"
+    InstallButtonFont shape, "← 検索へ戻る", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 10907427
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 16777215
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!ReturnToSearch"
+
+    Set shape = page.Shapes.AddShape(5, 403.0526, 730.9999, 177.2632, 25.3685)
+    shape.Name = "UI_コピー取込"
+    InstallButtonFont shape, "複数項目を取込（準備中）", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 7498594
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 15723752
+    shape.Line.ForeColor.RGB = 15723752
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+
+    Set shape = page.Shapes.AddShape(5, 636.9474, 184.6382, 127.2631, 30.3157)
+    shape.Name = "UI_更新保存"
+    InstallButtonFont shape, "登録・更新", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 16777215
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!SaveDetail"
+
+    Set shape = page.Shapes.AddShape(5, 221.4737, 730.9999, 177.2631, 25.3685)
+    shape.Name = "UI_選択項目をコピー"
+    InstallButtonFont shape, "選択欄をコピー", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 4861207
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 16777215
+    shape.Line.ForeColor.RGB = 16183273
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!CopySelectedField"
+
+    Set shape = page.Shapes.AddShape(5, 584.6316, 730.9999, 177.2631, 25.3685)
+    shape.Name = "UI_選択項目へ取込"
+    InstallButtonFont shape, "選択欄へ取込（準備中）", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 7498594
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 15723752
+    shape.Line.ForeColor.RGB = 15723752
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+
+    Set shape = page.Shapes.AddShape(5, 500.6842, 184.6382, 127.2632, 30.3157)
+    shape.Name = "UI_新規登録"
+    InstallButtonFont shape, "＋ 新規登録", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 16777215
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!NewCase"
+
+    Set shape = page.Shapes.AddShape(5, 582.6316, 614.2106, 120.9474, 19.0658)
+    shape.Name = "UI_登録更新"
+    InstallButtonFont shape, "登録・更新", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 7.2
+    shape.TextFrame2.MarginRight = 7.2
+    shape.TextFrame2.MarginTop = 3.6
+    shape.TextFrame2.MarginBottom = 3.6
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10250788
+    shape.Line.ForeColor.RGB = 10250788
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 2
+    shape.Locked = True
+    shape.Visible = 0
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!SaveDetail"
+
+    Set shape = page.Shapes.AddShape(5, 39.8947, 730.9999, 177.2631, 25.3685)
+    shape.Name = "ControllerCopyNumber"
+    InstallButtonFont shape, "18桁番号をコピー", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 4861207
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 2
+    shape.TextFrame2.MarginRight = 2
+    shape.TextFrame2.MarginTop = 1
+    shape.TextFrame2.MarginBottom = 1
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 16777215
+    shape.Line.ForeColor.RGB = 16183273
+    shape.Line.Weight = 0.75
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!CopyNumber"
+
+    Set shape = page.Shapes.AddFormControl(6, 37.6974, 142.0658, 471.2368, 36.0000)
+    shape.Name = "RelatedCasesList"
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!RelatedListChanged"
+
+    Set shape = page.Shapes.AddShape(5, 658.2631, 60.8421, 102.6316, 22.7500)
+    shape.Name = "DetailStatusBadge"
+    InstallButtonFont shape, "", "Meiryo UI", 12
+    shape.TextFrame2.TextRange.Font.Bold = -1
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 4466448
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 7.2
+    shape.TextFrame2.MarginRight = 7.2
+    shape.TextFrame2.MarginTop = 3.6
+    shape.TextFrame2.MarginBottom = 3.6
+    shape.Fill.Visible = -1
+    shape.Line.Visible = 0
+    shape.Fill.ForeColor.RGB = 15785155
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+
+    Set shape = page.Shapes.AddShape(5, 365.7369, 461.8421, 35.3157, 25.2631)
+    shape.Name = "Calendar_ReceivedDate"
+    InstallButtonFont shape, ChrW(&H25A6), "Segoe UI Symbol", 12
+    shape.TextFrame2.TextRange.Font.Bold = 0
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 4466448
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 0
+    shape.TextFrame2.MarginRight = 0
+    shape.TextFrame2.MarginTop = 0
+    shape.TextFrame2.MarginBottom = 0
+    shape.Fill.Visible = -1
+    shape.Line.Visible = 0
+    shape.Fill.ForeColor.RGB = 16248031
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+
+    Set shape = page.Shapes.AddShape(5, 365.7369, 552.6316, 35.3157, 25.2631)
+    shape.Name = "Calendar_DraftDate"
+    InstallButtonFont shape, ChrW(&H25A6), "Segoe UI Symbol", 12
+    shape.TextFrame2.TextRange.Font.Bold = 0
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 4466448
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 0
+    shape.TextFrame2.MarginRight = 0
+    shape.TextFrame2.MarginTop = 0
+    shape.TextFrame2.MarginBottom = 0
+    shape.Fill.Visible = -1
+    shape.Line.Visible = 0
+    shape.Fill.ForeColor.RGB = 16248031
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+
+    Set shape = page.Shapes.AddShape(5, 728.8947, 552.6316, 35.3158, 25.2631)
+    shape.Name = "Calendar_ApprovedDate"
+    InstallButtonFont shape, ChrW(&H25A6), "Segoe UI Symbol", 12
+    shape.TextFrame2.TextRange.Font.Bold = 0
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 4466448
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 0
+    shape.TextFrame2.MarginRight = 0
+    shape.TextFrame2.MarginTop = 0
+    shape.TextFrame2.MarginBottom = 0
+    shape.Fill.Visible = -1
+    shape.Line.Visible = 0
+    shape.Fill.ForeColor.RGB = 16248031
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+
+    Set shape = page.Shapes.AddShape(5, 365.7369, 582.6316, 35.3157, 25.2631)
+    shape.Name = "Calendar_IssuedDate"
+    InstallButtonFont shape, ChrW(&H25A6), "Segoe UI Symbol", 12
+    shape.TextFrame2.TextRange.Font.Bold = 0
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 4466448
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 2
+    shape.TextFrame2.VerticalAnchor = 3
+    shape.TextFrame2.MarginLeft = 0
+    shape.TextFrame2.MarginRight = 0
+    shape.TextFrame2.MarginTop = 0
+    shape.TextFrame2.MarginBottom = 0
+    shape.Fill.Visible = -1
+    shape.Line.Visible = 0
+    shape.Fill.ForeColor.RGB = 16248031
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 3
+    shape.Locked = True
+    shape.Visible = -1
+End Sub
+
+Private Sub InstallSheet3(ByVal page As Worksheet)
+    page.Range(page.Columns(1), page.Columns(1)).ColumnWidth = 18.5
+    page.Range(page.Columns(2), page.Columns(2)).ColumnWidth = 7.25
+    page.Range(page.Columns(4), page.Columns(4)).ColumnWidth = 4.88
+    page.Range(page.Columns(5), page.Columns(5)).ColumnWidth = 11.63
+    page.Range(page.Columns(6), page.Columns(6)).ColumnWidth = 6.88
+    page.Range(page.Columns(7), page.Columns(7)).ColumnWidth = 7.5
+    page.Range(page.Columns(8), page.Columns(8)).ColumnWidth = 9.5
+    page.Range(page.Columns(9), page.Columns(9)).ColumnWidth = 14.5
+    page.Range(page.Columns(10), page.Columns(10)).ColumnWidth = 10.88
+    page.Range(page.Columns(11), page.Columns(11)).ColumnWidth = 10.25
+    page.Range(page.Columns(12), page.Columns(12)).ColumnWidth = 15
+    page.Range(page.Columns(14), page.Columns(14)).ColumnWidth = 5.75
+    page.Range(page.Columns(15), page.Columns(15)).ColumnWidth = 12.13
+    page.Rows(1).RowHeight = 15
+    InstallCells3_1 page
+    page.Visible = xlSheetHidden
+End Sub
+
+Private Sub InstallCells3_1(ByVal page As Worksheet)
+    ApplyInstallStyle page.Range("A2,B2,D2,H2,O2,P2,Q2,R2,A3,B3,P3,Q3,R3,A4,B4,P4,Q4,R4,A5,B5,P5,Q5,R5,A6,B6,P6,Q6,R6,A7,B7,P7,Q7,R7,P8,Q8,R8,P9,Q9,R9,P10,Q10,R10,P11,Q11,R11,P12,Q12,R12,P13,Q13,R13,P14,Q14,R14,P15,Q15,R15,P16,Q16,R16,P17,Q17,R17,P18,Q18"), 6
+    ApplyInstallStyle page.Range("R18,P19,Q19,R19,P20,Q20,R20,P21,Q21,R21,P22,Q22,R22,P23,Q23,R23,P24,Q24,R24,P25,Q25,R25,P26,Q26,R26,P27,Q27,R27,P28,Q28,R28,P29,Q29,R29,P30,Q30,R30,P31,Q31,R31,P32,Q32,R32,P33,Q33,R33,P34,Q34,R34,P35,Q35,R35,P36,Q36,R36"), 6
+    ApplyInstallStyle page.Range("P37,Q37,R37,P38,Q38,R38,P39,Q39,R39,P40,Q40,R40,P41,Q41,R41,P42,Q42,R42,P43,Q43,R43,P44,Q44,R44,P45,Q45,R45,P46,Q46,R46,P47,Q47,R47,P48,Q48,R48,P49,Q49,R49,P50,Q50,R50,P51,Q51,R51,P52,Q52,R52,P53,Q53,R53,P54,Q54,R54,P55"), 6
+    ApplyInstallStyle page.Range("Q55,R55,P56,Q56,R56,P57,Q57,R57,P58,Q58,R58,P59,Q59,R59,P60,Q60,R60,P61,Q61,R61,P62,Q62,R62,P63,Q63,R63,P64,Q64,R64,P65,Q65,R65,P66,Q66,R66,P67,Q67,R67,P68,Q68,R68,P69,Q69,R69,P70,Q70,R70,P71,Q71,R71,P72,Q72,R72,P73,Q73"), 6
+    ApplyInstallStyle page.Range("R73,P74,Q74,R74,P75,Q75,R75,P76,Q76,R76,P77,Q77,R77,P78,Q78,R78,P79,Q79,R79,P80,Q80,R80,P81,Q81,R81,P82,Q82,R82,P83,Q83,R83,P84,Q84,R84,P85,Q85,R85,P86,Q86,R86,P87,Q87,R87,P88,Q88,R88,P89,Q89,R89,P90,Q90,R90,P91,Q91,R91"), 6
+    ApplyInstallStyle page.Range("P92,Q92,R92,P93,Q93,R93,P94,Q94,R94,P95,Q95,R95,P96,Q96,R96,P97,Q97,R97,P98,Q98,R98,P99,Q99,R99,P100,Q100,R100,P101,Q101,R101,P102,Q102,R102,P103,Q103,R103,P104,Q104,R104,P105,Q105,R105,P106,Q106,R106,P107,Q107,R107,P108"), 6
+    ApplyInstallStyle page.Range("Q108,R108,P109,Q109,R109,P110,Q110,R110,P111,Q111,R111,P112,Q112,R112,P113,Q113,R113,P114,Q114,R114,P115,Q115,R115,P116,Q116,R116,P117,Q117,R117,P118,Q118,R118,P119,Q119,R119,P120,Q120,R120,P121,Q121,R121,P122,Q122,R122"), 6
+    ApplyInstallStyle page.Range("P123,Q123,R123,P124,Q124,R124,P125,Q125,R125,P126,Q126,R126,P127,Q127,R127,P128,Q128,R128,P129,Q129,R129,P130,Q130,R130,P131,Q131,R131,P132,Q132,R132,P133,Q133,R133,P134,Q134,R134,P135,Q135,R135,P136,Q136,R136,P137,Q137"), 6
+    ApplyInstallStyle page.Range("R137,P138,Q138,R138,P139,Q139,R139,P140,Q140,R140,P141,Q141,R141,P142,Q142,R142,P143,Q143,R143,P144,Q144,R144,P145,Q145,R145,P146,Q146,R146,P147,Q147,R147,P148,Q148,R148,P149,Q149,R149,P150,Q150,R150,P151,Q151,R151,P152"), 6
+    ApplyInstallStyle page.Range("Q152,R152,P153,Q153,R153,P154,Q154,R154,P155,Q155,R155,P156,Q156,R156,P157,Q157,R157,P158,Q158,R158,P159,Q159,R159,P160,Q160,R160,P161,Q161,R161,P162,Q162,R162,P163,Q163,R163,P164,Q164,R164,P165,Q165,R165,P166,Q166,R166"), 6
+    ApplyInstallStyle page.Range("P167,Q167,R167,P168,Q168,R168,P169,Q169,R169,P170,Q170,R170,P171,Q171,R171,P172,Q172,R172,P173,Q173,R173,P174,Q174,R174,P175,Q175,R175,P176,Q176,R176,P177,Q177,R177,P178,Q178,R178,P179,Q179,R179,P180,Q180,R180,P181,Q181"), 6
+    ApplyInstallStyle page.Range("R181,P182,Q182,R182,P183,Q183,R183,P184,Q184,R184,P185,Q185,R185,P186,Q186,R186,P187,Q187,R187,P188,Q188,R188,P189,Q189,R189,P190,Q190,R190,P191,Q191,R191,P192,Q192,R192,P193,Q193,R193,P194,Q194,R194,P195,Q195,R195,P196"), 6
+    ApplyInstallStyle page.Range("Q196,R196,P197,Q197,R197,P198,Q198,R198,P199,Q199,R199,P200,Q200,R200,P201,Q201,R201,P202,Q202,R202,P203,Q203,R203,P204,Q204,R204,P205,Q205,R205,P206,Q206,R206,P207,Q207,R207,P208,Q208,R208,P209,Q209,R209,P210,Q210,R210"), 6
+    ApplyInstallStyle page.Range("P211,Q211,R211,P212,Q212,R212,P213,Q213,R213,P214,Q214,R214,P215,Q215,R215,P216,Q216,R216,P217,Q217,R217,P218,Q218,R218,P219,Q219,R219,P220,Q220,R220,P221,Q221,R221,P222,Q222,R222,P223,Q223,R223,P224,Q224,R224,P225,Q225"), 6
+    ApplyInstallStyle page.Range("R225,P226,Q226,R226,P227,Q227,R227,P228,Q228,R228,P229,Q229,R229,P230,Q230,R230,P231,Q231,R231,P232,Q232,R232,P233,Q233,R233,P234,Q234,R234,P235,Q235,R235,P236,Q236,R236,P237,Q237,R237,P238,Q238,R238,P239,Q239,R239,P240"), 6
+    ApplyInstallStyle page.Range("Q240,R240,P241,Q241,R241,P242,Q242,R242,P243,Q243,R243,P244,Q244,R244,P245,Q245,R245,P246,Q246,R246,P247,Q247,R247,P248,Q248,R248,P249,Q249,R249,P250,Q250,R250,P251,Q251,R251,P252,Q252,R252,P253,Q253,R253,P254,Q254,R254"), 6
+    ApplyInstallStyle page.Range("P255,Q255,R255,P256,Q256,R256,P257,Q257,R257,P258,Q258,R258,P259,Q259,R259,P260,Q260,R260,P261,Q261,R261,P262,Q262,R262,P263,Q263,R263,P264,Q264,R264,P265,Q265,R265,P266,Q266,R266,P267,Q267,R267,P268,Q268,R268,P269,Q269"), 6
+    ApplyInstallStyle page.Range("R269,P270,Q270,R270,P271,Q271,R271,P272,Q272,R272,P273,Q273,R273,P274,Q274,R274,P275,Q275,R275,P276,Q276,R276,P277,Q277,R277,P278,Q278,R278,P279,Q279,R279,P280,Q280,R280,P281,Q281,R281,P282,Q282,R282,P283,Q283,R283,P284"), 6
+    ApplyInstallStyle page.Range("Q284,R284,P285,Q285,R285,P286,Q286,R286,P287,Q287,R287,P288,Q288,R288,P289,Q289,R289,P290,Q290,R290,P291,Q291,R291,P292,Q292,R292,P293,Q293,R293,P294,Q294,R294,P295,Q295,R295,P296,Q296,R296,P297,Q297,R297,P298,Q298,R298"), 6
+    ApplyInstallStyle page.Range("P299,Q299,R299,P300,Q300,R300,P301,Q301,R301,P302,Q302,R302,P303,Q303,R303,P304,Q304,R304,P305,Q305,R305,P306,Q306,R306,P307,Q307,R307,P308,Q308,R308,P309,Q309,R309,P310,Q310,R310,P311,Q311,R311,P312,Q312,R312,P313,Q313"), 6
+    ApplyInstallStyle page.Range("R313,P314,Q314,R314,P315,Q315,R315,P316,Q316,R316,P317,Q317,R317,P318,Q318,R318,P319,Q319,R319,P320,Q320,R320,P321,Q321,R321,P322,Q322,R322,P323,Q323,R323,P324,Q324,R324,P325,Q325,R325,P326,Q326,R326,P327,Q327,R327,P328"), 6
+    ApplyInstallStyle page.Range("Q328,R328,P329,Q329,R329,P330,Q330,R330,P331,Q331,R331,P332,Q332,R332,P333,Q333,R333,P334,Q334,R334,P335,Q335,R335,P336,Q336,R336,P337,Q337,R337,P338,Q338,R338,P339,Q339,R339,P340,Q340,R340,P341,Q341,R341,P342,Q342,R342"), 6
+    ApplyInstallStyle page.Range("P343,Q343,R343,P344,Q344,R344,P345,Q345,R345,P346,Q346,R346,P347,Q347,R347,P348,Q348,R348,P349,Q349,R349,P350,Q350,R350,P351,Q351,R351,P352,Q352,R352,P353,Q353,R353,P354,Q354,R354,P355,Q355,R355,P356,Q356,R356,P357,Q357"), 6
+    ApplyInstallStyle page.Range("R357,P358,Q358,R358,P359,Q359,R359,P360,Q360,R360,P361,Q361,R361,P362,Q362,R362,P363,Q363,R363,P364,Q364,R364,P365,Q365,R365,P366,Q366,R366,P367,Q367,R367,P368,Q368,R368,P369,Q369,R369,P370,Q370,R370,P371,Q371,R371,P372"), 6
+    ApplyInstallStyle page.Range("Q372,R372,P373,Q373,R373,P374,Q374,R374,P375,Q375,R375,P376,Q376,R376,P377,Q377,R377,P378,Q378,R378,P379,Q379,R379,P380,Q380,R380,P381,Q381,R381,P382,Q382,R382,P383,Q383,R383,P384,Q384,R384,P385,Q385,R385,P386,Q386,R386"), 6
+    ApplyInstallStyle page.Range("P387,Q387,R387,P388,Q388,R388,P389,Q389,R389,P390,Q390,R390,P391,Q391,R391,P392,Q392,R392,P393,Q393,R393,P394,Q394,R394,P395,Q395,R395,P396,Q396,R396,P397,Q397,R397,P398,Q398,R398,P399,Q399,R399,P400,Q400,R400,P401,Q401"), 6
+    ApplyInstallStyle page.Range("R401,P402,Q402,R402,P403,Q403,R403,P404,Q404,R404,P405,Q405,R405,P406,Q406,R406,P407,Q407,R407,P408,Q408,R408,P409,Q409,R409,P410,Q410,R410,P411,Q411,R411,P412,Q412,R412,P413,Q413,R413,P414,Q414,R414,P415,Q415,R415,P416"), 6
+    ApplyInstallStyle page.Range("Q416,R416,P417,Q417,R417,P418,Q418,R418,P419,Q419,R419,P420,Q420,R420,P421,Q421,R421,P422,Q422,R422,P423,Q423,R423,P424,Q424,R424,P425,Q425,R425,P426,Q426,R426,P427,Q427,R427,P428,Q428,R428,P429,Q429,R429,P430,Q430,R430"), 6
+    ApplyInstallStyle page.Range("P431,Q431,R431,P432,Q432,R432,P433,Q433,R433,P434,Q434,R434,P435,Q435,R435,P436,Q436,R436,P437,Q437,R437,P438,Q438,R438,P439,Q439,R439,P440,Q440,R440,P441,Q441,R441,P442,Q442,R442,P443,Q443,R443,P444,Q444,R444,P445,Q445"), 6
+    ApplyInstallStyle page.Range("R445,P446,Q446,R446,P447,Q447,R447,P448,Q448,R448,P449,Q449,R449,P450,Q450,R450,P451,Q451,R451,P452,Q452,R452,P453,Q453,R453,P454,Q454,R454,P455,Q455,R455,P456,Q456,R456,P457,Q457,R457,P458,Q458,R458,P459,Q459,R459,P460"), 6
+    ApplyInstallStyle page.Range("Q460,R460,P461,Q461,R461,P462,Q462,R462,P463,Q463,R463,P464,Q464,R464,P465,Q465,R465,P466,Q466,R466,P467,Q467,R467,P468,Q468,R468,P469,Q469,R469,P470,Q470,R470,P471,Q471,R471,P472,Q472,R472,P473,Q473,R473,P474,Q474,R474"), 6
+    ApplyInstallStyle page.Range("P475,Q475,R475,P476,Q476,R476,P477,Q477,R477,P478,Q478,R478,P479,Q479,R479,P480,Q480,R480,P481,Q481,R481,P482,Q482,R482,P483,Q483,R483,P484,Q484,R484,P485,Q485,R485,P486,Q486,R486,P487,Q487,R487,P488,Q488,R488,P489,Q489"), 6
+    ApplyInstallStyle page.Range("R489,P490,Q490,R490,P491,Q491,R491,P492,Q492,R492,P493,Q493,R493,P494,Q494,R494,P495,Q495,R495,P496,Q496,R496,P497,Q497,R497,P498,Q498,R498,P499,Q499,R499,P500,Q500,R500,P501,Q501,R501"), 6
+    ApplyInstallStyle page.Range("A1,B1,D1,E1,F1,G1,H1,I1,J1,K1,L1,N1,O1"), 7
+    ApplyInstallStyle page.Range("P1,Q1,R1"), 8
+    ApplyInstallStyle page.Range("D3,E3,F3,G3,H3,I3"), 12
+    ApplyInstallStyle page.Range("E2,F2,G2,I2"), 13
+    page.Range("A1").Value2 = "Setting"
+    page.Range("B1").Value2 = "Value"
+    page.Range("D1").Value2 = "Year"
+    page.Range("E1").Value2 = "StaffAddress"
+    page.Range("F1").Value2 = "Sheet"
+    page.Range("G1").Value2 = "Enabled"
+    page.Range("H1").Value2 = "AllowWrite"
+    page.Range("I1").Value2 = "GeneralAddress"
+    page.Range("J1").Value2 = "PhonePrefix"
+    page.Range("K1").Value2 = "AreaLength"
+    page.Range("L1").Value2 = "ExchangeLength"
+    page.Range("N1").Value2 = "Office"
+    page.Range("O1").Value2 = "ClosedStatus"
+    page.Range("P1").Value2 = "文書名"
+    page.Range("Q1").Value2 = "税目"
+    page.Range("R1").Value2 = "処理状態"
+    page.Range("A2").Value2 = "ControllerRole"
+    page.Range("A3").Value2 = "SharePointSite"
+    page.Range("A4").Value2 = "SharePointExclusive"
+    page.Range("A5").Value2 = "BackupFolder"
+    page.Range("A6").Value2 = "BusinessState"
+    page.Range("A7").Value2 = "Transport"
+    page.Range("B2").Value2 = "General"
+    page.Range("B4").Value2 = "No"
+    page.Range("B7").Value2 = "Local"
+    page.Range("O2").Value2 = "終了"
+End Sub
+
+Private Sub InstallSheet4(ByVal page As Worksheet)
+    page.Range(page.Columns(1), page.Columns(1)).ColumnWidth = 14.88
+    page.Range(page.Columns(2), page.Columns(2)).ColumnWidth = 17.75
+    page.Range(page.Columns(3), page.Columns(3)).ColumnWidth = 4.88
+    page.Range(page.Columns(4), page.Columns(4)).ColumnWidth = 5.63
+    page.Range(page.Columns(5), page.Columns(5)).ColumnWidth = 4.38
+    page.Range(page.Columns(6), page.Columns(6)).ColumnWidth = 8.25
+    page.Range(page.Columns(8), page.Columns(8)).ColumnWidth = 4.63
+    page.Range(page.Columns(9), page.Columns(9)).ColumnWidth = 6.13
+    page.Range(page.Columns(10), page.Columns(10)).ColumnWidth = 14.25
+    page.Range(page.Columns(11), page.Columns(11)).ColumnWidth = 8.2900
+    page.Rows(1).RowHeight = 15
+    page.Range("A1:K23").NumberFormat = "@"
+    InstallCells4_1 page
+    InstallCells4_2 page
+    page.Visible = xlSheetHidden
+End Sub
+
+Private Sub InstallCells4_1(ByVal page As Worksheet)
+    ApplyInstallStyle page.Range("A2,B2,C2,D2,E2,F2,A3,B3,C3,D3,E3,F3,A4,B4,C4,D4,E4,F4,A5,B5,C5,D5,E5,F5,A6,B6,C6,D6,E6,F6,A7,B7,C7,D7,E7,F7,A8,B8,C8,D8,E8,F8,A9,B9,C9,D9,E9,F9,A10,B10,C10,D10,E10,F10,A11,B11,C11,D11,E11,F11,A12,B12,C12,D12,E12,F12,A13"), 6
+    ApplyInstallStyle page.Range("B13,C13,D13,E13,F13,A14,B14,C14,D14,E14,F14,A15,B15,C15,D15,E15,F15,A16,B16,C16,D16,E16,F16,A17,B17,C17,D17,E17,F17,A18,B18,C18,D18,E18,F18,A19,B19,C19,D19,E19,F19,A20,B20,C20,D20,E20,F20,A21,B21,C21,D21,E21,F21,A22,B22"), 6
+    ApplyInstallStyle page.Range("C22,D22,E22,F22,A23,B23,C23,D23,E23,F23"), 6
+    ApplyInstallStyle page.Range("A1,B1,C1,D1,E1,F1,H1,I1,J1"), 7
+    ApplyInstallStyle page.Range("H2,I2,J2,H3,I3,J3,H4,I4,J4,H5,I5,J5,H6,I6,J6,H7,I7,J7,H8,I8,J8,H9,I9,J9"), 12
+    ApplyInstallStyle page.Range("K1"), 122
+    page.Range("A1").Value2 = "FieldId"
+    page.Range("B1").Value2 = "Header"
+    page.Range("C1").Value2 = "Type"
+    page.Range("D1").Value2 = "Sheet"
+    page.Range("E1").Value2 = "Cell"
+    page.Range("F1").Value2 = "Required"
+    page.Range("H1").Value2 = "Year"
+    page.Range("I1").Value2 = "FieldId"
+    page.Range("J1").Value2 = "HeaderOverride"
+    page.Range("K1").Value2 = "DisplayFormat"
+    page.Range("A2").Value2 = "MaskedNumber"
+    page.Range("B2").Value2 = "Number（№）"
+    page.Range("C2").Value2 = "Text"
+    page.Range("D2").Value2 = "詳細"
+    page.Range("E2").Value2 = "F17"
+    page.Range("F2").Value2 = "Yes"
+    page.Range("A3").Value2 = "Branch"
+    page.Range("B3").Value2 = "枝番"
+    page.Range("C3").Value2 = "Text"
+    page.Range("D3").Value2 = "詳細"
+    page.Range("E3").Value2 = "Q17"
+    page.Range("F3").Value2 = "Yes"
+    page.Range("A4").Value2 = "Office"
+    page.Range("B4").Value2 = "署"
+    page.Range("C4").Value2 = "Text"
+    page.Range("D4").Value2 = "詳細"
+    page.Range("E4").Value2 = "Q20"
+    page.Range("F4").Value2 = "No"
+    page.Range("A5").Value2 = "PersonName"
+    page.Range("B5").Value2 = "氏名"
+    page.Range("C5").Value2 = "Text"
+    page.Range("D5").Value2 = "詳細"
+    page.Range("E5").Value2 = "F14"
+    page.Range("F5").Value2 = "Yes"
+    page.Range("A6").Value2 = "Furigana"
+    page.Range("B6").Value2 = "フリガナ"
+    page.Range("C6").Value2 = "Text"
+    page.Range("D6").Value2 = "詳細"
+    page.Range("E6").Value2 = "Q14"
+    page.Range("F6").Value2 = "No"
+    page.Range("A7").Value2 = "DocumentName"
+    page.Range("B7").Value2 = "文書名"
+    page.Range("C7").Value2 = "Text"
+    page.Range("D7").Value2 = "詳細"
+    page.Range("E7").Value2 = "F29"
+    page.Range("F7").Value2 = "No"
+    page.Range("A8").Value2 = "TaxType"
+    page.Range("B8").Value2 = "税目"
+    page.Range("C8").Value2 = "Text"
+    page.Range("D8").Value2 = "詳細"
+    page.Range("E8").Value2 = "F27"
+    page.Range("F8").Value2 = "No"
+    page.Range("A9").Value2 = "TaxYear"
+    page.Range("B9").Value2 = "年分"
+    page.Range("C9").Value2 = "Text"
+    page.Range("D9").Value2 = "詳細"
+    page.Range("E9").Value2 = "Q27"
+    page.Range("F9").Value2 = "No"
+    page.Range("A10").Value2 = "Status"
+    page.Range("B10").Value2 = "状態"
+    page.Range("C10").Value2 = "Text"
+    page.Range("D10").Value2 = "詳細"
+    page.Range("E10").Value2 = "F36"
+    page.Range("F10").Value2 = "No"
+    page.Range("A11").Value2 = "ReceivedDate"
+    page.Range("B11").Value2 = "収受日"
+    page.Range("C11").Value2 = "Date"
+    page.Range("D11").Value2 = "詳細"
+    page.Range("E11").Value2 = "F32"
+End Sub
+
+Private Sub InstallCells4_2(ByVal page As Worksheet)
+    page.Range("F11").Value2 = "No"
+    page.Range("A12").Value2 = "DraftDate"
+    page.Range("B12").Value2 = "起案日"
+    page.Range("C12").Value2 = "Date"
+    page.Range("D12").Value2 = "詳細"
+    page.Range("E12").Value2 = "F38"
+    page.Range("F12").Value2 = "No"
+    page.Range("A13").Value2 = "ApprovedDate"
+    page.Range("B13").Value2 = "決裁日"
+    page.Range("C13").Value2 = "Date"
+    page.Range("D13").Value2 = "詳細"
+    page.Range("E13").Value2 = "Q38"
+    page.Range("F13").Value2 = "No"
+    page.Range("A14").Value2 = "IssuedDate"
+    page.Range("B14").Value2 = "施行日"
+    page.Range("C14").Value2 = "Date"
+    page.Range("D14").Value2 = "詳細"
+    page.Range("E14").Value2 = "F41"
+    page.Range("F14").Value2 = "No"
+    page.Range("A15").Value2 = "Memo1"
+    page.Range("B15").Value2 = "メモ1"
+    page.Range("C15").Value2 = "Text"
+    page.Range("D15").Value2 = "詳細"
+    page.Range("E15").Value2 = "F53"
+    page.Range("F15").Value2 = "No"
+    page.Range("A16").Value2 = "Memo2"
+    page.Range("B16").Value2 = "メモ2"
+    page.Range("C16").Value2 = "Text"
+    page.Range("D16").Value2 = "詳細"
+    page.Range("E16").Value2 = "F54"
+    page.Range("F16").Value2 = "No"
+    page.Range("A17").Value2 = "Memo3"
+    page.Range("B17").Value2 = "メモ3"
+    page.Range("C17").Value2 = "Text"
+    page.Range("D17").Value2 = "詳細"
+    page.Range("E17").Value2 = "F55"
+    page.Range("F17").Value2 = "No"
+    page.Range("A18").Value2 = "ApprovalNumber"
+    page.Range("B18").Value2 = "決裁番号"
+    page.Range("C18").Value2 = "Text"
+    page.Range("D18").Value2 = "詳細"
+    page.Range("E18").Value2 = "Q36"
+    page.Range("F18").Value2 = "No"
+    page.Range("A19").Value2 = "InquiryNumber"
+    page.Range("B19").Value2 = "お問い合わせ番号"
+    page.Range("C19").Value2 = "Text"
+    page.Range("D19").Value2 = "詳細"
+    page.Range("E19").Value2 = "Q41"
+    page.Range("F19").Value2 = "No"
+    page.Range("A20").Value2 = "PostalCode"
+    page.Range("B20").Value2 = "郵便番号"
+    page.Range("C20").Value2 = "Text"
+    page.Range("D20").Value2 = "詳細"
+    page.Range("E20").Value2 = "Q23"
+    page.Range("F20").Value2 = "No"
+    page.Range("A21").Value2 = "Address"
+    page.Range("B21").Value2 = "住所"
+    page.Range("C21").Value2 = "Text"
+    page.Range("D21").Value2 = "詳細"
+    page.Range("E21").Value2 = "F20"
+    page.Range("F21").Value2 = "No"
+    page.Range("A22").Value2 = "PhoneNumber"
+    page.Range("B22").Value2 = "電話番号"
+    page.Range("C22").Value2 = "Text"
+    page.Range("D22").Value2 = "詳細"
+    page.Range("E22").Value2 = "F23"
+    page.Range("F22").Value2 = "No"
+    page.Range("A23").Value2 = "HistoryMemo"
+    page.Range("B23").Value2 = "[Absent]"
+    page.Range("C23").Value2 = "Text"
+    page.Range("D23").Value2 = "詳細"
+    page.Range("E23").Value2 = "C44"
+    page.Range("F23").Value2 = "No"
+End Sub
+
+Private Sub InstallSheet5(ByVal page As Worksheet)
+    InstallCells5_1 page
+    page.Visible = xlSheetHidden
+End Sub
+
+Private Sub InstallCells5_1(ByVal page As Worksheet)
+    ApplyInstallStyle page.Range("A2,B2,A3,B3,A4,B4,A5,B5,A7,B7,C7,D7,E7"), 6
+    page.Range("A2").Value2 = "Address"
+    page.Range("A3").Value2 = "Sheet"
+    page.Range("A4").Value2 = "AllowManualTransfer"
+    page.Range("A5").Value2 = "AutomaticTransfer"
+    page.Range("A7").Value2 = "FieldId"
+    page.Range("B7").Value2 = "ExternalHeader"
+    page.Range("C7").Value2 = "MatchKey"
+    page.Range("D7").Value2 = "AllowTransfer"
+    page.Range("E7").Value2 = "PreferredSource"
+    page.Range("B4").Value2 = "No"
+    page.Range("B5").Value2 = "No"
+End Sub
+
+Private Sub InstallSheet6(ByVal page As Worksheet)
+    InstallCells6_1 page
+    page.Visible = xlSheetVeryHidden
+End Sub
+
+Private Sub InstallCells6_1(ByVal page As Worksheet)
+    ApplyInstallStyle page.Range("B1,B2,B3,B4,D4,B5,D5,A6,B6,A7,B7,A8,B8,A9,B9,A10,B10,A11,B11,A12,B12,A13,B13,A14,B14,A15,A16,A17,A18,A19,B19,A20,B20,C20,D20,A21,B21,A22,B22,A23,B23,A24,B24,A25,B25,A26,B26,A27,B27"), 6
+    ApplyInstallStyle page.Range("B15,B16,B17,B18"), 21
+End Sub
+
+Private Sub InstallSheet7(ByVal page As Worksheet)
+    page.Visible = xlSheetVeryHidden
+End Sub
+
+Private Sub InstallSheet8(ByVal page As Worksheet)
+    page.Range(page.Columns(1), page.Columns(10)).ColumnWidth = 20
+    page.Rows(1).RowHeight = 15.75
+    page.Rows(2).RowHeight = 24.95
+    page.Rows(3).RowHeight = 15.75
+    page.Rows(4).RowHeight = 15.75
+    InstallCells8_1 page
+    InstallShapes8 page
+    page.Visible = xlSheetVeryHidden
+End Sub
+
+Private Sub InstallCells8_1(ByVal page As Worksheet)
+    ApplyInstallStyle page.Range("B1,C1,D1,E1,F1,G1,H1,I1,J1,A2,B2,C2,D2,E2,F2,G2,H2,I2,J2,A3,B3,C3,D3,E3,F3,G3,H3,I3,J3"), 5
+    ApplyInstallStyle page.Range("A1"), 9
+    ApplyInstallStyle page.Range("A4,B4,C4,D4,E4,F4,G4,H4,I4,J4"), 10
+    page.Range("A1").Value2 = "管理簿と一般事務整理簿の照合"
+    page.Range("A4").Value2 = "年度"
+    page.Range("B4").Value2 = "氏名"
+    page.Range("C4").Value2 = "枝番"
+    page.Range("D4").Value2 = "判定"
+    page.Range("E4").Value2 = "項目ID"
+    page.Range("F4").Value2 = "管理簿の値"
+    page.Range("G4").Value2 = "比較先の値"
+    page.Range("H4").Value2 = "採用値"
+    page.Range("I4").Value2 = "管理簿出典"
+    page.Range("J4").Value2 = "比較先出典"
+End Sub
+
+Private Sub InstallShapes8(ByVal page As Worksheet)
+    Dim shape As Shape
+
+    Set shape = page.Shapes.AddShape(5, 0.0000, 0.0000, 90.0000, 23.0000)
+    shape.Name = "ControllerReportStyle"
+    InstallButtonFont shape, "", "Meiryo UI", 11
+    shape.TextFrame2.TextRange.Font.Bold = 0
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 0
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 1
+    shape.TextFrame2.VerticalAnchor = 1
+    shape.TextFrame2.MarginLeft = 7.2
+    shape.TextFrame2.MarginRight = 7.2
+    shape.TextFrame2.MarginTop = 3.6
+    shape.TextFrame2.MarginBottom = 3.6
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 1.5
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 1
+    shape.Locked = True
+    shape.Visible = 0
+
+    Set shape = page.Shapes.AddShape(5, 2.0000, 15.7500, 243.5000, 23.0000)
+    shape.Name = "ControllerCompareBack"
+    InstallButtonFont shape, "検索へ戻る", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = 0
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 0
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 1
+    shape.TextFrame2.VerticalAnchor = 1
+    shape.TextFrame2.MarginLeft = 7.2
+    shape.TextFrame2.MarginRight = 7.2
+    shape.TextFrame2.MarginTop = 3.6
+    shape.TextFrame2.MarginBottom = 3.6
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 1.5
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 1
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!CloseComparison"
+
+    Set shape = page.Shapes.AddShape(5, 249.5000, 15.7500, 243.5000, 23.0000)
+    shape.Name = "ControllerTransfer"
+    InstallButtonFont shape, "選択項目を転記", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = 0
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 0
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 1
+    shape.TextFrame2.VerticalAnchor = 1
+    shape.TextFrame2.MarginLeft = 7.2
+    shape.TextFrame2.MarginRight = 7.2
+    shape.TextFrame2.MarginTop = 3.6
+    shape.TextFrame2.MarginBottom = 3.6
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 1.5
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 1
+    shape.Locked = True
+    shape.Visible = -1
+    shape.OnAction = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!TransferSelectedComparisonField"
+End Sub
+
+Private Sub InstallSheet9(ByVal page As Worksheet)
+    InstallCells9_1 page
+    page.Visible = xlSheetVeryHidden
+End Sub
+
+Private Sub InstallCells9_1(ByVal page As Worksheet)
+    ApplyInstallStyle page.Range("A1,B1,C1,D1,E1,F1,G1,H1,I1,J1,A2,B2,C2,D2,E2,F2,G2,H2,I2,J2"), 6
+    page.Range("A1").Value2 = "日時"
+    page.Range("B1").Value2 = "Excel利用者名"
+    page.Range("C1").Value2 = "ファイル"
+    page.Range("D1").Value2 = "事案キー"
+    page.Range("E1").Value2 = "操作"
+    page.Range("F1").Value2 = "項目"
+    page.Range("G1").Value2 = "変更前"
+    page.Range("H1").Value2 = "変更後"
+    page.Range("I1").Value2 = "結果"
+    page.Range("J1").Value2 = "照合ID"
+End Sub
+
+Private Sub InstallSheet10(ByVal page As Worksheet)
+    page.Rows(2).RowHeight = 15.75
+    page.Rows(3).RowHeight = 15.75
+    page.Rows(4).RowHeight = 15.75
+    page.Rows(5).RowHeight = 21
+    page.Rows(6).RowHeight = 21
+    page.Rows(7).RowHeight = 21
+    page.Rows(8).RowHeight = 21
+    page.Rows(9).RowHeight = 21
+    page.Rows(10).RowHeight = 21
+    InstallCells10_1 page
+    InstallShapes10 page
+    page.Visible = xlSheetVeryHidden
+End Sub
+
+Private Sub InstallCells10_1(ByVal page As Worksheet)
+    ApplyInstallStyle page.Range("B2,C2,D2,E2,F2,G2,H2,B3,C3,D3,E3,F3,G3,H3,B5,C5,D5,E5,F5,G5,H5,B6,C6,D6,E6,F6,G6,H6,B7,C7,D7,E7,F7,G7,H7,B8,C8,D8,E8,F8,G8,H8,B9,C9,D9,E9,F9,G9,H9,B10,C10,D10,E10,F10,G10,H10"), 5
+    ApplyInstallStyle page.Range("B4,C4,D4,E4,F4,G4,H4"), 11
+    page.Range("B4").Value2 = "日"
+    page.Range("C4").Value2 = "月"
+    page.Range("D4").Value2 = "火"
+    page.Range("E4").Value2 = "水"
+    page.Range("F4").Value2 = "木"
+    page.Range("G4").Value2 = "金"
+    page.Range("H4").Value2 = "土"
+End Sub
+
+Private Sub InstallShapes10(ByVal page As Worksheet)
+    Dim shape As Shape
+
+    Set shape = page.Shapes.AddShape(5, 0.0000, 0.0000, 90.0000, 23.0000)
+    shape.Name = "ControllerCalendarStyle"
+    InstallButtonFont shape, "", "Meiryo UI", 11
+    shape.TextFrame2.TextRange.Font.Bold = 0
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 0
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 1
+    shape.TextFrame2.VerticalAnchor = 1
+    shape.TextFrame2.MarginLeft = 7.2
+    shape.TextFrame2.MarginRight = 7.2
+    shape.TextFrame2.MarginTop = 3.6
+    shape.TextFrame2.MarginBottom = 3.6
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 1.5
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 1
+    shape.Locked = True
+    shape.Visible = 0
+
+    Set shape = page.Shapes.AddShape(5, 56.0000, 201.7500, 104.0000, 23.0000)
+    shape.Name = "ControllerPreviousMonth"
+    InstallButtonFont shape, "前月", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = 0
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 0
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 1
+    shape.TextFrame2.VerticalAnchor = 1
+    shape.TextFrame2.MarginLeft = 7.2
+    shape.TextFrame2.MarginRight = 7.2
+    shape.TextFrame2.MarginTop = 3.6
+    shape.TextFrame2.MarginBottom = 3.6
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 1.5
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 1
+    shape.Locked = True
+    shape.Visible = -1
+
+    Set shape = page.Shapes.AddShape(5, 164.0000, 201.7500, 104.0000, 23.0000)
+    shape.Name = "ControllerNextMonth"
+    InstallButtonFont shape, "翌月", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = 0
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 0
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 1
+    shape.TextFrame2.VerticalAnchor = 1
+    shape.TextFrame2.MarginLeft = 7.2
+    shape.TextFrame2.MarginRight = 7.2
+    shape.TextFrame2.MarginTop = 3.6
+    shape.TextFrame2.MarginBottom = 3.6
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 1.5
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 1
+    shape.Locked = True
+    shape.Visible = -1
+
+    Set shape = page.Shapes.AddShape(5, 272.0000, 201.7500, 104.0000, 23.0000)
+    shape.Name = "ControllerCloseCalendar"
+    InstallButtonFont shape, "戻る", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = 0
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 0
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 1
+    shape.TextFrame2.VerticalAnchor = 1
+    shape.TextFrame2.MarginLeft = 7.2
+    shape.TextFrame2.MarginRight = 7.2
+    shape.TextFrame2.MarginTop = 3.6
+    shape.TextFrame2.MarginBottom = 3.6
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 1.5
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 1
+    shape.Locked = True
+    shape.Visible = -1
+
+    Set shape = page.Shapes.AddShape(5, 56.0000, 244.5000, 158.0000, 23.0000)
+    shape.Name = "ControllerPickDate"
+    InstallButtonFont shape, "選択日を入力", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = 0
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 0
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 1
+    shape.TextFrame2.VerticalAnchor = 1
+    shape.TextFrame2.MarginLeft = 7.2
+    shape.TextFrame2.MarginRight = 7.2
+    shape.TextFrame2.MarginTop = 3.6
+    shape.TextFrame2.MarginBottom = 3.6
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 1.5
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 1
+    shape.Locked = True
+    shape.Visible = -1
+
+    Set shape = page.Shapes.AddShape(5, 218.0000, 244.5000, 158.0000, 23.0000)
+    shape.Name = "ControllerClearDate"
+    InstallButtonFont shape, "日付を空欄に", "Meiryo UI", 10
+    shape.TextFrame2.TextRange.Font.Bold = 0
+    shape.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = 0
+    shape.TextFrame2.TextRange.ParagraphFormat.Alignment = 1
+    shape.TextFrame2.VerticalAnchor = 1
+    shape.TextFrame2.MarginLeft = 7.2
+    shape.TextFrame2.MarginRight = 7.2
+    shape.TextFrame2.MarginTop = 3.6
+    shape.TextFrame2.MarginBottom = 3.6
+    shape.Fill.Visible = -1
+    shape.Line.Visible = -1
+    shape.Fill.ForeColor.RGB = 10907427
+    shape.Line.ForeColor.RGB = 10907427
+    shape.Line.Weight = 1.5
+    shape.Adjustments(1) = 0.16667
+    shape.Placement = 1
+    shape.Locked = True
+    shape.Visible = -1
+End Sub
+
+Private Sub ApplyInstallStyle(ByVal target As Range, ByVal styleId As Long)
+    Select Case styleId \ 16
+        Case 0: InstallStyle0 target, styleId
+        Case 1: InstallStyle1 target, styleId
+        Case 2: InstallStyle2 target, styleId
+        Case 3: InstallStyle3 target, styleId
+        Case 4: InstallStyle4 target, styleId
+        Case 5: InstallStyle5 target, styleId
+        Case 6: InstallStyle6 target, styleId
+        Case 7: InstallStyle7 target, styleId
+        Case 8: InstallStyle8 target, styleId
+    End Select
+End Sub
+
+Private Sub InstallStyle0(ByVal target As Range, ByVal styleId As Long)
+    With target
+        Select Case styleId
+            Case 0
+                .Font.Name = "Carlito"
+                .Font.Size = 11
+            Case 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Interior.Color = RGB(243, 246, 249)
+            Case 2
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(29, 51, 77)
+                .Interior.Color = RGB(242, 246, 250)
+                .VerticalAlignment = xlCenter
+            Case 3
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Interior.Color = RGB(255, 255, 255)
+            Case 4
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Interior.Color = RGB(234, 240, 246)
+            Case 5
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+            Case 6
+                .Font.Name = "Carlito"
+                .Font.Size = 11
+                .NumberFormat = "@"
+            Case 7
+                .Font.Name = "Carlito"
+                .Font.Size = 11
+                .Font.Bold = True
+                .NumberFormat = "@"
+            Case 8
+                .Font.Name = "Carlito"
+                .Font.Size = 11
+                .Font.Bold = True
+            Case 9
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .NumberFormat = "@"
+            Case 10
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Bold = True
+                .Font.Color = RGB(255, 255, 255)
+                .Interior.Color = RGB(23, 45, 74)
+                .NumberFormat = "@"
+            Case 11
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(255, 255, 255)
+                .Interior.Color = RGB(23, 45, 74)
+                .NumberFormat = "@"
+            Case 12
+                .Font.Name = "Carlito"
+                .Font.Size = 11
+            Case 13
+                .Font.Name = "Carlito"
+                .Font.Size = 11
+                .NumberFormat = "@"
+            Case 14
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 15
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .VerticalAlignment = xlCenter
+        End Select
+    End With
+End Sub
+
+Private Sub InstallStyle1(ByVal target As Range, ByVal styleId As Long)
+    With target
+        Select Case styleId
+            Case 16
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 9
+                .Font.Bold = True
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .VerticalAlignment = xlCenter
+            Case 17
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 18
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlCenter
+                .VerticalAlignment = xlCenter
+            Case 19
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .VerticalAlignment = xlCenter
+            Case 20
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Interior.Color = RGB(214, 239, 214)
+            Case 21
+                .Font.Name = "Carlito"
+                .Font.Size = 11
+                .NumberFormat = "yyyy/mm/dd"
+            Case 22
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(233, 239, 246)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+            Case 23
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(233, 239, 246)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 24
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "@"
+            Case 25
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+            Case 26
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(255, 255, 255)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 27
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(255, 255, 255)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlRight
+                .VerticalAlignment = xlCenter
+            Case 28
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .ShrinkToFit = True
+                .NumberFormat = "@"
+            Case 29
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+            Case 30
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+            Case 31
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 12
+                .Font.Bold = True
+                .Font.Color = RGB(255, 255, 255)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+        End Select
+    End With
+End Sub
+
+Private Sub InstallStyle2(ByVal target As Range, ByVal styleId As Long)
+    With target
+        Select Case styleId
+            Case 32
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 9
+                .Font.Color = RGB(255, 255, 255)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlRight
+                .VerticalAlignment = xlCenter
+            Case 33
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+            Case 34
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+            Case 35
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(223, 236, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+            Case 36
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(223, 236, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 37
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(234, 240, 246)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 38
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 39
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(255, 255, 255)
+                .Interior.Color = RGB(23, 45, 74)
+                .HorizontalAlignment = xlCenter
+                .VerticalAlignment = xlCenter
+            Case 40
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(214, 239, 214)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 41
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 42
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Bold = True
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(223, 236, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+            Case 43
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(233, 239, 246)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 44
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 19
+                .Font.Bold = True
+                .Font.Color = RGB(255, 255, 255)
+                .Interior.Color = RGB(23, 45, 74)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 45
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 46
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 13
+                .Font.Bold = True
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 47
+                .IndentLevel = 2
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(230, 246, 220)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .ShrinkToFit = True
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(218, 233, 247)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(218, 233, 247)
+        End Select
+    End With
+End Sub
+
+Private Sub InstallStyle3(ByVal target As Range, ByVal styleId As Long)
+    With target
+        Select Case styleId
+            Case 48
+                .IndentLevel = 2
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(230, 246, 220)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .ShrinkToFit = True
+                .NumberFormat = "@"
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(218, 233, 247)
+            Case 49
+                .IndentLevel = 2
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(230, 246, 220)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .ShrinkToFit = True
+                .NumberFormat = "@"
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(218, 233, 247)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(218, 233, 247)
+            Case 50
+                .IndentLevel = 2
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(230, 246, 220)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .ShrinkToFit = True
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(218, 233, 247)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(218, 233, 247)
+            Case 51
+                .IndentLevel = 2
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(230, 246, 220)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .ShrinkToFit = True
+                .NumberFormat = "@"
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(218, 233, 247)
+            Case 52
+                .IndentLevel = 2
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(230, 246, 220)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .ShrinkToFit = True
+                .NumberFormat = "@"
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(218, 233, 247)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(218, 233, 247)
+            Case 53
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 12
+                .Font.Bold = True
+                .Font.Color = RGB(255, 255, 255)
+                .Interior.Color = RGB(23, 45, 74)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 54
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 9
+                .Font.Color = RGB(255, 255, 255)
+                .Interior.Color = RGB(23, 45, 74)
+                .HorizontalAlignment = xlRight
+                .VerticalAlignment = xlCenter
+            Case 55
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 56
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 57
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 58
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 59
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 60
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 61
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(218, 233, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+            Case 62
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 63
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+        End Select
+    End With
+End Sub
+
+Private Sub InstallStyle4(ByVal target As Range, ByVal styleId As Long)
+    With target
+        Select Case styleId
+            Case 64
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 65
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 66
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 67
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 68
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 69
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 70
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 71
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+            Case 72
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+            Case 73
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+            Case 74
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 75
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 76
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 77
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(218, 233, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(223, 236, 247)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(223, 236, 247)
+            Case 78
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(218, 233, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(223, 236, 247)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(223, 236, 247)
+            Case 79
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+        End Select
+    End With
+End Sub
+
+Private Sub InstallStyle5(ByVal target As Range, ByVal styleId As Long)
+    With target
+        Select Case styleId
+            Case 80
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 81
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(218, 233, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+            Case 82
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(218, 233, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 83
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 84
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 85
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 86
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 9
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+            Case 87
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 9
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 88
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .VerticalAlignment = xlCenter
+            Case 89
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+            Case 90
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+            Case 91
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(218, 233, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+            Case 92
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(218, 233, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 93
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "yyyy/mm/dd"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 94
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "yyyy/mm/dd"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 95
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+        End Select
+    End With
+End Sub
+
+Private Sub InstallStyle6(ByVal target As Range, ByVal styleId As Long)
+    With target
+        Select Case styleId
+            Case 96
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 97
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 98
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 12
+                .Font.Bold = True
+                .Font.Color = RGB(255, 255, 255)
+                .Interior.Color = RGB(23, 45, 74)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 99
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 9
+                .Font.Color = RGB(255, 255, 255)
+                .Interior.Color = RGB(23, 45, 74)
+                .HorizontalAlignment = xlRight
+                .VerticalAlignment = xlCenter
+            Case 100
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 101
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 102
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 103
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 10
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(218, 233, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 104
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 105
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 106
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 107
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 108
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 109
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 110
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 111
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+        End Select
+    End With
+End Sub
+
+Private Sub InstallStyle7(ByVal target As Range, ByVal styleId As Long)
+    With target
+        Select Case styleId
+            Case 112
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 113
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .NumberFormat = "@"
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 114
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 115
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 116
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .Locked = False
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 117
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(218, 233, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+                .NumberFormat = "@"
+            Case 118
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(218, 233, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+            Case 119
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(218, 233, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 120
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 9
+                .Font.Bold = True
+                .Font.Color = RGB(255, 255, 255)
+                .Interior.Color = RGB(23, 45, 74)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .ShrinkToFit = True
+                .NumberFormat = "@"
+            Case 121
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 12
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(218, 233, 247)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+            Case 122
+                .Font.Name = "Carlito"
+                .Font.Size = 11
+                .Font.Bold = True
+                .NumberFormat = "@"
+            Case 123
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 9
+                .Font.Bold = True
+                .Font.Color = RGB(16, 39, 68)
+                .Interior.Color = RGB(242, 246, 250)
+                .HorizontalAlignment = xlCenter
+                .VerticalAlignment = xlCenter
+                .WrapText = True
+            Case 124
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 125
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 126
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 127
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+        End Select
+    End With
+End Sub
+
+Private Sub InstallStyle8(ByVal target As Range, ByVal styleId As Long)
+    With target
+        Select Case styleId
+            Case 128
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 129
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "@"
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 130
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "yyyy/mm/dd"
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 131
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 132
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "yyyy/mm/dd"
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 133
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "yyyy/mm/dd"
+                .Borders(xlEdgeLeft).LineStyle = xlContinuous
+                .Borders(xlEdgeLeft).Weight = xlThin
+                .Borders(xlEdgeLeft).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 134
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Locked = False
+                .NumberFormat = "yyyy/mm/dd"
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+            Case 135
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeTop).LineStyle = xlContinuous
+                .Borders(xlEdgeTop).Weight = xlThin
+                .Borders(xlEdgeTop).Color = RGB(212, 226, 242)
+            Case 136
+                .IndentLevel = 1
+                .Font.Name = "Meiryo UI"
+                .Font.Size = 11
+                .Font.Color = RGB(23, 45, 74)
+                .Interior.Color = RGB(255, 255, 255)
+                .HorizontalAlignment = xlLeft
+                .VerticalAlignment = xlCenter
+                .Borders(xlEdgeRight).LineStyle = xlContinuous
+                .Borders(xlEdgeRight).Weight = xlThin
+                .Borders(xlEdgeRight).Color = RGB(212, 226, 242)
+                .Borders(xlEdgeBottom).LineStyle = xlContinuous
+                .Borders(xlEdgeBottom).Weight = xlThin
+                .Borders(xlEdgeBottom).Color = RGB(212, 226, 242)
+        End Select
+    End With
+End Sub
+
+
+
+Private Sub AlignInstalledDetail(ByVal page As Worksheet)
+    Dim item As Variant
+    Dim button As Shape
+    Dim anchor As Range
+    For Each item In Array(Array("ReceivedDate", "L32"), Array("DraftDate", "L38:L39"), _
+        Array("ApprovedDate", "V38:V39"), Array("IssuedDate", "L41"))
+        Set button = page.Shapes("Calendar_" & item(0))
+        Set anchor = page.Range(item(1))
+        button.Top = anchor.Top
+        button.Height = anchor.Height
+        button.Left = anchor.Left + anchor.Width - button.Width
+    Next
+    Set anchor = page.Range("C58")
+    For Each item In Array("ControllerCopyNumber", "UI_選択項目をコピー", "UI_コピー取込", "UI_選択項目へ取込")
+        Set button = page.Shapes(CStr(item))
+        button.Top = anchor.Top + (anchor.Height - button.Height) / 2
+    Next
+End Sub
