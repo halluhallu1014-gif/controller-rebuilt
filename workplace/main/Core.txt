@@ -1,5 +1,12 @@
 Option Explicit
 
+Private isOwnerSignedIn As Boolean
+Private Const OWNER_PAGE As String = "オーナー専用"
+Private pendingPage As Worksheet
+Private reviewPage As Worksheet
+Private reviewRows As Object
+Private reviewSnapshots As Object
+
 Public Cases As Object
 Public fields As Object
 Public years As Object
@@ -327,7 +334,7 @@ Public Function SearchRecords(ByVal query As String, ByVal office As String, ByV
             If Not hasName Then hasName = InStr(1, SearchText(CStr(record.values("Furigana"))), normalizedQuery, vbTextCompare) > 0
         End If
         hasOffice = Len(office) = 0 Or StrComp(CStr(record.values("Office")), office, vbTextCompare) = 0
-        isClosed = excludeClosed And closedStates.Exists(CStr(record.values("Status")))
+        isClosed = excludeClosed And IsCaseClosed(record.values, closedStates)
         If hasName And hasOffice And Not isClosed Then result.Add CStr(key)
     Next
     Set SearchRecords = result
@@ -409,7 +416,7 @@ Public Sub StartController()
     If Not UiCanLeaveDetail() Then GoTo Finished
     If Not LoadConfiguration(message) Then GoTo Finished
     If PendingSave() Then
-        message = "前回の保存結果を確認してください。"
+        message = "前回の保存結果が未確定です。再送せずオーナーに連絡してください。"
         GoTo Finished
     End If
     ReloadCases message
@@ -602,6 +609,10 @@ End Function
 
 Public Sub ConfirmSaveResult()
     Dim message As String
+    If Not IsOwnerAuthorized() Then
+        Notify "保存結果はオーナーに確認を依頼してください。"
+        Exit Sub
+    End If
     If LoadConfiguration(message) Then
         If ReconcileSave(message) Then message = message & vbCrLf & "最新を再読込して確認してください。"
     End If
@@ -708,7 +719,7 @@ Private Sub AddOfficeOption(ByVal ws As Worksheet, ByVal index As Long, ByVal ca
     button.OnAction = MacroAddress("FindRecords")
 End Sub
 
-Private Function MacroAddress(ByVal name As String) As String
+Public Function MacroAddress(ByVal name As String) As String
     MacroAddress = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!" & name
 End Function
 
@@ -828,6 +839,17 @@ Private Sub ShowDetail(ByVal year As String)
     hasDetail = True
     RememberBaseline
     ws.Activate
+    With ws.Shapes("Calendar_CompletedDate")
+        .Height = ws.Range("L43").Height
+        .Top = ws.Range("L43").Top
+        .Left = ws.Range("L43").Left + ws.Range("L43").Width - .Width
+    End With
+    Set field = ws.Range("C58")
+    For Each id In Array("ControllerCopyNumber", "UI_選択項目をコピー", "UI_コピー取込", "UI_選択項目へ取込")
+        With ws.Shapes(CStr(id))
+            .Top = field.Top + (field.Height - .Height) / 2
+        End With
+    Next
     ShowRelatedCases ws
     FieldCell("PersonName").Select
     ThisWorkbook.Windows(1).ScrollColumn = 1
@@ -865,11 +887,16 @@ End Sub
 
 Private Sub RefreshSearchControls()
     BuildSearchFilters
-    Sheet("検索").Shapes("ControllerOperations").Visible = (Setting("ControllerRole") = "Staff")
+    Sheet("検索").Shapes("ControllerOperations").Visible = msoFalse
+    Sheet("オーナー専用").Shapes("WorkflowOperations").Visible = (Setting("ControllerRole") = "Staff")
 End Sub
 
 Public Sub OpenOperations()
     Dim choice As Variant
+    If Not IsOwnerAuthorized() Then
+        Notify "オーナー認証が必要です。"
+        Exit Sub
+    End If
     If Setting("ControllerRole") <> "Staff" Then Exit Sub
     choice = Application.InputBox("1  業務開始" & vbCrLf & "2  業務終了" & vbCrLf & _
         "3  移動結果確認" & vbCrLf & "4  バックアップ復元", "常勤の管理", Type:=1)
@@ -1002,7 +1029,13 @@ Private Sub UpdateDetailSummary(ByVal ws As Worksheet)
                 If Len(document) > 42 Then document = Left$(document, 41) & "…"
                 caption = .sourceYear & "年度 ／ 枝番" & .values("Branch") & vbLf & _
                     document & " ／ " & .values("Status")
-                If Len(.invalidReason) > 0 Then caption = caption & vbLf & .invalidReason
+                If Len(.invalidReason) > 0 Then
+                    caption = caption & vbLf & .invalidReason
+                ElseIf HasCompletionMismatch(.values, ConfiguredList(15)) Then
+                    status = "完了日・状態 要確認"
+                    captionSize = 9
+                    caption = caption & vbLf & "完了日・施行日・状態を確認してください。"
+                End If
             End With
         End If
     End If
@@ -1338,6 +1371,11 @@ Public Sub RestoreBackup()
     Dim book As Workbook
     Dim message As String
     Dim events As Boolean
+    If Not IsOwnerAuthorized() Then
+        Notify "オーナー認証が必要です。"
+        Exit Sub
+    End If
+    HideOwnerWorkspace
     If Not BeginAction() Then Exit Sub
     events = Application.EnableEvents
     On Error GoTo Failed
@@ -1586,6 +1624,11 @@ Public Function ExecuteBusiness(ByVal isStart As Boolean, ByRef message As Strin
     Dim fileSystem As Object
     Dim moved As Boolean
     Dim ws As Worksheet
+    If Not IsOwnerAuthorized() Then
+        message = "オーナー認証が必要です。"
+        Exit Function
+    End If
+    HideOwnerWorkspace
     If Not BeginAction() Then Exit Function
     On Error GoTo Failed
     If Setting("ControllerRole") <> "Staff" Then
@@ -1759,6 +1802,11 @@ End Function
 
 Public Sub ConfirmMoveResult()
     Dim message As String
+    If Not IsOwnerAuthorized() Then
+        Notify "オーナー認証が必要です。"
+        Exit Sub
+    End If
+    HideOwnerWorkspace
     If Not BeginAction() Then Exit Sub
     On Error GoTo Failed
     If Setting("ControllerRole") <> "Staff" Then
@@ -2180,3 +2228,966 @@ Private Sub RestoreDefinitionSheet(ByVal address As String, ByVal book As Workbo
     ws.Cells(1, 1).Resize(UBound(data, 1), UBound(data, 2)).Value2 = data
     ws.Visible = xlSheetVeryHidden
 End Sub
+
+Public Sub ImportMultipleFields()
+    ImportDetailFields ""
+End Sub
+
+Public Sub ImportOneField()
+    Dim id As String
+    id = SelectedField()
+    If Len(id) > 0 Then ImportDetailFields id
+End Sub
+
+Private Sub ImportDetailFields(ByVal onlyId As String)
+    Dim answer As Variant
+    Dim content As String
+    Dim mode As VbMsgBoxResult
+    Dim profile As String
+    Dim config As Worksheet
+    Dim result As Object
+    Dim changes As Object
+    Dim target As Range
+    Dim id As Variant
+    Dim issues As String
+    Dim summary As String
+    Dim restoreDetail As Boolean
+    Dim overwrite As Long
+
+    If Not hasDetail Or Not ActiveSheet Is Sheet("詳細") Then Exit Sub
+    On Error GoTo Failed
+    Set config = Sheet("Settings")
+    answer = Application.InputBox("コピー元画面名を入力してください。", "取込ルール", CStr(config.Range("T2").Value2), Type:=2)
+    If VarType(answer) = vbBoolean Then Exit Sub
+    profile = Trim$(CStr(answer))
+    If Len(profile) = 0 Then Exit Sub
+    mode = MsgBox("はい：クリップボードを読む" & vbCrLf & "いいえ：別ブックに貼った範囲から読む", _
+        vbYesNoCancel Or vbQuestion, "データ取込")
+    Select Case mode
+        Case vbYes: content = ReadWorkflowClipboard()
+        Case vbNo
+            restoreDetail = True
+            content = ReadWorkflowPaste()
+            Sheet("詳細").Activate
+        Case Else: Exit Sub
+    End Select
+    If Len(content) = 0 Then
+        Notify "文字列を取得できません。貼り付け範囲からの取込をお試しください。"
+        Exit Sub
+    End If
+    Set result = ParseWorkflowImport(content, config.Range("T2:Y51").Value2, profile, issues)
+    Set changes = NewDictionary()
+    For Each id In result.Keys
+        If Len(onlyId) = 0 Or id = onlyId Then
+            If fields.Exists(id) Then
+                Set target = FieldCell(CStr(id))
+                If Not target.Locked Then
+                    If CStr(target.Value2) <> CStr(result(id)) Then
+                        If Len(CStr(target.Value2)) > 0 Then overwrite = overwrite + 1
+                        changes.Add id, result(id)
+                        summary = summary & fields(id)(0) & vbCrLf
+                    End If
+                End If
+            End If
+        End If
+    Next
+    If changes.Count = 0 Then
+        Notify "入力できる新しい値がありません。" & vbCrLf & Left$(issues, 500)
+        Exit Sub
+    End If
+    If MsgBox("次の項目を入力欄へ反映しますか？ 既存値の置換 " & overwrite & "件" & vbCrLf & _
+        summary & Left$(issues, 350), vbYesNo Or vbQuestion Or vbDefaultButton2) <> vbYes Then Exit Sub
+    For Each id In changes.Keys
+        PutValue FieldCell(CStr(id)), changes(id)
+    Next
+    Notify changes.Count & "項目を入力欄に反映しました。保存前に内容を確認してください。"
+    Exit Sub
+Failed:
+    If restoreDetail Then Sheet("詳細").Activate
+    Notify SafeFailure("データ取込", Err.Number)
+End Sub
+
+
+
+Public Sub InstallWorkflow()
+    Dim config As Worksheet
+    Dim search As Worksheet
+    Dim detail As Worksheet
+    Dim owner As Worksheet
+    Dim button As Shape
+    Dim labels As Variant
+    Dim i As Long
+
+    Set config = Sheet("Settings")
+    config.Range("S1").Value2 = "OwnerWindowsAccounts"
+    config.Range("S4").Value2 = "S2: オーナー / S3: 申請日項目ID"
+    labels = Array("コピー元画面", "項目名", "項目ID", "位置", "区切り", "整形・検証")
+    For i = 0 To UBound(labels)
+        config.Cells(1, 20 + i).Value2 = labels(i)
+    Next
+    If Len(CStr(config.Range("T2").Value2)) = 0 Then InstallImportDefaults config
+    Sheet("Comparison").Range("F7").Value2 = "優先度（1～5）"
+    Set search = Sheet("検索")
+    Set detail = Sheet("詳細")
+    For Each button In search.Shapes
+        If button.OnAction Like "*ConfirmSaveResult" Or button.OnAction Like "*OpenOperations" Then button.Visible = msoFalse
+    Next
+    Set button = search.Shapes("ControllerCompare")
+    button.OnAction = MacroAddress("ChooseComparisonSource")
+    AddWorkflowButton search, "WorkflowExtract", "抽出・印刷", "OpenPendingReport", search.Range("S40:W41")
+    detail.Shapes("UI_コピー取込").OnAction = MacroAddress("ImportMultipleFields")
+    detail.Shapes("UI_コピー取込").TextFrame2.TextRange.Text = "複数項目を取込"
+    detail.Shapes("UI_選択項目へ取込").OnAction = MacroAddress("ImportOneField")
+    detail.Shapes("UI_選択項目へ取込").TextFrame2.TextRange.Text = "選択欄へ取込"
+    Set owner = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+    owner.Name = OWNER_PAGE
+    owner.Range("B2:J3").Merge
+    owner.Range("B2").Value2 = "CONTROLLER / オーナー専用"
+    owner.Range("B2:J3").Interior.Color = RGB(22, 44, 67)
+    owner.Range("B2:J3").Font.Color = vbWhite
+    owner.Range("B2:J3").Font.Size = 17
+    owner.Range("B5").Value2 = "常勤の管理には従来どおり担当区分の権限が必要です。"
+    AddWorkflowButton owner, "WorkflowRecovery", "保存を再確認", "ConfirmSaveResult", owner.Range("B7:E8")
+    AddWorkflowButton owner, "WorkflowOperations", "常勤の管理", "OpenOperations", owner.Range("F7:I8")
+    AddWorkflowButton owner, "WorkflowSignOut", "ログアウト", "SignOutOwner", owner.Range("B10:E11")
+    search.Activate
+    owner.Visible = xlSheetVeryHidden
+End Sub
+
+Public Sub AddWorkflowButton(ByVal ws As Worksheet, ByVal id As String, ByVal caption As String, _
+    ByVal action As String, ByVal position As Range)
+    Dim button As Shape
+    Set button = ws.Shapes.AddShape(msoShapeRoundedRectangle, position.Left, position.Top, position.Width, position.Height)
+    button.Name = id
+    button.Fill.ForeColor.RGB = RGB(31, 96, 143)
+    button.Line.Visible = msoFalse
+    button.TextFrame2.TextRange.Text = caption
+    button.TextFrame2.TextRange.Font.Size = 11
+    button.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = vbWhite
+    button.TextFrame2.TextRange.ParagraphFormat.Alignment = msoAlignCenter
+    button.TextFrame2.VerticalAnchor = msoAnchorMiddle
+    button.OnAction = MacroAddress(action)
+End Sub
+
+Private Function CurrentOwnerListed() As Boolean
+    Dim account As Variant
+    Dim login As String
+    login = Environ$("USERDOMAIN") & "\" & Environ$("USERNAME")
+    If Len(Environ$("USERNAME")) = 0 Or Len(Environ$("USERDOMAIN")) = 0 Then Exit Function
+    For Each account In Split(CStr(Sheet("Settings").Range("S2").Value2), ";")
+        If StrComp(Trim$(CStr(account)), login, vbTextCompare) = 0 Then
+            CurrentOwnerListed = True
+            Exit Function
+        End If
+    Next
+End Function
+
+Public Function IsOwnerAuthorized() As Boolean
+    If isOwnerSignedIn Then IsOwnerAuthorized = CurrentOwnerListed()
+End Function
+
+Public Sub OpenOwnerWorkspace()
+    If Not CurrentOwnerListed() Then
+        Notify "このWindowsアカウントはオーナーとして登録されていません。"
+        Exit Sub
+    End If
+    If Not UiCanLeaveDetail() Then Exit Sub
+    If MsgBox("現在のWindowsアカウントでオーナー操作を開始しますか？", vbQuestion Or vbYesNo Or vbDefaultButton2) <> vbYes Then Exit Sub
+    SignInWindowsOwner
+End Sub
+
+Public Function SignInWindowsOwner() As Boolean
+    If Not CurrentOwnerListed() Then Exit Function
+    isOwnerSignedIn = True
+    Sheet(OWNER_PAGE).Visible = xlSheetVisible
+    Sheet(OWNER_PAGE).Activate
+    SignInWindowsOwner = True
+End Function
+
+Public Sub SignOutOwner()
+    isOwnerSignedIn = False
+    HideOwnerWorkspace
+End Sub
+
+Public Sub HideOwnerWorkspace()
+    Dim ws As Worksheet
+    Set ws = Sheet(OWNER_PAGE)
+    If ws.Visible = xlSheetVeryHidden Then Exit Sub
+    If ActiveSheet Is ws Then Sheet("検索").Activate
+    ws.Visible = xlSheetVeryHidden
+End Sub
+
+Public Sub OpenPendingReport()
+    Dim basis As Variant
+    Dim filter As Variant
+    Dim limit As Variant
+    Dim year As Variant
+    Dim office As Variant
+    Dim status As Variant
+    Dim order As Variant
+    Dim fieldId As String
+    Dim criterion As String
+    Dim description As String
+    Dim threshold As Date
+
+    If Cases Is Nothing Then
+        Notify "先に管理簿を読み込んでください。"
+        Exit Sub
+    End If
+    basis = Application.InputBox("1 収受日 / 2 申請日（設定済みの場合）", "抽出する日付項目", 1, Type:=1)
+    If VarType(basis) = vbBoolean Then Exit Sub
+    Select Case basis
+        Case 1: fieldId = "ReceivedDate"
+        Case 2: fieldId = CStr(Sheet("Settings").Range("S3").Value2)
+        Case Else: Exit Sub
+    End Select
+    If Not fields.Exists(fieldId) Then
+        Notify "日付項目が登録されていません。設定で日付型の項目IDを指定してください。"
+        Exit Sub
+    End If
+    If fields(fieldId)(1) <> "Date" Or (basis = 2 And fieldId = "ReceivedDate") Then
+        Notify "申請日には収受日と別の日付型の項目を指定してください。"
+        Exit Sub
+    End If
+    filter = Application.InputBox("1 2か月超 / 2 3か月超 / 3 任意月数超 / 4 指定日以前 / 5 日付未入力", "抽出条件", 1, Type:=1)
+    If VarType(filter) = vbBoolean Then Exit Sub
+    Select Case filter
+        Case 1, 2
+            threshold = DateAdd("m", -(CLng(filter) + 1), Date)
+            criterion = "Before"
+            description = (CLng(filter) + 1) & "か月超"
+        Case 3
+            limit = Application.InputBox("1～1200の整数を入力してください。", "経過月数", Type:=1)
+            If VarType(limit) = vbBoolean Then Exit Sub
+            If limit < 1 Or limit > 1200 Or limit <> Fix(limit) Then Exit Sub
+            threshold = DateAdd("m", -CLng(limit), Date)
+            criterion = "Before"
+            description = CLng(limit) & "か月超"
+        Case 4
+            limit = Application.InputBox("例 2026/11/10", "指定日以前", Type:=2)
+            If VarType(limit) = vbBoolean Then Exit Sub
+            If Not IsDate(limit) Then
+                Notify "日付を入力してください。"
+                Exit Sub
+            End If
+            threshold = DateValue(CStr(limit))
+            criterion = "Through"
+            description = Format$(threshold, "yyyy/mm/dd") & "以前"
+        Case 5
+            criterion = "Blank"
+            description = "日付未入力"
+        Case Else
+            Exit Sub
+    End Select
+    year = Application.InputBox("空欄は全年度", "年度", Type:=2)
+    If VarType(year) = vbBoolean Then Exit Sub
+    office = Application.InputBox("空欄は全署", "署", Type:=2)
+    If VarType(office) = vbBoolean Then Exit Sub
+    status = Application.InputBox("空欄は全状態", "処理状態", Type:=2)
+    If VarType(status) = vbBoolean Then Exit Sub
+    order = Application.InputBox("1 古い日付順 / 2 新しい日付順 / 3 経過期間順 / 4 署別 / 5 年度別", "並べ替え", 1, Type:=1)
+    If VarType(order) = vbBoolean Then Exit Sub
+    If order < 1 Or order > 5 Or order <> Fix(order) Then Exit Sub
+    BuildPendingReport Array(fieldId, criterion, threshold, Trim$(CStr(year)), Trim$(CStr(office)), Trim$(CStr(status)), CLng(order), description)
+End Sub
+
+Public Function PendingDateMatches(ByVal value As Variant, ByVal criterion As String, ByVal threshold As Date) As Boolean
+    If IsError(value) Or IsNull(value) Then Exit Function
+    If criterion = "Blank" Then
+        PendingDateMatches = Len(CStr(value)) = 0
+    ElseIf IsNumeric(value) And VarType(value) <> vbString And Len(CStr(value)) > 0 Then
+        Select Case criterion
+            Case "Before": PendingDateMatches = (CDbl(value) < CDbl(threshold))
+            Case "Through": PendingDateMatches = (CDbl(value) < CDbl(threshold) + 1)
+        End Select
+    End If
+End Function
+
+Public Sub BuildPendingReport(ByVal criteria As Variant)
+    Dim book As Workbook
+    Dim ws As Worksheet
+    Dim entry As CaseRecord
+    Dim key As Variant
+    Dim closed As Object
+    Dim output As Variant
+    Dim count As Long
+    Dim row As Long
+    Dim sortColumn As Long
+    Dim sortOrder As XlSortOrder
+    Dim fieldId As String
+    Dim day As Variant
+    Dim label As String
+
+    On Error GoTo Failed
+    If Cases Is Nothing Then Exit Sub
+    If Cases.Count = 0 Then
+        Notify "対象の事案がありません。"
+        Exit Sub
+    End If
+    fieldId = CStr(criteria(0))
+    Set closed = ConfiguredList(15)
+    ReDim output(1 To Cases.Count, 1 To 8)
+    For Each key In Cases.Keys
+        Set entry = Cases(key)
+        If Not IsCaseClosed(entry.values, closed) And Len(entry.invalidReason) = 0 Then
+            If (Len(criteria(3)) = 0 Or entry.sourceYear = criteria(3)) And _
+                (Len(criteria(4)) = 0 Or entry.values("Office") = criteria(4)) And _
+                (Len(criteria(5)) = 0 Or entry.values("Status") = criteria(5)) Then
+                If entry.sourceColumns.Exists(fieldId) Then
+                    day = entry.values(fieldId)
+                    If PendingDateMatches(day, CStr(criteria(1)), CDate(criteria(2))) Then
+                        count = count + 1
+                        output(count, 1) = entry.sourceYear
+                        output(count, 2) = entry.values("Office")
+                        output(count, 3) = entry.PersonKey
+                        output(count, 4) = entry.values("Branch")
+                        output(count, 5) = entry.values("PersonName")
+                        output(count, 6) = entry.values("DocumentName")
+                        output(count, 7) = entry.values("Status")
+                        If Len(CStr(day)) > 0 Then output(count, 8) = day
+                    End If
+                End If
+            End If
+        End If
+    Next
+    Set book = Workbooks.Add(xlWBATWorksheet)
+    Set ws = book.Worksheets(1)
+    Set pendingPage = ws
+    ws.Name = "未処理リスト"
+    label = IIf(fieldId = "ReceivedDate", "収受日", "申請日")
+    ws.Range("A1").Value2 = "未処理リスト"
+    ws.Range("A2").Value2 = label & " / " & criteria(7) & " / 年度 " & ReportFilter(criteria(3)) & _
+        " / 署 " & ReportFilter(criteria(4)) & " / 状態 " & ReportFilter(criteria(5))
+    ws.Range("A3").Value2 = Format$(Date, "yyyy/mm/dd") & " 出力  " & count & "件"
+    ws.Range("A6:H6").Value2 = Array("年度", "署", "13桁番号", "枝番", "氏名", "文書名", "処理状態", label)
+    FormatWorkflowReport ws, "H"
+    ws.Columns("C").ColumnWidth = 16
+    ws.Columns("F").ColumnWidth = 30
+    If count > 0 Then
+        ws.Range("A7:G" & (count + 6)).NumberFormat = "@"
+        ws.Range("H7:H" & (count + 6)).NumberFormat = "yyyy/mm/dd"
+        ws.Range("A7").Resize(count, 8).Value2 = output
+        sortColumn = 8
+        sortOrder = xlAscending
+        Select Case criteria(6)
+            Case 2: sortOrder = xlDescending
+            Case 4: sortColumn = 2
+            Case 5: sortColumn = 1
+        End Select
+        ws.Range("A6:H" & (count + 6)).Sort Key1:=ws.Cells(7, sortColumn), Order1:=sortOrder, Header:=xlYes
+    End If
+    AddWorkflowButton ws, "PendingPreview", "印刷プレビュー", "PreviewPendingReport", ws.Range("K2:L3")
+    AddWorkflowButton ws, "PendingPrint", "印刷", "PrintPendingReport", ws.Range("K5:L6")
+    ApplyPendingPrint ws, count + 6
+    Exit Sub
+Failed:
+    Notify SafeFailure("未処理リスト", Err.Number)
+End Sub
+
+Private Function ReportFilter(ByVal value As String) As String
+    ReportFilter = value
+    If Len(value) = 0 Then ReportFilter = "すべて"
+End Function
+
+Public Sub FormatWorkflowReport(ByVal ws As Worksheet, ByVal lastColumn As String)
+    ws.Columns("A:" & lastColumn).ColumnWidth = 15
+    ws.Range("A1").Font.Size = 18
+    With ws.Range("A6:" & lastColumn & "6")
+        .Interior.Color = RGB(22, 44, 67)
+        .Font.Color = vbWhite
+        .Font.Bold = True
+    End With
+End Sub
+
+Private Sub ApplyPendingPrint(ByVal ws As Worksheet, ByVal bottom As Long)
+    With ws.PageSetup
+        .PrintArea = "$A$1:$H$" & bottom
+        .PrintTitleRows = "$1:$6"
+        .Orientation = xlLandscape
+        .PaperSize = xlPaperA4
+        .Zoom = False
+        .FitToPagesWide = 1
+        .FitToPagesTall = False
+        .RightFooter = "&P / &N"
+    End With
+End Sub
+
+Public Sub PreviewPendingReport()
+    On Error GoTo Failed
+    If ActiveSheet Is pendingPage Then pendingPage.PrintPreview
+    Exit Sub
+Failed:
+    Notify "印刷プレビューを開けません。Excelのプリンター設定を確認してください。"
+End Sub
+
+Public Sub PrintPendingReport()
+    On Error GoTo Failed
+    If Not ActiveSheet Is pendingPage Then Exit Sub
+    If MsgBox("現在の未処理リストを印刷しますか？", vbYesNo Or vbDefaultButton2) = vbYes Then pendingPage.PrintOut
+    Exit Sub
+Failed:
+    Notify "印刷できません。Excelのプリンター設定を確認してください。"
+End Sub
+
+Public Sub InstallImportDefaults(ByVal config As Worksheet)
+    Dim rules As Variant
+    Dim i As Long
+    rules = Array(Array("基本情報", "13桁番号", "MaskedNumber", "Right", "Auto", "Digits13"), _
+        Array("基本情報", "氏名", "PersonName", "Right", "Auto", "Trim"), _
+        Array("基本情報", "フリガナ", "Furigana", "Right", "Auto", "Trim"), _
+        Array("基本情報", "郵便番号", "PostalCode", "Right", "Auto", "Postal"), _
+        Array("基本情報", "住所", "Address", "Right", "Auto", "Trim"), _
+        Array("基本情報", "電話番号", "PhoneNumber", "Right", "Auto", "Phone"))
+    For i = 0 To UBound(rules)
+        config.Cells(i + 2, 20).Resize(1, 6).Value2 = rules(i)
+    Next
+End Sub
+
+Public Function IsImportRule(ByVal rule As Variant) As Boolean
+    If Len(Trim$(rule(0))) = 0 Or Len(Trim$(rule(1))) = 0 Then Exit Function
+    Select Case rule(3)
+        Case "Right"
+            Select Case rule(4)
+                Case "Auto", "Tab", "Colon":
+                Case Else: Exit Function
+            End Select
+        Case "Next"
+            If rule(4) <> "Line" Then Exit Function
+        Case Else: Exit Function
+    End Select
+    Select Case rule(2)
+        Case "MaskedNumber": IsImportRule = (rule(5) = "Digits13")
+        Case "PostalCode": IsImportRule = (rule(5) = "Postal")
+        Case "PhoneNumber": IsImportRule = (rule(5) = "Phone")
+        Case "PersonName", "Furigana", "Address": IsImportRule = (rule(5) = "Trim")
+    End Select
+End Function
+
+Public Function ParseWorkflowImport(ByVal inputText As String, ByVal ruleData As Variant, ByVal profile As String, ByRef issues As String) As Object
+    Dim result As Object
+    Dim seen As Object
+    Dim rule As Variant
+    Dim lines As Variant
+    Dim lineText As String
+    Dim name As String
+    Dim value As String
+    Dim splitAt As Long
+    Dim row As Long
+    Dim i As Long
+    Dim count As Long
+
+    Set result = NewDictionary()
+    Set seen = NewDictionary()
+    issues = ""
+    lines = Split(Replace(Replace(inputText, vbCrLf, vbLf), vbCr, vbLf), vbLf)
+    For row = LBound(ruleData, 1) To UBound(ruleData, 1)
+        If CStr(ruleData(row, 1)) = profile And Len(profile) > 0 Then
+            rule = Array(CStr(ruleData(row, 1)), CStr(ruleData(row, 2)), CStr(ruleData(row, 3)), _
+                CStr(ruleData(row, 4)), CStr(ruleData(row, 5)), CStr(ruleData(row, 6)))
+            If Not IsImportRule(rule) Then
+                issues = issues & "抽出ルールが無効です。行 " & row & vbCrLf
+            Else
+                count = 0
+                value = ""
+                For i = LBound(lines) To UBound(lines)
+                    lineText = CleanImportText(CStr(lines(i)))
+                    If rule(3) = "Next" Then
+                        If lineText = rule(1) Then
+                            count = count + 1
+                            If i < UBound(lines) Then value = CleanImportText(CStr(lines(i + 1)))
+                        End If
+                    Else
+                        splitAt = ImportSeparator(lineText, CStr(rule(4)))
+                        If splitAt > 0 Then
+                            name = CleanImportText(Left$(lineText, splitAt - 1))
+                            If name = rule(1) Then
+                                count = count + 1
+                                value = CleanImportText(Mid$(lineText, splitAt + 1))
+                            End If
+                        End If
+                    End If
+                Next
+                If count > 0 Then
+                    If seen.Exists(rule(2)) Or count > 1 Then
+                        If result.Exists(rule(2)) Then result.Remove rule(2)
+                        issues = issues & rule(1) & "：候補が複数あります。" & vbCrLf
+                    ElseIf ImportValueValid(CStr(rule(5)), value) Then
+                        result.Add rule(2), value
+                    Else
+                        issues = issues & rule(1) & "：空欄または形式不正です。" & vbCrLf
+                    End If
+                    seen(rule(2)) = True
+                End If
+            End If
+        End If
+    Next
+    Set ParseWorkflowImport = result
+End Function
+
+Private Function CleanImportText(ByVal text As String) As String
+    CleanImportText = Trim$(Replace(Replace(Replace(text, ChrW(&HFEFF), ""), ChrW(&H200B), ""), ChrW(&H3000), " "))
+End Function
+
+Private Function ImportSeparator(ByVal lineText As String, ByVal mode As String) As Long
+    If mode <> "Colon" Then ImportSeparator = InStr(lineText, vbTab)
+    If ImportSeparator = 0 And mode <> "Tab" Then ImportSeparator = InStr(Replace(lineText, "：", ":"), ":")
+End Function
+
+Private Function ImportValueValid(ByVal mode As String, ByVal value As String) As Boolean
+    If Len(value) = 0 Then Exit Function
+    Select Case mode
+        Case "Digits13": ImportValueValid = IsDigits(value, 13)
+        Case "Postal"
+            ImportValueValid = IsDigits(Replace(value, "-", ""), 7)
+        Case "Phone"
+            value = Replace(value, "-", "")
+            If Len(value) >= 9 And Len(value) <= 11 Then ImportValueValid = IsDigits(value, Len(value))
+        Case "Trim": ImportValueValid = True
+    End Select
+End Function
+
+Public Function WorkflowImportPreview(ByVal inputText As String, ByVal rules As Variant, ByVal profile As String) As String
+    Dim values As Object
+    Dim id As Variant
+    Dim issues As String
+    Set values = ParseWorkflowImport(inputText, rules, profile, issues)
+    For Each id In values.Keys
+        WorkflowImportPreview = WorkflowImportPreview & id & " = " & values(id) & vbCrLf
+    Next
+    If values.Count = 0 Then WorkflowImportPreview = "抽出できる値がありません。" & vbCrLf
+    WorkflowImportPreview = WorkflowImportPreview & issues
+End Function
+
+Public Function ReadWorkflowClipboard() As String
+    Dim clipboard As Object
+    On Error GoTo Finished
+    Set clipboard = CreateObject("new:{1C3B4210-F441-11CE-B9EA-00AA006B1A69}")
+    clipboard.GetFromClipboard
+    ReadWorkflowClipboard = clipboard.GetText(1)
+Finished:
+End Function
+
+Public Function ReadWorkflowPaste() As String
+    Dim selected As Range
+    Dim row As Long
+    Dim col As Long
+    On Error Resume Next
+    Set selected = Application.InputBox("別の空Excelブックに文字列を貼り付け、貼り付けた範囲を選んでください。", "貼り付け範囲", Type:=8)
+    On Error GoTo 0
+    If selected Is Nothing Then Exit Function
+    If selected.Parent.Parent Is ThisWorkbook Then Exit Function
+    If selected.Areas.Count <> 1 Or selected.CountLarge > 5000 Then Exit Function
+    For row = 1 To selected.Rows.Count
+        If row > 1 Then ReadWorkflowPaste = ReadWorkflowPaste & vbLf
+        For col = 1 To selected.Columns.Count
+            If col > 1 Then ReadWorkflowPaste = ReadWorkflowPaste & vbTab
+            If Not IsError(selected.Cells(row, col).Value2) Then ReadWorkflowPaste = ReadWorkflowPaste & CStr(selected.Cells(row, col).Value2)
+        Next
+    Next
+End Function
+
+Public Sub ChooseComparisonSource()
+    Dim address As Variant
+    Dim book As Workbook
+    Dim candidateSheet As Worksheet
+    Dim entries As Collection
+    Dim rules As Object
+    Dim selected As Variant
+    Dim prompt As String
+    Dim message As String
+    Dim i As Long
+    On Error GoTo Failed
+    If Cases Is Nothing Then
+        Notify "先に管理簿を読み込んでください。"
+        Exit Sub
+    End If
+    If yearErrors.Count > 0 Then
+        Notify "読込に失敗した年度があります。設定を確認して最新を再読込してください。"
+        Exit Sub
+    End If
+    Set rules = ComparisonRules(message, True)
+    If rules Is Nothing Then GoTo Finished
+    If Not rules.Exists("MaskedNumber") Then
+        message = "設定ツールの照合設定で13桁番号を対応付けてください。"
+        GoTo Finished
+    End If
+    address = Application.GetOpenFilename("Excel ブック (*.xlsx;*.xlsm;*.xlsb;*.xls),*.xlsx;*.xlsm;*.xlsb;*.xls", , "一般事務整理簿を選択")
+    If VarType(address) = vbBoolean Then Exit Sub
+    Set book = OpenLedger(CStr(address), True, message)
+    If book Is Nothing Then GoTo Finished
+    For Each candidateSheet In book.Worksheets
+        i = i + 1
+        If Len(prompt) < 170 Then prompt = prompt & i & " " & candidateSheet.Name & vbLf
+    Next
+    selected = Application.InputBox(Left$(prompt, 175) & "シート番号、または正確なシート名を入力してください。", "照合対象シート", Type:=2)
+    If VarType(selected) = vbBoolean Then GoTo Finished
+    Set candidateSheet = Nothing
+    For i = 1 To book.Worksheets.Count
+        If CStr(i) = selected Or book.Worksheets(i).Name = selected Then
+            Set candidateSheet = book.Worksheets(i)
+            Exit For
+        End If
+    Next
+    If candidateSheet Is Nothing Then
+        message = "対象シートを確認してください。"
+        GoTo Finished
+    End If
+    Set entries = ComparisonRows(candidateSheet, rules, message)
+    book.Close False
+    Set book = Nothing
+    If Not entries Is Nothing Then BuildReviewReport entries, rules
+Finished:
+    If Not book Is Nothing Then book.Close False
+    If Len(message) > 0 Then Notify message
+    Exit Sub
+Failed:
+    message = SafeFailure("一般事務整理簿との照合", Err.Number)
+    Resume Finished
+End Sub
+
+Private Sub AddReviewMember(ByVal groups As Object, ByVal number As String, ByVal entry As CaseRecord)
+    Dim group As Collection
+    If Not groups.Exists(number) Then
+        Set group = New Collection
+        groups.Add number, group
+    End If
+    Set group = groups(number)
+    group.Add entry
+End Sub
+
+Private Function IsMatchingReviewCase(ByVal left As CaseRecord, ByVal right As CaseRecord, ByVal rules As Object, ByVal isSingle As Boolean) As Boolean
+    Dim field As Variant
+    Dim fieldValue As Variant
+    Dim used As Boolean
+    For Each field In rules.Keys
+        Select Case field
+            Case "MaskedNumber":
+            Case "SourceYear"
+                If rules(field)(1) And Len(ReviewText(right.values(field))) > 0 Then
+                    If left.sourceYear <> ReviewText(right.values(field)) Then Exit Function
+                    used = True
+                End If
+            Case Else
+                If rules(field)(1) Or field = "TaxYear" Or field = "DocumentName" Or field = "TaxType" Then
+                    fieldValue = right.values(field)
+                    If Len(ReviewText(fieldValue)) > 0 Then
+                        If Not left.sourceColumns.Exists(field) Then Exit Function
+                        If StrComp(ReviewText(left.values(field)), ReviewText(fieldValue), vbTextCompare) <> 0 Then Exit Function
+                        used = True
+                    End If
+                End If
+        End Select
+    Next
+    IsMatchingReviewCase = used Or isSingle
+End Function
+
+Private Function ReviewText(ByVal value As Variant) As String
+    If Not IsError(value) And Not IsNull(value) Then ReviewText = Trim$(CStr(value))
+End Function
+
+Private Function ReviewPriority(ByVal field As String, ByVal defaultValue As Long) As Long
+    Dim ws As Worksheet
+    Dim row As Long
+    Dim value As Variant
+    ReviewPriority = ReviewCategoryPriority(defaultValue)
+    Set ws = Sheet("Comparison")
+    For row = 8 To LastRow(ws)
+        If CStr(ws.Cells(row, 1).Value2) = field Then
+            value = ws.Cells(row, 6).Value2
+            If IsNumeric(value) Then
+                If CDbl(value) >= 1 And CDbl(value) <= 5 And CDbl(value) = Fix(CDbl(value)) Then ReviewPriority = CLng(value)
+            End If
+            Exit Function
+        End If
+    Next
+End Function
+
+Private Function ReviewCategoryPriority(ByVal category As Long) As Long
+    Dim value As Variant
+    ReviewCategoryPriority = category
+    value = Sheet("Settings").Cells(category + 4, 19).Value2
+    If IsNumeric(value) Then
+        If CDbl(value) >= 1 And CDbl(value) <= 5 And CDbl(value) = Fix(CDbl(value)) Then ReviewCategoryPriority = CLng(value)
+    End If
+End Function
+
+Public Sub BuildReviewReport(ByVal entries As Collection, ByVal rules As Object)
+    Dim people As Object
+    Dim internalCase As CaseRecord
+    Dim outside As CaseRecord
+    Dim target As CaseRecord
+    Dim group As Collection
+    Dim matches As Collection
+    Dim tentative As Object
+    Dim counts As Object
+    Dim commonChecks As Object
+    Dim issues As Collection
+    Dim record As Variant
+    Dim field As Variant
+    Dim id As Variant
+    Dim number As String
+    Dim editableKey As String
+    Dim message As String
+    Dim priority As Long
+
+    Set people = NewDictionary()
+    Set tentative = NewDictionary()
+    Set counts = NewDictionary()
+    Set commonChecks = NewDictionary()
+    Set issues = New Collection
+    For Each id In Cases.Keys
+        Set internalCase = Cases(id)
+        If Len(internalCase.PersonKey) > 0 Then AddReviewMember people, internalCase.PersonKey, internalCase
+    Next
+    For Each outside In entries
+        number = outside.PersonKey
+        Set matches = New Collection
+        If people.Exists(number) Then
+            Set group = people(number)
+            For Each internalCase In group
+                If IsMatchingReviewCase(internalCase, outside, rules, group.Count = 1) Then matches.Add internalCase
+            Next
+            If matches.Count = 1 Then
+                Set target = matches(1)
+                tentative.Add CStr(outside.sourceRow), target
+                If Not counts.Exists(target.Key) Then counts.Add target.Key, 0
+                counts(target.Key) = CLng(counts(target.Key)) + 1
+            ElseIf matches.Count > 1 Then
+                issues.Add Array(number, outside.sourceRow, "重複候補", "", "", "", "", ReviewCategoryPriority(1))
+            Else
+                issues.Add Array(number, outside.sourceRow, "事案対応不明", "", "", "", "", ReviewCategoryPriority(2))
+            End If
+        ElseIf Len(number) = 0 Then
+            issues.Add Array("", outside.sourceRow, "13桁番号を確認", "", "", "", "", ReviewCategoryPriority(2))
+        Else
+            issues.Add Array(number, outside.sourceRow, "登録漏れ候補", "", "", "", "", ReviewCategoryPriority(1))
+        End If
+    Next
+    For Each outside In entries
+        If tentative.Exists(CStr(outside.sourceRow)) Then
+            Set target = tentative(CStr(outside.sourceRow))
+            If counts(target.Key) > 1 Or Len(target.invalidReason) > 0 Then
+                issues.Add Array(outside.PersonKey, outside.sourceRow, "重複・要確認", "", "", "", "", ReviewCategoryPriority(1))
+            Else
+                For Each field In rules.Keys
+                    If field <> "SourceYear" And field <> "MaskedNumber" And field <> "Branch" Then
+                        If target.sourceColumns.Exists(field) Then
+                            If Not SameValue(target.values(field), outside.values(field)) Then
+                                message = "不一致"
+                                priority = 5
+                                If Len(ReviewText(target.values(field))) = 0 Then
+                                    message = "記入漏れ・補完候補"
+                                    priority = IIf(fields(field)(4) = "Yes", 3, 4)
+                                ElseIf Len(ReviewText(outside.values(field))) = 0 Then
+                                    message = "整理簿の記入漏れ"
+                                End If
+                                If rules(field)(1) Or field = "TaxYear" Or field = "DocumentName" Or field = "TaxType" Then priority = 2
+                                priority = ReviewPriority(CStr(field), priority)
+                                id = outside.PersonKey & "|" & field
+                                Select Case field
+                                    Case "PersonName", "Furigana", "Address", "PostalCode", "PhoneNumber"
+                                        If Not commonChecks.Exists(id) Then
+                                            commonChecks.Add id, True
+                                            Set group = people(outside.PersonKey)
+                                            editableKey = ""
+                                            If group.Count = 1 Then editableKey = target.Key
+                                            issues.Add Array(outside.PersonKey, outside.sourceRow, message, field, _
+                                                ReviewText(target.values(field)), ReviewText(outside.values(field)), editableKey, priority)
+                                        End If
+                                    Case Else
+                                        issues.Add Array(outside.PersonKey, outside.sourceRow, message, field, _
+                                            ReviewText(target.values(field)), ReviewText(outside.values(field)), target.Key, priority)
+                                End Select
+                            End If
+                        End If
+                    End If
+                Next
+            End If
+        End If
+    Next
+    DisplayReviewReport issues
+End Sub
+
+Private Sub DisplayReviewReport(ByVal issues As Collection)
+    Dim book As Workbook
+    Dim ws As Worksheet
+    Dim entry As Variant
+    Dim rank As Object
+    Dim row As Long
+    Dim field As String
+    Dim value As Variant
+    Dim data As Variant
+    Dim target As CaseRecord
+    Set rank = NewDictionary()
+    For Each entry In issues
+        If Not rank.Exists(entry(0)) Then rank.Add entry(0), 5
+        If entry(7) < rank(entry(0)) Then rank(entry(0)) = entry(7)
+    Next
+    Set book = Workbooks.Add(xlWBATWorksheet)
+    Set ws = book.Worksheets(1)
+    ws.Name = "照合・補完"
+    Set reviewPage = ws
+    Set reviewRows = NewDictionary()
+    Set reviewSnapshots = NewDictionary()
+    ws.Range("A1").Value2 = "照合・補完  " & issues.Count & "件"
+    ws.Range("A2").Value2 = "訂正欄を入力して一括更新。共通項目・要確認は詳細で対象を確認してください。"
+    ws.Range("A6:L6").Value2 = Array("13桁番号", "整理簿行", "判定", "項目", "管理簿", "整理簿", "訂正欄", "結果", "対象キー", "人物順位", "項目順位", "更新対象の事案")
+    FormatWorkflowReport ws, "L"
+    ws.Columns("L").ColumnWidth = 32
+    ws.Columns("C").ColumnWidth = 23
+    ws.Columns("E:G").ColumnWidth = 20
+    ws.Columns("H").ColumnWidth = 30
+    row = 7
+    If issues.Count > 0 Then
+        ReDim data(1 To issues.Count, 1 To 12)
+        For Each entry In issues
+            data(row - 6, 1) = entry(0)
+            data(row - 6, 2) = entry(1)
+            data(row - 6, 3) = entry(2)
+            data(row - 6, 4) = entry(3)
+            data(row - 6, 5) = entry(4)
+            data(row - 6, 6) = entry(5)
+            data(row - 6, 9) = entry(6)
+            data(row - 6, 10) = rank(entry(0))
+            data(row - 6, 11) = entry(7)
+            If Len(entry(6)) > 0 Then
+                Set target = Cases(entry(6))
+                data(row - 6, 12) = target.sourceYear & "年度 / 枝番 " & target.values("Branch") & " / " & ReviewText(target.values("DocumentName"))
+            End If
+            row = row + 1
+        Next
+        ws.Range("A7:I" & (row - 1)).NumberFormat = "@"
+        ws.Range("A7").Resize(issues.Count, 12).Value2 = data
+        ws.Range("A6:L" & (row - 1)).Sort Key1:=ws.Range("J7"), Order1:=xlAscending, _
+            Key2:=ws.Range("A7"), Order2:=xlAscending, Key3:=ws.Range("K7"), Order3:=xlAscending, Header:=xlYes
+        For row = 7 To issues.Count + 6
+            value = ws.Cells(row, 9).Value2
+            field = CStr(ws.Cells(row, 4).Value2)
+            If Len(CStr(value)) > 0 And Len(field) > 0 Then
+                reviewRows.Add CStr(row), Array(CStr(value), field)
+                If Not reviewSnapshots.Exists(CStr(value)) Then reviewSnapshots.Add CStr(value), Cases(CStr(value))
+                ws.Cells(row, 7).Locked = False
+                ws.Cells(row, 7).Interior.Color = RGB(230, 245, 225)
+                If fields(field)(1) = "Date" Then ws.Cells(row, 7).NumberFormat = "yyyy/mm/dd"
+            End If
+        Next
+    End If
+    ws.Columns("I:K").Hidden = True
+    AddWorkflowButton ws, "ReviewApply", "一括更新", "ApplyReviewCorrections", ws.Range("G2:H3")
+    ws.Protect
+End Sub
+
+Public Sub ApplyReviewCorrections()
+    Dim message As String
+    If Not ActiveSheet Is reviewPage Then
+        Notify "現在のセッションで作成した最新の照合一覧を使用してください。"
+        Exit Sub
+    End If
+    If MsgBox("入力した訂正を新管理簿へ保存しますか？", vbYesNo Or vbQuestion Or vbDefaultButton2) <> vbYes Then Exit Sub
+    message = SaveReviewCorrections()
+    Notify message
+End Sub
+
+Public Function SaveReviewCorrections() As String
+    Dim plans As Object
+    Dim rowsByCase As Object
+    Dim plan As Object
+    Dim chosen As Collection
+    Dim completed As Collection
+    Dim entry As Variant
+    Dim key As Variant
+    Dim row As Variant
+    Dim value As Variant
+    Dim record As CaseRecord
+    Dim message As String
+    Dim good As Long
+    Dim bad As Long
+    Dim yearsToRefresh As Object
+    Dim attempted As Long
+
+    If reviewPage Is Nothing Or reviewRows Is Nothing Then Exit Function
+    If Not BeginAction() Then Exit Function
+    On Error GoTo Failed
+    Set plans = NewDictionary()
+    Set rowsByCase = NewDictionary()
+    Set yearsToRefresh = NewDictionary()
+    Set completed = New Collection
+    reviewPage.Unprotect
+    For Each row In reviewRows.Keys
+        entry = reviewRows(row)
+        value = reviewPage.Cells(CLng(row), 7).Value2
+        If reviewPage.Cells(CLng(row), 7).HasFormula Or IsError(value) Then
+            reviewPage.Cells(CLng(row), 8).Value2 = "数式・エラーは入力できません"
+            bad = bad + 1
+        ElseIf Len(CStr(value)) > 0 Then
+            key = entry(0)
+            If Not plans.Exists(key) Then
+                Set plan = NewDictionary()
+                plans.Add key, plan
+                Set chosen = New Collection
+                rowsByCase.Add key, chosen
+            End If
+            Set plan = plans(key)
+            Set chosen = rowsByCase(key)
+            chosen.Add CLng(row)
+            If plan.Exists(entry(1)) Then plan("__Conflict") = True
+            plan(entry(1)) = value
+        End If
+    Next
+    For Each key In plans.Keys
+        attempted = attempted + 1
+        Set plan = plans(key)
+        Set chosen = rowsByCase(key)
+        message = ""
+        If Not Cases.Exists(key) Or plan.Exists("__Conflict") Then
+            message = "対象不明または同じ項目に複数の訂正があります。"
+        Else
+            Set record = reviewSnapshots(key)
+            For Each entry In record.values.Keys
+                If Not plan.Exists(entry) Then plan.Add entry, record.values(entry)
+            Next
+            If ValidateDetailChoices(plan, record, message) Then
+                If SaveCase(record, plan, False, message) Then
+                    For Each row In chosen
+                        completed.Add row
+                    Next
+                    good = good + chosen.Count
+                    yearsToRefresh(record.sourceYear) = True
+                    message = ""
+                ElseIf Len(message) = 0 Then
+                    message = "保存できませんでした。"
+                End If
+            End If
+        End If
+        If Len(message) > 0 Then
+            For Each row In chosen
+                PutValue reviewPage.Cells(CLng(row), 8), message
+            Next
+            bad = bad + chosen.Count
+        End If
+        If PendingSave() Then Exit For
+    Next
+    For Each key In yearsToRefresh.Keys
+        message = ""
+        RefreshOneYear CStr(key), message
+    Next
+    For Each row In completed
+        reviewRows.Remove CStr(row)
+        With reviewPage.Range("A" & row & ":L" & row)
+            .ClearContents
+            .Locked = True
+            .EntireRow.Hidden = True
+        End With
+    Next
+    SaveReviewCorrections = "更新済み " & good & "項目 / 失敗 " & bad & "項目"
+    If attempted < plans.Count Then SaveReviewCorrections = SaveReviewCorrections & " / 未処理 " & (plans.Count - attempted) & "事案"
+    If PendingSave() Then SaveReviewCorrections = SaveReviewCorrections & vbCrLf & "未確定の保存があります。オーナーに連絡してください。"
+Finished:
+    On Error Resume Next
+    reviewPage.Protect
+    isBusy = False
+    Exit Function
+Failed:
+    SaveReviewCorrections = "更新確認済み " & good & "項目。処理が中断されました。保存を再送せずオーナーに連絡してください。"
+    Resume Finished
+End Function

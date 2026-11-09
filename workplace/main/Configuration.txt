@@ -153,6 +153,7 @@ Public Function ColumnMap(ByVal ws As Worksheet, ByVal year As String, ByRef mes
         heading = HeaderFor(CStr(id), year, message)
         If Len(message) > 0 Then Exit Function
         If id = "TaxType" And heading = "税目" And Not headers.Exists(heading) Then heading = "[Absent]"
+        If id = "CompletedDate" And heading = "完了日" And Not headers.Exists(heading) Then heading = "[Absent]"
         If heading <> "[Absent]" Then
             If Not headers.Exists(heading) Then
                 message = year & "年度：" & CStr(id) & "の見出しがありません。管理簿1行目とFieldsのHeaderを確認してください。"
@@ -204,6 +205,46 @@ Public Function ValidateValues(ByVal values As Object, ByRef message As String) 
     If Not IsDigits(values("Branch"), 5) Then Exit Function
     message = ""
     ValidateValues = True
+End Function
+
+Public Function IsClosedState(ByVal values As Object, ByVal closedStates As Object) As Boolean
+    Dim status As String
+    If Not values.Exists("Status") Then Exit Function
+    If IsError(values("Status")) Or IsNull(values("Status")) Then Exit Function
+    status = Trim$(CStr(values("Status")))
+    IsClosedState = status = "終了" Or status = "他グループ・署へ移管" Or closedStates.Exists(status)
+End Function
+
+Public Function HasCompletionValue(ByVal values As Object, ByVal fieldId As String) As Boolean
+    If Not values.Exists(fieldId) Then Exit Function
+    If IsError(values(fieldId)) Or IsNull(values(fieldId)) Then Exit Function
+    HasCompletionValue = Len(CStr(values(fieldId))) > 0
+End Function
+
+Public Function IsCaseClosed(ByVal values As Object, ByVal closedStates As Object) As Boolean
+    IsCaseClosed = HasCompletionValue(values, "CompletedDate") Or IsClosedState(values, closedStates)
+End Function
+
+Public Function HasCompletionMismatch(ByVal values As Object, ByVal closedStates As Object) As Boolean
+    If HasCompletionValue(values, "CompletedDate") Then
+        HasCompletionMismatch = Not IsClosedState(values, closedStates)
+    Else
+        HasCompletionMismatch = HasCompletionValue(values, "IssuedDate") Or IsClosedState(values, closedStates)
+    End If
+End Function
+
+Public Function ValidateCompletion(ByVal values As Object, ByVal columns As Object, ByRef message As String) As Boolean
+    If Not HasCompletionValue(values, "CompletedDate") Then
+        If HasCompletionMismatch(values, ConfiguredList(15)) Then
+            If columns.Exists("CompletedDate") Then
+                message = "完了日が入力されていません。完了日を入力してから、再度保存してください。"
+            Else
+                message = "この年度の管理簿に完了日欄がありません。完了日列のある管理簿を設定してから保存してください。"
+            End If
+            Exit Function
+        End If
+    End If
+    ValidateCompletion = True
 End Function
 
 Public Function ConfiguredList(ByVal column As Long) As Object

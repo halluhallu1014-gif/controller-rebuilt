@@ -215,9 +215,9 @@ Public Function Snapshot(ByVal book As Workbook) As Object
     For Each sheetName In Array("Settings", "Fields", "Comparison")
         Set sheet = book.Worksheets(CStr(sheetName))
         Select Case sheetName
-            Case "Settings": columnCount = 18
+            Case "Settings": columnCount = 25
             Case "Fields": columnCount = 11
-            Case "Comparison": columnCount = 5
+            Case "Comparison": columnCount = 6
         End Select
         Set area = sheet.Range(sheet.Cells(1, 1), sheet.Cells(Application.Max(7, SheetLastRow(sheet, "A:" & _
             Split(sheet.Cells(1, columnCount).Address, "$")(1))), columnCount))
@@ -998,6 +998,7 @@ Public Function MapLedger(ByVal headers As Object, ByVal year As String) As Obje
             If saved = ABSENT Then
                 heading = ABSENT
                 If id = "TaxType" Then heading = UniqueHeading(headers, "税目")
+                If id = "CompletedDate" Then heading = UniqueHeading(headers, "完了日")
             Else
                 heading = UniqueHeading(headers, saved)
             End If
@@ -1140,7 +1141,7 @@ Public Function StageLedger(ByVal year As String, ByVal plan As Object, ByRef me
     End If
     For Each id In map.Keys
         heading = CStr(map(id))
-        If heading = ABSENT And CStr(fieldSpecs(id)(0)) <> ABSENT And id <> "TaxType" Then
+        If heading = ABSENT And CStr(fieldSpecs(id)(0)) <> ABSENT And id <> "TaxType" And id <> "CompletedDate" Then
             If Len(missing) > 0 Then missing = missing & "、"
             missing = missing & FieldLabel(CStr(id))
         End If

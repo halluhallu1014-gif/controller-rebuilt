@@ -31,6 +31,7 @@ Public Sub InstallControllerMain()
     phase = "詳細"
     Set page = book.Worksheets("詳細")
     InstallSheet2 page
+    InstallCompletionLayout page
     AlignInstalledDetail page
     phase = "Settings"
     Set page = book.Worksheets("Settings")
@@ -63,6 +64,7 @@ Public Sub InstallControllerMain()
     book.Worksheets("詳細").Protect DrawingObjects:=False, UserInterfaceOnly:=True
     book.Worksheets("検索").Activate
     phase = "構成と起動を確認"
+    InstallWorkflow
     InitializeControllerUi
     VerifyControllerInstall book
     Application.EnableEvents = previousEvents
@@ -96,17 +98,18 @@ Private Sub VerifyControllerInstall(ByVal book As Workbook)
     Dim shape As Shape
     Dim id As Variant
     Dim message As String
-    If book.Worksheets.Count <> 10 Or book.Names.Count <> 3 Then Err.Raise 5, , "シートまたは名前定義"
+    If book.Worksheets.Count <> 11 Or book.Names.Count <> 3 Then Err.Raise 5, , "シートまたは名前定義"
     Set shape = book.Worksheets("詳細").Shapes("RelatedCasesList")
     If shape.Type <> msoFormControl Then Err.Raise 5, , "関連事案一覧の種類"
     If shape.FormControlType <> xlListBox Or Not shape.OnAction Like "*!RelatedListChanged" Then Err.Raise 5, , "関連事案一覧の割当"
     For Each id In Array("Calendar_ReceivedDate", "Calendar_DraftDate", "Calendar_ApprovedDate", _
-        "Calendar_IssuedDate", "UI_コピー取込", "UI_選択項目へ取込")
+        "Calendar_IssuedDate", "Calendar_CompletedDate")
         If Len(book.Worksheets("詳細").Shapes(CStr(id)).OnAction) > 0 Then Err.Raise 5, , "未接続ボタン"
     Next
     For Each id In Array("F29", "F27", "F36")
         If book.Worksheets("詳細").Range(CStr(id)).Validation.Type <> xlValidateList Then Err.Raise 5, , "入力規則"
     Next
+    If book.Worksheets("オーナー専用").Visible <> xlSheetVeryHidden Then Err.Raise 5, , "オーナーシート"
     If Not ValidatePresentation(message) Then Err.Raise 5, , message
 End Sub
 
@@ -1252,6 +1255,7 @@ Private Sub InstallCells3_1(ByVal page As Worksheet)
     page.Range("B4").Value2 = "No"
     page.Range("B7").Value2 = "Local"
     page.Range("O2").Value2 = "終了"
+    page.Range("O3").Value2 = "他グループ・署へ移管"
 End Sub
 
 Private Sub InstallSheet4(ByVal page As Worksheet)
@@ -1424,6 +1428,12 @@ Private Sub InstallCells4_2(ByVal page As Worksheet)
     page.Range("D23").Value2 = "詳細"
     page.Range("E23").Value2 = "C44"
     page.Range("F23").Value2 = "No"
+    page.Range("A24").Value2 = "CompletedDate"
+    page.Range("B24").Value2 = "完了日"
+    page.Range("C24").Value2 = "Date"
+    page.Range("D24").Value2 = "詳細"
+    page.Range("E24").Value2 = "F43"
+    page.Range("F24").Value2 = "No"
 End Sub
 
 Private Sub InstallSheet5(ByVal page As Worksheet)
@@ -3403,6 +3413,25 @@ Private Sub InstallStyle8(ByVal target As Range, ByVal styleId As Long)
 End Sub
 
 
+
+Private Sub InstallCompletionLayout(ByVal page As Worksheet)
+    Dim button As Shape
+    Dim anchor As Range
+    page.Range("C43:V43").UnMerge
+    page.Rows(43).Hidden = False
+    page.Rows(43).RowHeight = page.Rows(41).RowHeight
+    page.Range("C41:L41").Copy Destination:=page.Range("C43")
+    page.Range("C43").Value2 = "完了日"
+    page.Range("F43").MergeArea.ClearContents
+    Set anchor = page.Range("L43")
+    Set button = page.Shapes("Calendar_IssuedDate").Duplicate
+    button.Name = "Calendar_CompletedDate"
+    button.OnAction = ""
+    button.Top = anchor.Top
+    button.Height = anchor.Height
+    button.Left = anchor.Left + anchor.Width - button.Width
+    Application.CutCopyMode = False
+End Sub
 
 Private Sub AlignInstalledDetail(ByVal page As Worksheet)
     Dim item As Variant

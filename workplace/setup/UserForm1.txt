@@ -313,7 +313,8 @@ Private Sub Operations_Click()
     Dim selected As String
     selected = SelectedKey()
     choice = PickValue("必要な運用設定だけ変更できます。", Choices("担当区分", "選択年度の更新権限", "バックアップ先", _
-        "SharePointのサイト・排他", "管理簿を直接URLで指定", "整理簿を直接URLで指定", "署の一覧", "終了状態の一覧"))
+        "SharePointのサイト・排他", "管理簿を直接URLで指定", "整理簿を直接URLで指定", "署の一覧", "終了状態の一覧", _
+        "照合の優先度", "申請日項目", "オーナーWindowsアカウント"))
     Select Case choice
         Case "担当区分"
             picked = PickValue("この本体を使う担当区分を選んでください。", Choices("常勤", "非常勤"))
@@ -369,6 +370,27 @@ Private Sub Operations_Click()
             EditList 14, "署名を「、」で区切って入力してください。"
         Case "終了状態の一覧"
             EditList 15, "終了として扱う状態を「、」で区切って入力してください。"
+        Case "照合の優先度"
+            EditWorkflowPriority
+        Case "申請日項目"
+            answer = AskText("申請日に対応する日付型の項目IDを入力してください。空欄で無効。", ReadCell("Settings", 3, 19))
+            If VarType(answer) = vbBoolean Then Exit Sub
+            picked = Trim$(CStr(answer))
+            If Len(picked) > 0 Then
+                If Not fieldSpecs.Exists(picked) Then
+                    Status.Caption = "存在する項目IDを指定してください。"
+                    Exit Sub
+                End If
+                If fieldSpecs(picked)(2) <> "Date" Or picked = "ReceivedDate" Then
+                    Status.Caption = "収受日以外の日付型の項目IDを指定してください。"
+                    Exit Sub
+                End If
+            End If
+            StageCell "Settings", 3, 19, picked
+        Case "オーナーWindowsアカウント"
+            answer = AskText("DOMAIN\ユーザー名。複数の場合は半角セミコロンで区切ります。", ReadCell("Settings", 2, 19))
+            If VarType(answer) = vbBoolean Then Exit Sub
+            StageCell "Settings", 2, 19, Trim$(CStr(answer))
         Case Else
             Exit Sub
     End Select
@@ -412,7 +434,7 @@ Private Sub PresentationSettings_Click()
         Status.Caption = "選択肢・表示形式に対応したCONTROLLERを選んでください。"
         Exit Sub
     End If
-    choice = PickValue("変更する内容を選んでください。", Choices("選択肢の設定", "表示形式の設定", "税目列の追加コピー"))
+    choice = PickValue("変更する内容を選んでください。", Choices("選択肢の設定", "表示形式の設定", "税目列の追加コピー", "取込ルール編集", "抽出テスト"))
     Select Case choice
         Case "選択肢の設定"
             selected = PickValue("候補を編集する項目を選んでください。", Choices("文書名", "税目", "処理状態"))
@@ -427,6 +449,10 @@ Private Sub PresentationSettings_Click()
             EditDisplayFormat
         Case "税目列の追加コピー"
             MakeTaxCopy
+        Case "取込ルール編集"
+            EditWorkflowRule
+        Case "抽出テスト"
+            TestWorkflowRule
         Case Else
             Exit Sub
     End Select
@@ -745,3 +771,105 @@ Private Sub BuildFormControls()
 Failed:
     Err.Raise Err.Number, "SettingsForm " & stage, Err.Description
 End Sub
+
+Private Sub EditWorkflowRule()
+    Dim item As Variant
+    Dim answer As Variant
+    Dim row As Long
+    Dim col As Long
+    Dim current As String
+    Dim pieces As Variant
+    item = Application.InputBox("1～50のルール番号。初期ルールは1～6です。", "取込ルール", 1, Type:=1)
+    If VarType(item) = vbBoolean Then Exit Sub
+    If item < 1 Or item > 50 Or item <> Fix(item) Then Exit Sub
+    row = CLng(item) + 1
+    For col = 20 To 25
+        If col > 20 Then current = current & "|"
+        current = current & ReadCell("Settings", row, col)
+    Next
+    If current = "|||||" Then current = ""
+    answer = AskText("画面名|項目名|項目ID|Right または Next|Auto/Tab/Colon/Line|Trim/Digits13/Postal/Phone。空欄で削除。", current)
+    If VarType(answer) = vbBoolean Then Exit Sub
+    If Len(Trim$(CStr(answer))) = 0 Then
+        For col = 20 To 25
+            StageCell "Settings", row, col, ""
+        Next
+        Exit Sub
+    End If
+    pieces = Split(CStr(answer), "|")
+    If UBound(pieces) <> 5 Then
+        Status.Caption = "縦線で区切った6項目を入力してください。"
+        Exit Sub
+    End If
+    For col = 0 To 5
+        If Len(Trim$(CStr(pieces(col)))) = 0 Then
+            Status.Caption = "6項目とも入力してください。"
+            Exit Sub
+        End If
+    Next
+    For col = 0 To 5
+        StageCell "Settings", row, 20 + col, Trim$(CStr(pieces(col)))
+    Next
+    Status.Caption = "取込ルールを仮設定しました。架空文字列で抽出テストができます。"
+End Sub
+
+Private Sub TestWorkflowRule()
+    Dim answer As Variant
+    Dim profile As Variant
+    Dim book As Workbook
+    Dim ruleData As Variant
+    Dim content As String
+    Dim message As String
+    Dim row As Long
+    Dim col As Long
+    On Error GoTo Failed
+    profile = AskText("抽出する画面名を入力してください。", ReadCell("Settings", 2, 20))
+    If VarType(profile) = vbBoolean Then Exit Sub
+    answer = AskText("架空文字列を入力してください。 | は改行、{TAB} はタブとして扱います。")
+    If VarType(answer) = vbBoolean Then Exit Sub
+    content = Replace(Replace(CStr(answer), "|", vbLf), "{TAB}", vbTab)
+    ReDim ruleData(1 To 50, 1 To 6)
+    For row = 1 To 50
+        For col = 1 To 6
+            ruleData(row, col) = ReadCell("Settings", row + 1, 19 + col)
+        Next
+    Next
+    Set book = SafeOpen(targetPath, True, message)
+    If book Is Nothing Then GoTo Finished
+    message = Application.Run("'" & Replace(book.Name, "'", "''") & "'!WorkflowImportPreview", content, ruleData, Trim$(CStr(profile)))
+Finished:
+    If Not book Is Nothing Then book.Close False
+    If Len(message) > 0 Then MsgBox Left$(message, 950), vbInformation, "抽出テスト"
+    Exit Sub
+Failed:
+    message = "抽出テストを実行できませんでした。対象の本体とマクロの許可を確認してください。"
+    Resume Finished
+End Sub
+
+Private Sub EditWorkflowPriority()
+    Dim field As Variant
+    Dim value As Variant
+    Dim row As Long
+    field = AskText("項目IDで個別設定。分類別の順位は半角数字 1～5 を入力。例 Address または 1")
+    If VarType(field) = vbBoolean Then Exit Sub
+    If Len(Trim$(CStr(field))) = 1 And InStr("12345", Trim$(CStr(field))) > 0 Then
+        row = CLng(field) + 4
+        value = Application.InputBox("分類 1登録漏れ・重複 / 2事案識別 / 3必須項目 / 4重要項目 / 5その他。" & vbCrLf & _
+            "設定する順位 1（高）～5（低）。0で標準に戻す。", "分類の優先度", Type:=1)
+        If VarType(value) = vbBoolean Then Exit Sub
+        If value < 0 Or value > 5 Or value <> Fix(value) Then Exit Sub
+        StageCell "Settings", row, 19, IIf(value = 0, "", CStr(value))
+        Exit Sub
+    End If
+    For row = 8 To LastComparisonRow()
+        If ReadCell("Comparison", row, 1) = Trim$(CStr(field)) Then
+            value = Application.InputBox("1（高）～5（低）。0は標準の優先度。", "照合の優先度", Type:=1)
+            If VarType(value) = vbBoolean Then Exit Sub
+            If value < 0 Or value > 5 Or value <> Fix(value) Then Exit Sub
+            StageCell "Comparison", row, 6, IIf(value = 0, "", CStr(value))
+            Exit Sub
+        End If
+    Next
+    Status.Caption = "先に照合設定へ項目を登録してください。"
+End Sub
+

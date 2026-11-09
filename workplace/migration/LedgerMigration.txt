@@ -1,0 +1,335 @@
+Option Explicit
+
+Private Const CANONICAL_NUMBER As String = "Number（№）"
+Private Const TRANSFERRED_STATUS As String = "他グループ・署へ移管"
+
+Public Sub MigrateLedger()
+    Dim source As Variant
+    Dim destination As Variant
+    Dim sheetName As Variant
+    Dim message As String
+    source = Application.GetOpenFilename("Excel 管理簿 (*.xlsx),*.xlsx", , "旧管理簿を選択")
+    If VarType(source) = vbBoolean Then Exit Sub
+    sheetName = Application.InputBox("旧管理簿のシート名を入力してください。", "対象シート", Type:=2)
+    If VarType(sheetName) = vbBoolean Then Exit Sub
+    destination = Application.GetSaveAsFilename("新管理簿.xlsx", "Excel 管理簿 (*.xlsx),*.xlsx", , "新管理簿の保存先")
+    If VarType(destination) = vbBoolean Then Exit Sub
+    If CreateMigratedLedger(CStr(source), CStr(sheetName), CStr(destination), message) Then
+        MsgBox message, vbInformation, "旧管理簿の移行"
+    Else
+        MsgBox message, vbExclamation, "旧管理簿の移行"
+    End If
+End Sub
+
+Public Function CreateMigratedLedger(ByVal source As String, ByVal sheetName As String, _
+    ByVal destination As String, ByRef message As String) As Boolean
+    Dim book As Workbook
+    Dim page As Worksheet
+    Dim existing As Workbook
+    Dim columns As Collection
+    Dim headings As Variant
+    Dim heading As Variant
+    Dim lastCell As Range
+    Dim lastRow As Long
+    Dim rowCount As Long
+    Dim missingDates As Long
+    Dim verifiedCount As Long
+    Dim verifiedMissing As Long
+    Dim expectedKeys As Collection
+    Dim verifiedKeys As Collection
+    Dim key As Variant
+    Dim unmatched As String
+    Dim temporary As String
+    Dim workFolder As String
+    Dim ownsWorkFolder As Boolean
+    Dim previousEvents As Boolean
+    Dim previousSecurity As Long
+    Dim phase As String
+
+    previousEvents = Application.EnableEvents
+    previousSecurity = Application.AutomationSecurity
+    On Error GoTo Failed
+    message = "ローカルの .xlsx を選び、元とは別の新しいファイル名を指定してください。"
+    If Not IsLocalWorkbook(source) Or Not IsLocalWorkbook(destination) Then Exit Function
+    If StrComp(source, destination, vbTextCompare) = 0 Then Exit Function
+    If Len(Trim$(sheetName)) = 0 Then Exit Function
+    If PathExists(destination) Then Exit Function
+    For Each existing In Application.Workbooks
+        If StrComp(existing.FullName, source, vbTextCompare) = 0 Then
+            message = "先に旧管理簿を閉じてください。"
+            Exit Function
+        End If
+    Next
+
+    Application.EnableEvents = False
+    Application.AutomationSecurity = msoAutomationSecurityForceDisable
+    phase = "旧管理簿を読取専用で開く"
+    Set book = Workbooks.Open(Filename:=source, UpdateLinks:=0, ReadOnly:=True, AddToMru:=False)
+    If Not book.ReadOnly Then Err.Raise 5, , "読取専用で開けません。"
+    If book.Date1904 Then Err.Raise 5, , "1904年日付システムの管理簿です。"
+    Set page = book.Worksheets(sheetName)
+    If page.ProtectContents Then Err.Raise 5, , "対象シートが保護されています。"
+
+    phase = "見出しの照合"
+    headings = Array(CANONICAL_NUMBER, "枝番", "署", "氏名", "文書名", "税目", "年分", "状態", _
+        "収受日", "起案日", "決裁日", "施行日", "完了日", "メモ1", "メモ2", "メモ3", _
+        "決裁番号", "お問い合わせ番号", "フリガナ", "郵便番号", "住所", "電話番号")
+    Set columns = MigrationColumns(page, headings, unmatched)
+    For Each heading In headings
+        If FindColumn(columns, CStr(heading)) = 0 Then
+            If heading <> "税目" And heading <> "完了日" Then
+                Err.Raise 5, , "対応する見出しがありません。「" & heading & "」"
+            End If
+        End If
+    Next
+
+    phase = "識別情報の確認"
+    Set lastCell = page.Cells.Find(What:="*", After:=page.Cells(1, 1), LookIn:=xlFormulas, _
+        LookAt:=xlPart, SearchOrder:=xlByRows, SearchDirection:=xlPrevious, MatchCase:=False, SearchFormat:=False)
+    lastRow = lastCell.Row
+    Set expectedKeys = ReadMigrationKeys(page, columns, lastRow, rowCount, missingDates)
+
+    phase = "新管理簿の作成"
+    '元の列と未登録列を保持し、欠けている新項目だけ所定の位置へ追加する。
+    For Each heading In headings
+        If FindColumn(columns, CStr(heading)) > 0 Then
+            page.Cells(1, FindColumn(columns, CStr(heading))).Value2 = CStr(heading)
+        End If
+    Next
+    EnsureMigrationColumn page, columns, headings, "税目", "文書名", "@"
+    EnsureMigrationColumn page, columns, headings, "完了日", "施行日", "yyyy/mm/dd"
+
+    phase = "新管理簿の保存と再読込"
+    '既存ファイルと競合しない作業フォルダを確保してから保存する。
+    workFolder = destination & ".移行中"
+    MkDir workFolder
+    ownsWorkFolder = True
+    temporary = workFolder & "\新管理簿.xlsx"
+    book.SaveCopyAs temporary
+    book.Close False
+    Set book = Nothing
+    Set book = Workbooks.Open(Filename:=temporary, UpdateLinks:=0, ReadOnly:=True, AddToMru:=False)
+    Set page = book.Worksheets(sheetName)
+    Set columns = MigrationColumns(page, headings, unmatched)
+    Set lastCell = page.Cells.Find(What:="*", After:=page.Cells(1, 1), LookIn:=xlFormulas, _
+        LookAt:=xlPart, SearchOrder:=xlByRows, SearchDirection:=xlPrevious, MatchCase:=False, SearchFormat:=False)
+    If lastCell.Row <> lastRow Or FindColumn(columns, "税目") = 0 Or FindColumn(columns, "完了日") = 0 Then
+        Err.Raise 5, , "行数または新しい列を確認できません。"
+    End If
+    Set verifiedKeys = ReadMigrationKeys(page, columns, lastRow, verifiedCount, verifiedMissing)
+    If verifiedCount <> rowCount Or verifiedMissing <> missingDates Then Err.Raise 5, , "再読込件数が一致しません。"
+    For Each key In expectedKeys
+        If Not HasMigrationKey(verifiedKeys, CStr(key)) Then Err.Raise 5, , "再読込した事案キーが一致しません。"
+    Next
+    book.Close False
+    Set book = Nothing
+    'Name は既存の保存先を上書きしない。
+    Name temporary As destination
+    temporary = ""
+    CreateMigratedLedger = True
+    message = "移行・再読込確認 " & rowCount & "件。完了日を確認する過去事案 " & missingDates & "件。" & vbCrLf & destination
+    If Len(unmatched) > 0 Then message = message & vbCrLf & "対応外の列をそのまま保持しました。" & vbCrLf & unmatched
+
+Finished:
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close False
+    If Len(temporary) > 0 Then
+        If PathExists(temporary) Then Kill temporary
+    End If
+    If ownsWorkFolder Then RmDir workFolder
+    Application.AutomationSecurity = previousSecurity
+    Application.EnableEvents = previousEvents
+    Exit Function
+Failed:
+    message = phase & "で移行を中止しました。" & vbCrLf & Err.Description
+    Resume Finished
+End Function
+
+Private Function MigrationColumns(ByVal page As Worksheet, ByVal headings As Variant, ByRef unmatched As String) As Collection
+    Dim columns As New Collection
+    Dim seen As New Collection
+    Dim index As Long
+    Dim lastColumn As Long
+    Dim heading As String
+    Dim original As String
+    Dim canonical As Variant
+    unmatched = ""
+    lastColumn = page.Cells(1, page.Columns.Count).End(xlToLeft).Column
+    For index = 1 To lastColumn
+        If IsError(page.Cells(1, index).Value2) Then Err.Raise 5, , "見出しにExcelエラーがあります。列 " & index
+        original = CStr(page.Cells(1, index).Value2)
+        heading = Trim$(Replace(Replace(original, "　", " "), vbTab, " "))
+        Select Case heading
+            Case "MaskedNumber", "№", "13桁番号", "Number(№)": heading = CANONICAL_NUMBER
+            Case "氏名(フリガナ)", "氏名（フリガナ）", "ふりがな": heading = "フリガナ"
+            Case "問い合わせ番号": heading = "お問い合わせ番号"
+        End Select
+        If Len(heading) > 0 Then
+            If FindColumn(seen, heading) > 0 Then Err.Raise 5, , "同じ項目の見出しが複数あります。「" & heading & "」"
+            seen.Add index, heading
+        End If
+        For Each canonical In headings
+            If heading = CStr(canonical) Then
+                If page.Cells(1, index).MergeCells Then Err.Raise 5, , "結合された見出しがあります。「" & heading & "」"
+                columns.Add index, heading
+                Exit For
+            End If
+        Next
+        If Len(heading) > 0 And FindColumn(columns, heading) = 0 Then
+            If Len(unmatched) > 0 Then unmatched = unmatched & "、"
+            unmatched = unmatched & original
+        End If
+    Next
+    Set MigrationColumns = columns
+End Function
+
+Private Sub EnsureMigrationColumn(ByVal page As Worksheet, ByRef columns As Collection, ByVal headings As Variant, _
+    ByVal heading As String, ByVal preceding As String, ByVal numberFormat As String)
+    Dim position As Long
+    Dim ignored As String
+    If FindColumn(columns, heading) > 0 Then Exit Sub
+    position = FindColumn(columns, preceding) + 1
+    page.Columns(position).Insert Shift:=xlToRight, CopyOrigin:=xlFormatFromLeftOrAbove
+    page.Cells(1, position).Value2 = heading
+    page.Columns(position).NumberFormat = numberFormat
+    Set columns = MigrationColumns(page, headings, ignored)
+End Sub
+
+Private Function ReadMigrationKeys(ByVal page As Worksheet, ByVal columns As Collection, ByVal lastRow As Long, _
+    ByRef count As Long, ByRef missingDates As Long) As Collection
+    Dim keys As New Collection
+    Dim data As Variant
+    Dim index As Long
+    Dim column As Long
+    Dim numberColumn As Long
+    Dim branchColumn As Long
+    Dim statusColumn As Long
+    Dim issuedColumn As Long
+    Dim completedColumn As Long
+    Dim number As String
+    Dim status As String
+    Dim key As String
+    Dim hasData As Boolean
+    Dim hasCompletion As Boolean
+    count = 0
+    missingDates = 0
+    If lastRow > 1 Then
+        numberColumn = columns(CANONICAL_NUMBER)
+        branchColumn = columns("枝番")
+        statusColumn = columns("状態")
+        issuedColumn = columns("施行日")
+        completedColumn = FindColumn(columns, "完了日")
+        data = page.Range(page.Cells(1, 1), page.Cells(lastRow, page.Cells(1, page.Columns.Count).End(xlToLeft).Column)).Value2
+        For index = 2 To UBound(data, 1)
+            hasData = False
+            For column = 1 To UBound(data, 2)
+                If HasMigrationValue(data(index, column)) Then
+                    hasData = True
+                    Exit For
+                End If
+            Next
+            If hasData Then
+                If Not RestoreNumber(data(index, numberColumn), number) Or Not IsDigits(data(index, branchColumn), 5) Then
+                    Err.Raise 5, , "13桁番号または5桁枝番を確認してください。行 " & index
+                End If
+                key = number & CStr(data(index, branchColumn))
+                If HasMigrationKey(keys, key) Then Err.Raise 5, , "番号と枝番が重複しています。行 " & index
+                keys.Add key, key
+                count = count + 1
+                hasCompletion = False
+                If completedColumn > 0 Then hasCompletion = HasMigrationValue(data(index, completedColumn))
+                If Not hasCompletion Then
+                    status = ""
+                    If Not IsError(data(index, statusColumn)) Then status = Trim$(CStr(data(index, statusColumn)))
+                    If status = "終了" Or status = TRANSFERRED_STATUS Or HasMigrationValue(data(index, issuedColumn)) Then
+                        missingDates = missingDates + 1
+                    End If
+                End If
+            End If
+        Next
+    End If
+    Set ReadMigrationKeys = keys
+End Function
+
+Private Function HasMigrationValue(ByVal value As Variant) As Boolean
+    If IsError(value) Then
+        HasMigrationValue = True
+    Else
+        HasMigrationValue = Len(CStr(value)) > 0
+    End If
+End Function
+
+Private Function HasMigrationKey(ByVal keys As Collection, ByVal key As String) As Boolean
+    On Error Resume Next
+    HasMigrationKey = (CStr(keys.Item(key)) = key)
+    On Error GoTo 0
+End Function
+
+Private Function FindColumn(ByVal entries As Collection, ByVal heading As String) As Long
+    On Error Resume Next
+    FindColumn = CLng(entries.Item(heading))
+    On Error GoTo 0
+End Function
+
+Private Function IsLocalWorkbook(ByVal path As String) As Boolean
+    If LCase$(Right$(path, 5)) <> ".xlsx" Then Exit Function
+    IsLocalWorkbook = Mid$(path, 2, 2) = ":\"
+End Function
+
+Private Function PathExists(ByVal path As String) As Boolean
+    Dim attributes As Long
+    On Error GoTo Failed
+    attributes = GetAttr(path)
+    PathExists = True
+    Exit Function
+Failed:
+    If Err.Number <> 53 And Err.Number <> 76 Then Err.Raise Err.Number, , Err.Description
+End Function
+
+Public Function IsDigits(ByVal value As Variant, ByVal size As Long) As Boolean
+    Dim index As Long
+    Dim text As String
+    If VarType(value) <> vbString Then Exit Function
+    text = CStr(value)
+    If Len(text) <> size Then Exit Function
+    For index = 1 To size
+        If Mid$(text, index, 1) < "0" Or Mid$(text, index, 1) > "9" Then Exit Function
+    Next
+    IsDigits = True
+End Function
+
+Public Function RestoreNumber(ByVal masked As Variant, ByRef number As String) As Boolean
+    Dim text As String
+    Dim body As String
+    Dim index As Long
+    number = ""
+    If VarType(masked) <> vbString Then Exit Function
+    text = CStr(masked)
+    If IsDigits(text, 13) Then
+        number = text
+        RestoreNumber = True
+        Exit Function
+    End If
+    If Len(text) <> 20 Then Exit Function
+    If Left$(text, 4) <> "MN1:" Or Mid$(text, 18, 1) <> ":" Then Exit Function
+    body = Mid$(text, 5, 13)
+    If Not IsDigits(body, 13) Then Exit Function
+    For index = 13 To 1 Step -1
+        number = number & CStr((CLng(Mid$(body, index, 1)) + 3) Mod 10)
+    Next
+    If Right$(text, 2) <> NumberChecksum(number) Then
+        number = ""
+        Exit Function
+    End If
+    RestoreNumber = True
+End Function
+
+Private Function NumberChecksum(ByVal number As String) As String
+    Dim index As Long
+    Dim total As Long
+    For index = 1 To 13
+        total = total + index * CLng(Mid$(number, index, 1))
+    Next
+    NumberChecksum = Format$(total Mod 97, "00")
+End Function
+

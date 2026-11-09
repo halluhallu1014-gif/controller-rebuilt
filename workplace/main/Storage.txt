@@ -264,7 +264,7 @@ Public Function SaveCase(ByVal record As CaseRecord, ByVal values As Object, ByV
     events = Application.EnableEvents
     On Error GoTo Failed
     If PendingSave() Then
-        message = "前回の保存結果が未確認です。『保存結果を確認』で照合してください。自動再送は行いません。"
+        message = "前回の保存結果が未確認です。再送せずオーナーに連絡してください。"
         Exit Function
     End If
     If Len(CStr(Sheet("MoveRecovery").Range("B1").Value2)) > 0 Then
@@ -315,6 +315,7 @@ Public Function SaveCase(ByVal record As CaseRecord, ByVal values As Object, ByV
     If ws Is Nothing Then GoTo Rejected
     Set columns = ColumnMap(ws, record.sourceYear, message)
     If columns Is Nothing Then GoTo Rejected
+    If Not ValidateCompletion(values, columns, message) Then GoTo Rejected
     rowIndex = LocateRow(ws, columns, personKey, isNew, message)
     If Len(message) > 0 Then GoTo Rejected
     If isNew Then
@@ -412,7 +413,7 @@ Public Function SaveCase(ByVal record As CaseRecord, ByVal values As Object, ByV
     End If
     Set book = Nothing
     Application.EnableEvents = events
-    SaveCase = ReconcileSave(message)
+    SaveCase = VerifyRecordedSave(message)
     Exit Function
 Rejected:
     If IsWebAddress(definition(0)) And book.CanCheckIn Then
@@ -423,7 +424,7 @@ Rejected:
     Exit Function
 Failed:
     If writeStarted Then
-        message = "保存結果不明です。入力とRecoveryを保持しています。再保存せず『保存結果を確認』を実行してください。"
+        message = "保存結果不明です。入力とRecoveryを保持しています。再保存せずオーナーに連絡してください。"
         If IsWebAddress(record.sourceAddress) Then message = message & " チェックアウトが残る場合は管理担当へ確認してください。"
     Else
         message = SafeFailure(record.sourceYear & "年度の保存準備", Err.Number) & " 管理簿への書込みは開始していません。"
@@ -472,6 +473,15 @@ Failed:
 End Function
 
 Public Function ReconcileSave(ByRef message As String) As Boolean
+    If Not IsOwnerAuthorized() Then
+        message = "保存結果はオーナーに確認を依頼してください。"
+        Exit Function
+    End If
+    HideOwnerWorkspace
+    ReconcileSave = VerifyRecordedSave(message)
+End Function
+
+Private Function VerifyRecordedSave(ByRef message As String) As Boolean
     Dim recovery As Worksheet
     Dim book As Workbook
     Dim ws As Worksheet
@@ -524,7 +534,7 @@ Public Function ReconcileSave(ByRef message As String) As Boolean
     ThisWorkbook.Save
     If Not ThisWorkbook.Saved Then GoTo Unconfirmed
     message = "保存確認済み：管理簿を開き直して保存予定の全項目との一致を確認しました。"
-    ReconcileSave = True
+    VerifyRecordedSave = True
     Exit Function
 Unconfirmed:
     If Not book Is Nothing Then book.Close SaveChanges:=False

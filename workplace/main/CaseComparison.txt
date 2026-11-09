@@ -118,7 +118,7 @@ Private Sub WriteReportRow(ByVal report As Worksheet, ByVal row As Long, ByVal s
     End With
 End Sub
 
-Public Function ComparisonRules(ByRef message As String) As Object
+Public Function ComparisonRules(ByRef message As String, Optional ByVal isPickedSource As Boolean = False) As Object
     Dim ws As Worksheet
     Dim rules As Object
     Dim row As Long
@@ -127,9 +127,11 @@ Public Function ComparisonRules(ByRef message As String) As Object
     Dim keyCount As Long
     Dim compareCount As Long
     Set ws = Sheet("Comparison")
-    If Len(CStr(ws.Range("B2").Value2)) = 0 Or Len(CStr(ws.Range("B3").Value2)) = 0 Then
-        message = "ComparisonのB2に比較先、B3にシート名を設定してください。"
-        Exit Function
+    If Not isPickedSource Then
+        If Len(CStr(ws.Range("B2").Value2)) = 0 Or Len(CStr(ws.Range("B3").Value2)) = 0 Then
+            message = "ComparisonのB2に比較先、B3にシート名を設定してください。"
+            Exit Function
+        End If
     End If
     Set rules = NewDictionary()
     For row = 8 To LastRow(ws)
@@ -152,7 +154,8 @@ Public Function ComparisonRules(ByRef message As String) As Object
             End If
         End If
     Next
-    If keyCount = 0 Or compareCount = 0 Then
+    If (Not isPickedSource And (keyCount = 0 Or compareCount = 0)) Or _
+        (isPickedSource And Not rules.Exists("MaskedNumber")) Then
         message = "Comparisonに照合キーと比較する項目を設定してください。"
         Exit Function
     End If
@@ -180,7 +183,7 @@ Failed:
     If Not book Is Nothing Then book.Close False
 End Function
 
-Private Function ComparisonRows(ByVal ws As Worksheet, ByVal rules As Object, ByRef message As String) As Collection
+Public Function ComparisonRows(ByVal ws As Worksheet, ByVal rules As Object, ByRef message As String) As Collection
     Dim data As Variant
     Dim headers As Object
     Dim columns As Object
@@ -349,6 +352,10 @@ Public Function TransferComparisonField(ByVal source As CaseRecord, ByVal target
     Dim previousEvents As Boolean
     previousEvents = Application.EnableEvents
     On Error GoTo Failed
+    If Not IsOwnerAuthorized() Then
+        message = "逆方向の転記にはオーナー認証と既存の明示許可が必要です。"
+        Exit Function
+    End If
     If Setting("ControllerRole") <> "Staff" Then
         message = "手動転記は常勤の管理担当だけが実行できます。"
         Exit Function

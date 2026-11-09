@@ -2,6 +2,7 @@ Option Explicit
 
 Private Sub Workbook_Open()
     On Error GoTo Failed
+    SignOutOwner
     InitializeControllerUi
     Exit Sub
 Failed:
@@ -24,9 +25,14 @@ Private Sub Workbook_SheetActivate(ByVal Sh As Object)
     If Sh.Name = "検索" Then SearchActivated
 End Sub
 Private Sub Workbook_BeforeSave(ByVal SaveAsUI As Boolean, Cancel As Boolean)
+    HideOwnerWorkspace
     If Sheet("CompareResults").Visible = xlSheetVisible Then CloseComparison
 End Sub
 
 Private Sub Workbook_BeforeClose(Cancel As Boolean)
-    If Not UiCanLeaveDetail() Then Cancel = True
+    If Not UiCanLeaveDetail() Then
+        Cancel = True
+    Else
+        SignOutOwner
+    End If
 End Sub
