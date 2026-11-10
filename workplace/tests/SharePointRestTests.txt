@@ -1,0 +1,136 @@
+Option Explicit
+
+' Independent tests. Do not add this module to CONTROLLER.
+' Run TestSharePointRest first, then TestSharePointRecycle.
+' The deletion test ONLY targets REST_DELETE_TEST_001.xlsx.
+' Uses standard Excel VBA and late-bound MSXML; no Windows API.
+
+Private Const TEST_FILE_NAME As String = "REST_DELETE_TEST_001.xlsx"
+
+Public Sub TestSharePointRest()
+    Dim siteUrl As String
+    Dim req As Object
+    On Error GoTo Failed
+    siteUrl = GetSiteUrl()
+    If Len(siteUrl) = 0 Then Exit Sub
+    Set req = CreateObject("MSXML2.XMLHTTP.6.0")
+    req.Open "GET", siteUrl & "/_api/web?$select=Title", False
+    req.setRequestHeader "Accept", "application/atom+xml"
+    req.send
+    MsgBox "REST接続: HTTP " & CStr(req.Status) & vbCrLf & _
+        IIf(req.Status = 200, "PASS: RESTの読取に成功", "FAIL: 応答を確認してください"), vbInformation
+    Exit Sub
+Failed:
+    MsgBox "REST接続: VBAエラー " & Err.Number & " / " & Err.Description, vbExclamation
+End Sub
+
+Public Sub TestSharePointRecycle()
+    Dim siteUrl As String
+    Dim relativePath As String
+    Dim endpoint As String
+    Dim req As Object
+    Dim digest As String
+    Dim node As Object
+    Dim code As Long
+    On Error GoTo Failed
+
+    siteUrl = GetSiteUrl()
+    If Len(siteUrl) = 0 Then Exit Sub
+    relativePath = Trim$(InputBox( _
+        "SharePointのテストファイルのサーバー相対パスを入力してください。" & vbCrLf & _
+        "例: /sites/team/Shared Documents/REST_DELETE_TEST_001.xlsx"))
+    If Not IsSafeTestPath(relativePath) Then
+        MsgBox "削除対象を許可できません。末尾が " & TEST_FILE_NAME & _
+            " のテスト専用パスだけ指定できます。", vbExclamation
+        Exit Sub
+    End If
+
+    endpoint = siteUrl & "/_api/web/GetFileByServerRelativePath(decodedurl='" & _
+        EncodePathForRest(relativePath) & "')"
+    Set req = CreateObject("MSXML2.XMLHTTP.6.0")
+    req.Open "GET", endpoint, False
+    req.setRequestHeader "Accept", "application/atom+xml"
+    req.send
+    If req.Status <> 200 Then
+        MsgBox "対象確認: HTTP " & req.Status & "。削除は実行していません。", vbExclamation
+        Exit Sub
+    End If
+
+    req.Open "POST", siteUrl & "/_api/contextinfo", False
+    req.setRequestHeader "Accept", "application/atom+xml"
+    req.send ""
+    If req.Status <> 200 Then
+        MsgBox "変更用認証: HTTP " & req.Status & "。削除は実行していません。", vbExclamation
+        Exit Sub
+    End If
+    Set node = req.responseXML.SelectSingleNode("//*[local-name()='FormDigestValue']")
+    If node Is Nothing Then
+        MsgBox "FormDigestValueを取得できません。削除は実行していません。", vbExclamation
+        Exit Sub
+    End If
+    digest = node.Text
+    If Len(digest) = 0 Then
+        MsgBox "変更用認証情報が空です。削除は実行していません。", vbExclamation
+        Exit Sub
+    End If
+
+    If MsgBox("次のテスト専用ファイルをごみ箱へ移しますか？" & vbCrLf & _
+        relativePath, vbYesNo + vbQuestion + vbDefaultButton2) <> vbYes Then Exit Sub
+
+    req.Open "POST", endpoint & "/recycle()", False
+    req.setRequestHeader "Accept", "application/atom+xml"
+    req.setRequestHeader "X-RequestDigest", digest
+    req.send ""
+    code = req.Status
+    If code = 200 Or code = 204 Then
+        MsgBox "削除要求: HTTP " & code & vbCrLf & _
+            "SharePointのごみ箱と元の場所を確認してください。", vbInformation
+    Else
+        MsgBox "削除要求: HTTP " & code & vbCrLf & _
+            "結果を自分で確認してください。自動再実行しません。", vbExclamation
+    End If
+    Exit Sub
+Failed:
+    MsgBox "処理エラー " & Err.Number & " / " & Err.Description & vbCrLf & _
+        "削除要求後のエラーなら、元の場所とごみ箱を確認してください。", vbExclamation
+End Sub
+
+Private Function GetSiteUrl() As String
+    Dim value As String
+    value = Trim$(InputBox( _
+        "SharePointサイトURLを入力してください。" & vbCrLf & _
+        "例: https://example.sharepoint.com/sites/team"))
+    If Len(value) = 0 Then Exit Function
+    If LCase$(Left$(value, 8)) <> "https://" Or _
+       InStr(value, "?") > 0 Or InStr(value, "#") > 0 Or _
+       InStr(value, "'") > 0 Then
+        MsgBox "共有リンクではなくサイトのHTTPS URLを指定してください。", vbExclamation
+        Exit Function
+    End If
+    Do While Right$(value, 1) = "/"
+        value = Left$(value, Len(value) - 1)
+    Loop
+    GetSiteUrl = value
+End Function
+
+Private Function IsSafeTestPath(ByVal value As String) As Boolean
+    Dim fileName As String
+    If Len(value) = 0 Or Left$(value, 1) <> "/" Then Exit Function
+    If InStr(value, "\") > 0 Or InStr(value, "'") > 0 Or _
+       InStr(value, "?") > 0 Or InStr(value, "#") > 0 Or _
+       InStr(value, "%") > 0 Then Exit Function
+    If InStr(value, "//") > 0 Or InStr(value, "/../") > 0 Or _
+       InStr(value, "/./") > 0 Then Exit Function
+    fileName = Mid$(value, InStrRev(value, "/") + 1)
+    IsSafeTestPath = (StrComp(fileName, TEST_FILE_NAME, vbBinaryCompare) = 0)
+End Function
+
+Private Function EncodePathForRest(ByVal value As String) As String
+    Dim parts As Variant
+    Dim index As Long
+    parts = Split(value, "/")
+    For index = 1 To UBound(parts)
+        parts(index) = Application.WorksheetFunction.EncodeURL(CStr(parts(index)))
+    Next index
+    EncodePathForRest = Join(parts, "/")
+End Function
