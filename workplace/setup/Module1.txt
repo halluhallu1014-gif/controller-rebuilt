@@ -10,7 +10,6 @@ Public comparisonSheet As String
 
 Private Const ABSENT As String = "[Absent]"
 
-
 Public Sub InstallControllerSettings()
     Dim book As Workbook
     Dim page As Worksheet
@@ -71,8 +70,6 @@ Private Sub VerifyInstalledSettings()
     Unload UserForm1
 End Sub
 
-
-' --- SetupModel ---
 Public Function Dictionary() As Object
     Set Dictionary = CreateObject("Scripting.Dictionary")
 End Function
@@ -99,69 +96,23 @@ Public Function IsWeb(ByVal address As String) As Boolean
 End Function
 
 Public Function IsDirectUrl(ByVal address As String) As Boolean
-    Dim parts As Variant
-    If Not IsWeb(address) Then Exit Function
-    If InStr(address, "?") Or InStr(address, "%") Or InStr(address, "#") Or InStr(address, "\") Or InStr(address, ":/") > 6 Then Exit Function
-    parts = Split(Mid$(address, 9), "/")
-    If UBound(parts) < 1 Then Exit Function
-    If InStr(parts(0), ".") = 0 Or InStr(parts(0), "@") Or InStr(parts(0), " ") Then Exit Function
-    If InStr(address, "/../") Or InStr(address, "/./") Or InStr(address, "/:") Then Exit Function
-    IsDirectUrl = True
+    IsDirectUrl = IsHttpsAddress(address) And Len(CanonicalAddress(address)) > 0
 End Function
 
 Public Function IsWorkbookUrl(ByVal address As String) As Boolean
-    Dim extension As String
-    If Not IsDirectUrl(address) Then Exit Function
-    extension = LCase$(Filesystem().GetExtensionName(FileLabel(address)))
-    IsWorkbookUrl = (extension = "xlsx" Or extension = "xlsm" Or extension = "xlsb" Or extension = "xls")
+    IsWorkbookUrl = IsHttpsAddress(address) And IsDirectWorkbookAddress(address)
 End Function
 
 Public Function IsSameAddress(ByVal first As String, ByVal second As String) As Boolean
-    IsSameAddress = StrComp(first, second, vbTextCompare) = 0
+    If IsWeb(first) Or IsWeb(second) Then
+        IsSameAddress = IsSameWorkbookAddress(first, second)
+    Else
+        IsSameAddress = StrComp(first, second, vbTextCompare) = 0
+    End If
 End Function
 
 Public Function SafeOpen(ByVal address As String, ByVal writableTarget As Boolean, ByRef message As String) As Workbook
-    Dim candidate As Workbook
-    Dim opened As Workbook
-    Dim previousEvents As Boolean
-    Dim previousSecurity As Long
-    Dim previousAlerts As Boolean
-    previousEvents = Application.EnableEvents
-    previousSecurity = Application.AutomationSecurity
-    previousAlerts = Application.DisplayAlerts
-    On Error GoTo Failed
-    If Len(address) = 0 Then GoTo Failed
-    If IsWeb(address) Then
-        If writableTarget Or Not IsWorkbookUrl(address) Then GoTo Failed
-    ElseIf Not Filesystem().FileExists(address) Then
-        message = FileLabel(address) & " が見つかりません。ファイルを選び直してください。"
-        Exit Function
-    End If
-    For Each candidate In Application.Workbooks
-        If IsSameAddress(candidate.FullName, address) Or IsSameAddress(candidate.Name, FileLabel(address)) Then
-            message = FileLabel(address) & " または同名のブックを閉じてから操作してください。"
-            Exit Function
-        End If
-    Next
-    Application.EnableEvents = False
-    Application.DisplayAlerts = False
-    If Not writableTarget Then Application.AutomationSecurity = 3
-    Set opened = Workbooks.Open(Filename:=address, UpdateLinks:=0, ReadOnly:=Not writableTarget, _
-        IgnoreReadOnlyRecommended:=True, Notify:=False, AddToMru:=False)
-    If writableTarget And opened.ReadOnly Then
-        message = FileLabel(address) & " が読取専用です。別の利用者の編集状況と権限を確認してください。"
-        opened.Close False
-    Else
-        Set SafeOpen = opened
-    End If
-Finished:
-    Application.EnableEvents = previousEvents
-    Application.AutomationSecurity = previousSecurity
-    Application.DisplayAlerts = previousAlerts
-    Exit Function
-Failed:
-    message = FileLabel(address) & " を開けません。保存先、ファイルの種類、アクセス権を確認してください。"
-    Resume Finished
+    Set SafeOpen = OpenAddressWorkbook(address, Not writableTarget, writableTarget, message)
 End Function
 
 Public Function HeadersMatch(ByVal sheet As Worksheet, ByVal firstColumn As Long, ByVal expected As Variant) As Boolean
@@ -185,7 +136,7 @@ Public Function IsController(ByVal book As Workbook, ByRef message As String) As
     Set other = book.Worksheets("検索")
     Set other = book.Worksheets("詳細")
     If Not HeadersMatch(settings, 1, Array("Setting", "Value")) Then GoTo Invalid
-    If Not HeadersMatch(settings, 4, Array("Year", "StaffAddress", "Sheet", "Enabled", "AllowWrite", "GeneralAddress")) Then GoTo Invalid
+    If Not HeadersMatch(settings, 4, Array("Year", "（未使用）", "Sheet", "Enabled", "AllowWrite", "（未使用）")) Then GoTo Invalid
     If Not HeadersMatch(fields, 1, Array("FieldId", "Header", "Type", "Sheet", "Cell", "Required")) Then GoTo Invalid
     If Not HeadersMatch(fields, 8, Array("Year", "FieldId", "HeaderOverride")) Then GoTo Invalid
     If CStr(comparison.Range("A2").Value2) <> "Address" Or CStr(comparison.Range("A3").Value2) <> "Sheet" Then GoTo Invalid
@@ -295,10 +246,6 @@ Public Function LoadTarget(ByVal address As String, ByRef message As String) As 
     Dim item As Object
     On Error GoTo Failed
     message = ""
-    If IsWeb(address) Then
-        message = "設定を書き込むCONTROLLERはローカルの .xlsm を選択してください。"
-        Exit Function
-    End If
     Set book = SafeOpen(address, False, message)
     If book Is Nothing Then Exit Function
     If Not IsController(book, message) Then GoTo Finished
@@ -310,10 +257,10 @@ Public Function LoadTarget(ByVal address As String, ByRef message As String) As 
         fieldId = CStr(sheet.Cells(row, 1).Value2)
         If Len(fieldId) > 0 Then
             localFields.Add fieldId, Array(CStr(sheet.Cells(row, 2).Value2), _
-                sheet.Cells(row, 6).Value2 = "Yes" Or fieldId = "MaskedNumber" Or fieldId = "Branch", CStr(sheet.Cells(row, 3).Value2))
+                sheet.Cells(row, 6).Value2 = "Yes" Or fieldId = "CommonNumber", CStr(sheet.Cells(row, 3).Value2))
         End If
     Next
-    If Not localFields.Exists("MaskedNumber") Or Not localFields.Exists("Branch") Or Not localFields.Exists("PersonName") Then
+    If Not localFields.Exists("CommonNumber") Or Not localFields.Exists("PersonName") Then
         message = "本体の必須項目の定義が不足しています。"
         GoTo Finished
     End If
@@ -326,11 +273,11 @@ Public Function LoadTarget(ByVal address As String, ByRef message As String) As 
                 GoTo Finished
             End If
             Set item = NewYearItem(row)
-            item("Staff") = CStr(sheet.Cells(row, 5).Value2)
+            item("Staff") = CStr(sheet.Range("B7").Value2)
             item("Sheet") = CStr(sheet.Cells(row, 6).Value2)
             item("Enabled") = (sheet.Cells(row, 7).Value2 = "Yes")
             item("Write") = CStr(sheet.Cells(row, 8).Value2)
-            item("General") = CStr(sheet.Cells(row, 9).Value2)
+            item("General") = CStr(sheet.Range("B8").Value2)
             localYears.Add year, item
         End If
     Next
@@ -378,7 +325,6 @@ Public Function NextYearRow() As Long
     Loop
 End Function
 
-' --- SetupActions ---
 Public Sub OpenSetup()
     UserForm1.Show
 End Sub
@@ -446,156 +392,13 @@ Public Function AskText(ByVal prompt As String, Optional ByVal current As String
     AskText = Application.InputBox(prompt, "CONTROLLER 設定", current, Type:=2)
 End Function
 
-Public Function ExistingFile(ByVal year As String, ByRef message As String) As String
-    Dim item As Object
-    Dim staff As String
-    Dim general As String
-    Dim hasStaff As Boolean
-    Dim hasGeneral As Boolean
-    Set item = draftYears(year)
-    staff = CStr(item("Staff"))
-    general = CStr(item("General"))
-    If IsWeb(staff) Or IsWeb(general) Then
-        ExistingFile = PickValue(year & "年度の現在のファイルを選んでください。", Choices(staff, general))
-        Exit Function
-    End If
-    hasStaff = Filesystem().FileExists(staff)
-    hasGeneral = Filesystem().FileExists(general)
-    If hasStaff = hasGeneral Then
-        If hasStaff Then
-            message = year & "年度のファイルが両候補にあります。正式な所在を確認してください。"
-        Else
-            message = year & "年度のファイルが見つかりません。「ファイル変更」で選び直してください。"
-        End If
-    ElseIf hasStaff Then
-        ExistingFile = staff
-    Else
-        ExistingFile = general
-    End If
-End Function
 
-Public Function PrepareLedger(ByVal address As String, ByVal year As String, ByRef message As String) As Object
-    Dim table As Object
-    Dim previous As Object
-    Dim mapping As Object
-    Dim preferred As String
-    Dim side As String
-    Dim pairSide As String
-    Dim alternate As String
-    Dim priorPath As String
-    Dim candidate As String
-    Dim picked As String
-    Dim reply As Variant
-    Dim id As Variant
-    If draftYears.Exists(year) Then
-        Set previous = draftYears(year)
-        preferred = CStr(previous("Sheet"))
-    End If
-    Set table = ReadTable(address, preferred, True, message)
-    If table Is Nothing Then Exit Function
-    Set mapping = MapLedger(table("Headers"), year)
-    For Each id In mapping.Keys
-        If Len(CStr(mapping(id))) = 0 Then
-            If Not PickHeading(CStr(id), mapping, table("Headers")) Then Exit Function
-        End If
-    Next
-    side = AddressToRole(address, previous)
-    candidate = GuessCounterpart(address, pairSide)
-    If Len(side) = 0 Then
-        picked = PickValue("選んだファイルが現在置かれている側を選んでください。", Choices("常勤", "非常勤"))
-        If Len(picked) = 0 Then Exit Function
-        side = "Staff"
-        If picked = "非常勤" Then side = "General"
-    End If
-    If Not previous Is Nothing Then
-        If side = "Staff" Then
-            priorPath = CStr(previous("Staff"))
-            alternate = CStr(previous("General"))
-        Else
-            priorPath = CStr(previous("General"))
-            alternate = CStr(previous("Staff"))
-        End If
-        If Len(alternate) > 0 And Len(priorPath) > 0 Then
-            If IsSameAddress(FileLabel(alternate), FileLabel(priorPath)) And Not IsSameAddress(FileLabel(address), FileLabel(priorPath)) Then
-                alternate = Left$(alternate, Len(alternate) - Len(FileLabel(alternate))) & FileLabel(address)
-            End If
-        End If
-    End If
-    If IsWeb(alternate) <> IsWeb(address) Then alternate = ""
-    If Len(alternate) = 0 And side = pairSide Then alternate = candidate
-    If Len(alternate) = 0 Then
-        picked = "非常勤"
-        If side = "General" Then picked = "常勤"
-        If IsWeb(address) Then
-            reply = AskText(picked & "側の直接ファイルURLを指定してください。")
-            If VarType(reply) = vbBoolean Then Exit Function
-            alternate = Trim$(CStr(reply))
-        Else
-            alternate = SelectFolder(picked & "側の保存フォルダを選択")
-            If Len(alternate) = 0 Then Exit Function
-            alternate = Filesystem().BuildPath(alternate, FileLabel(address))
-        End If
-    End If
-    If Not IsWeb(alternate) Then
-        If Filesystem().FileExists(alternate) Then
-            message = "両方の候補にファイルがあります。正式な所在を確認してください。"
-            Exit Function
-        End If
-    End If
-    table.Add "Staff", address
-    table.Add "General", alternate
-    If side = "General" Then
-        table("Staff") = alternate
-        table("General") = address
-    End If
-    table.Add "Map", mapping
-    Set PrepareLedger = table
-End Function
 
-Private Function PickHeading(ByVal fieldId As String, ByVal mapping As Object, ByVal headers As Object) As Boolean
-    Dim values As New Collection
-    Dim heading As Variant
-    Dim id As Variant
-    Dim isUsed As Boolean
-    Dim picked As String
-    If Not fieldSpecs(fieldId)(1) Then values.Add "（対応なし）"
-    For Each heading In headers.Keys
-        isUsed = False
-        For Each id In mapping.Keys
-            If CStr(id) <> fieldId And CStr(mapping(id)) = CStr(heading) Then isUsed = True
-        Next
-        If Not isUsed Then values.Add CStr(heading)
-    Next
-    picked = PickValue("「" & FieldLabel(fieldId) & "」に対応する、元ファイルの見出しを選んでください。", _
-        values, CStr(mapping(fieldId)))
-    If Len(picked) = 0 Then Exit Function
-    If picked = "（対応なし）" Then picked = "[Absent]"
-    mapping(fieldId) = picked
-    PickHeading = True
-End Function
 
-Public Function ReviewMapping(ByVal table As Object) As Boolean
-    Dim labels As New Collection
-    Dim options As Object
-    Dim mapping As Object
-    Dim id As Variant
-    Dim heading As String
-    Dim label As String
-    Dim picked As String
-    Set mapping = table("Map")
-    Set options = Dictionary()
-    For Each id In mapping.Keys
-        heading = CStr(mapping(id))
-        If heading = "[Absent]" Or Len(heading) = 0 Then heading = "対応なし"
-        label = FieldLabel(CStr(id)) & "  →  " & heading
-        If Not options.Exists(label) Then
-            options.Add label, CStr(id)
-            labels.Add label
-        End If
-    Next
-    picked = PickValue("変更したい項目だけ選んでください。対応は一覧で確認できます。", labels)
-    If Len(picked) > 0 Then ReviewMapping = PickHeading(CStr(options(picked)), mapping, table("Headers"))
-End Function
+
+
+
+
 
 Public Function PrepareComparison(ByVal address As String, ByRef message As String) As Boolean
     Dim table As Object
@@ -629,7 +432,7 @@ Public Function PrepareComparison(ByVal address As String, ByRef message As Stri
         configured.Add CStr(key), Array(heading, existing(key)(1), existing(key)(2), existing(key)(3))
     Next
     If configured.Count = 0 Then
-        yearKeys = Array("SourceYear", "MaskedNumber", "Branch")
+        yearKeys = Array("SourceYear", "CommonNumber")
         For Each key In yearKeys
             heading = SelectExternalHeading(CStr(key), headers, configured)
             If Len(heading) = 0 Then Exit Function
@@ -735,12 +538,11 @@ Public Function StageComparison(ByVal table As Object, ByVal rules As Object, By
     StageComparison = True
 End Function
 
-' --- LedgerSetup ---
 Public Function FieldLabel(ByVal fieldId As String) As String
-    If fieldId = "MaskedNumber" Then
-        FieldLabel = "13桁番号"
-    ElseIf fieldId = "TaxType" Then
-        FieldLabel = "税目"
+    If fieldId = "CommonNumber" Then
+        FieldLabel = "共通番号"
+    ElseIf fieldId = "SubmissionFormat" Then
+        FieldLabel = "提出形式"
     ElseIf fieldId = "HistoryMemo" Then
         FieldLabel = "処理履歴メモ"
     ElseIf fieldId = "SourceYear" Then
@@ -757,9 +559,9 @@ End Function
 
 Private Function AliasHeader(ByVal fieldId As String) As String
     Select Case fieldId
-        Case "MaskedNumber": AliasHeader = "MaskedNumber"
+        Case "CommonNumber": AliasHeader = "CommonNumber"
         Case "Furigana": AliasHeader = "氏名(フリガナ)"
-        Case "TaxType": AliasHeader = "税目"
+        Case "SubmissionFormat": AliasHeader = "提出形式"
     End Select
 End Function
 
@@ -816,7 +618,7 @@ End Function
 
 Private Function LooksLikeLedger(ByVal headers As Object) As Boolean
     Dim id As Variant
-    For Each id In Array("MaskedNumber", "Branch", "PersonName")
+    For Each id In Array("CommonNumber", "PersonName")
         If Len(UniqueHeading(headers, CStr(fieldSpecs(id)(0)))) = 0 Then
             If Len(UniqueHeading(headers, AliasHeader(CStr(id)))) = 0 Then Exit Function
         End If
@@ -887,340 +689,34 @@ Failed:
     Resume Finished
 End Function
 
-Public Function GuessYear(ByVal address As String) As String
-    Dim result As Object
-    Dim year As Variant
-    Dim leaf As String
-    Dim candidate As String
-    Dim position As Long
-    Dim endOfEra As Long
-    For Each year In draftYears.Keys
-        If IsSameAddress(address, draftYears(year)("Staff")) Or IsSameAddress(address, draftYears(year)("General")) Then
-            GuessYear = CStr(year)
-            Exit Function
-        End If
-    Next
-    Set result = Dictionary()
-    leaf = " " & FileLabel(address) & " "
-    For position = 2 To Len(leaf) - 4
-        If Not Mid$(leaf, position - 1, 1) Like "#" And Not Mid$(leaf, position + 4, 1) Like "#" Then
-            candidate = Mid$(leaf, position, 4)
-            If IsYear(candidate) Then result(candidate) = True
-        End If
-        If Mid$(leaf, position, 2) = "令和" Then
-            endOfEra = InStr(position + 2, leaf, "年")
-            If endOfEra > position + 2 Then
-                candidate = Mid$(leaf, position + 2, endOfEra - position - 2)
-                If candidate = "元" Then candidate = "1"
-                If candidate Like "[1-9]" Or candidate Like "[1-9]#" Then
-                    result(CStr(2018 + CLng(candidate))) = True
-                End If
-            End If
-        End If
-    Next
-    If result.Count = 1 Then GuessYear = CStr(result.Keys()(0))
-End Function
+
 
 Public Function IsYear(ByVal value As String) As Boolean
     IsYear = Len(value) = 4 And value Like "####"
     If IsYear Then IsYear = CLng(value) >= 1900 And CLng(value) <= 2099
 End Function
 
-Private Function ParentPath(ByVal address As String) As String
-    Dim separator As String
-    separator = "\"
-    If IsWeb(address) Then separator = "/"
-    ParentPath = Left$(address, InStrRev(address, separator) - 1)
-End Function
 
-Private Function SiblingRole(ByVal address As String) As String
-    Select Case LCase$(FileLabel(ParentPath(address)))
-        Case "常勤", "staff": SiblingRole = "Staff"
-        Case "非常勤", "general": SiblingRole = "General"
-    End Select
-End Function
 
-Public Function GuessCounterpart(ByVal address As String, ByRef side As String) As String
-    Dim parent As String
-    Dim other As String
-    Dim separator As String
-    Dim folder As String
-    side = SiblingRole(address)
-    If Len(side) = 0 Then Exit Function
-    parent = ParentPath(address)
-    separator = "\"
-    If IsWeb(address) Then separator = "/"
-    Select Case LCase$(FileLabel(parent))
-        Case "常勤": other = "非常勤"
-        Case "非常勤": other = "常勤"
-        Case "staff": other = "General"
-        Case "general": other = "Staff"
-    End Select
-    folder = ParentPath(parent) & separator & other
-    If Not IsWeb(address) Then
-        If Not Filesystem().FolderExists(folder) Then Exit Function
-    End If
-    GuessCounterpart = folder & separator & FileLabel(address)
-End Function
 
-Public Function AddressToRole(ByVal address As String, ByVal previous As Object) As String
-    If Not previous Is Nothing Then
-        If Len(previous("Staff")) > 0 Then
-            If IsSameAddress(address, previous("Staff")) Or IsSameAddress(ParentPath(address), ParentPath(CStr(previous("Staff")))) Then
-                AddressToRole = "Staff"
-                Exit Function
-            End If
-        End If
-        If Len(previous("General")) > 0 Then
-            If IsSameAddress(address, previous("General")) Or IsSameAddress(ParentPath(address), ParentPath(CStr(previous("General")))) Then
-                AddressToRole = "General"
-                Exit Function
-            End If
-        End If
-    End If
-    AddressToRole = SiblingRole(address)
-End Function
 
-Public Function MapLedger(ByVal headers As Object, ByVal year As String) As Object
-    Dim result As Object
-    Dim used As Object
-    Dim id As Variant
-    Dim heading As String
-    Dim saved As String
-    Dim row As Long
-    Set result = Dictionary()
-    Set used = Dictionary()
-    For Each id In fieldSpecs.Keys
-        row = OverrideRow(year, CStr(id))
-        heading = ""
-        If row > 0 Then
-            saved = ReadCell("Fields", row, 10)
-            If saved = ABSENT Then
-                heading = ABSENT
-                If id = "TaxType" Then heading = UniqueHeading(headers, "税目")
-                If id = "CompletedDate" Then heading = UniqueHeading(headers, "完了日")
-            Else
-                heading = UniqueHeading(headers, saved)
-            End If
-        End If
-        If Len(heading) = 0 Then heading = UniqueHeading(headers, CStr(fieldSpecs(id)(0)))
-        If Len(heading) = 0 Then heading = UniqueHeading(headers, AliasHeader(CStr(id)))
-        If Len(heading) > 0 And heading <> ABSENT Then
-            If used.Exists(heading) Then
-                heading = ""
-            Else
-                used.Add heading, True
-            End If
-        End If
-        If Len(heading) = 0 And Not fieldSpecs(id)(1) Then heading = ABSENT
-        result.Add id, heading
-    Next
-    Set MapLedger = result
-End Function
 
-Private Function OverrideRow(ByVal year As String, ByVal fieldId As String) As Long
-    Dim key As Variant
-    Dim parts As Variant
-    Dim visited As Object
-    Dim row As Long
-    Set visited = Dictionary()
-    For Each key In originalValues.Keys
-        parts = Split(CStr(key), "|")
-        If parts(0) = "Fields" And parts(2) = "8" Then visited(parts(1)) = True
-    Next
-    For Each key In draftChanges.Keys
-        parts = Split(CStr(key), "|")
-        If parts(0) = "Fields" And parts(2) = "8" Then visited(parts(1)) = True
-    Next
-    For Each key In visited.Keys
-        row = CLng(key)
-        If ReadCell("Fields", row, 8) = year And ReadCell("Fields", row, 9) = fieldId Then
-            If OverrideRow > 0 Then Err.Raise 5, , year & "年度の項目対応が重複しています。"
-            OverrideRow = row
-        End If
-    Next
-End Function
 
-Private Function NextOverrideRow() As Long
-    Dim key As Variant
-    Dim parts As Variant
-    NextOverrideRow = 2
-    For Each key In originalValues.Keys
-        parts = Split(CStr(key), "|")
-        If parts(0) = "Fields" And CLng(parts(2)) >= 8 Then
-            If CLng(parts(1)) >= NextOverrideRow Then NextOverrideRow = CLng(parts(1)) + 1
-        End If
-    Next
-    Do While Len(ReadCell("Fields", NextOverrideRow, 8) & ReadCell("Fields", NextOverrideRow, 9) & _
-        ReadCell("Fields", NextOverrideRow, 10)) > 0
-        NextOverrideRow = NextOverrideRow + 1
-    Loop
-End Function
 
-Public Function CheckMapping(ByVal mapping As Object, ByVal headers As Object, ByRef message As String) As Boolean
-    Dim used As Object
-    Dim id As Variant
-    Dim heading As String
-    Set used = Dictionary()
-    For Each id In fieldSpecs.Keys
-        heading = CStr(mapping(id))
-        If heading = ABSENT Or Len(heading) = 0 Then
-            If fieldSpecs(id)(1) Then
-                message = "「" & FieldLabel(CStr(id)) & "」に対応する見出しを選んでください。"
-                Exit Function
-            End If
-        Else
-            If Not headers.Exists(heading) Or used.Exists(heading) Then
-                message = "見出し「" & heading & "」が存在しないか、複数の項目に対応しています。"
-                Exit Function
-            End If
-            used.Add heading, True
-        End If
-    Next
-    message = ""
-    CheckMapping = True
-End Function
 
-Public Function StageLedger(ByVal year As String, ByVal plan As Object, ByRef message As String) As Boolean
-    Dim old As Object
-    Dim entry As Object
-    Dim map As Object
-    Dim id As Variant
-    Dim row As Long
-    Dim override As Long
-    Dim heading As String
-    Dim transport As String
-    Dim transportRow As Long
-    Dim candidate As Variant
-    Dim missing As String
-    On Error GoTo Failed
-    If Not IsYear(year) Then
-        message = "年度を西暦4桁で指定してください。"
-        Exit Function
-    End If
-    If Len(plan("Staff")) = 0 Or Len(plan("General")) = 0 Or IsSameAddress(plan("Staff"), plan("General")) Then
-        message = "常勤・非常勤の候補が両方必要です。それぞれ別の場所を指定してください。"
-        Exit Function
-    End If
-    If IsWeb(plan("Staff")) <> IsWeb(plan("General")) Then
-        message = "同じ年度の候補は、両方を同じ保存方式にしてください。"
-        Exit Function
-    End If
-    Set map = plan("Map")
-    If Not CheckMapping(map, plan("Headers"), message) Then Exit Function
-    For Each candidate In draftYears.Keys
-        If CStr(candidate) <> year And draftYears(candidate)("Enabled") Then
-            Set entry = draftYears(candidate)
-            If IsWeb(entry("Staff")) <> IsWeb(plan("Staff")) Then
-                message = "本体はローカルとSharePointを年度ごとに混在できません。運用設定を確認してください。"
-                Exit Function
-            End If
-            If IsSameAddress(entry("Staff"), plan("Staff")) Or IsSameAddress(entry("Staff"), plan("General")) Or _
-                IsSameAddress(entry("General"), plan("Staff")) Or IsSameAddress(entry("General"), plan("General")) Then
-                message = "このファイルは別の年度で設定済みです。"
-                Exit Function
-            End If
-        End If
-    Next
-    transport = "Local"
-    If IsWeb(plan("Staff")) Then
-        If Not IsWorkbookUrl(plan("Staff")) Or Not IsWorkbookUrl(plan("General")) Then
-            message = "両候補に共有リンクではない直接ファイルURLを指定してください。"
-            Exit Function
-        End If
-        transport = "SharePoint"
-    End If
-    transportRow = ConfigRow("Transport")
-    Set old = CloneChanges()
-    If draftYears.Exists(year) Then
-        Set entry = draftYears(year)
-        row = entry("Row")
-    Else
-        row = NextYearRow()
-        Set entry = NewYearItem(row)
-    End If
-    For Each id In map.Keys
-        heading = CStr(map(id))
-        If heading = ABSENT And CStr(fieldSpecs(id)(0)) <> ABSENT And id <> "TaxType" And id <> "CompletedDate" Then
-            If Len(missing) > 0 Then missing = missing & "、"
-            missing = missing & FieldLabel(CStr(id))
-        End If
-        override = OverrideRow(year, CStr(id))
-        If heading = CStr(fieldSpecs(id)(0)) Then
-            If override > 0 Then
-                StageCell "Fields", override, 8, ""
-                StageCell "Fields", override, 9, ""
-                StageCell "Fields", override, 10, ""
-            End If
-        Else
-            If override = 0 Then override = NextOverrideRow()
-            StageCell "Fields", override, 8, year
-            StageCell "Fields", override, 9, CStr(id)
-            StageCell "Fields", override, 10, heading
-        End If
-    Next
-    StageCell "Settings", row, 4, year
-    StageCell "Settings", row, 5, CStr(plan("Staff"))
-    StageCell "Settings", row, 6, CStr(plan("Sheet"))
-    StageCell "Settings", row, 7, "Yes"
-    If Len(entry("Write")) = 0 Then entry("Write") = "No"
-    StageCell "Settings", row, 8, CStr(entry("Write"))
-    StageCell "Settings", row, 9, CStr(plan("General"))
-    StageCell "Settings", transportRow, 2, transport
-    entry("Staff") = plan("Staff")
-    entry("General") = plan("General")
-    entry("Sheet") = plan("Sheet")
-    entry("Enabled") = True
-    entry("State") = ""
-    If YearHasChanges(year, row) Then entry("State") = "確認済み・保存待ち"
-    entry("Count") = plan("Count")
-    entry("Unmapped") = missing
-    If Len(missing) > 0 Then entry("State") = "要確認・任意項目"
-    If Not draftYears.Exists(year) Then draftYears.Add year, entry
-    StageLedger = True
-    Exit Function
-Failed:
-    If Not old Is Nothing Then Set draftChanges = old
-    message = "年度設定を作成できません。既存の項目対応に重複がないか確認してください。"
-End Function
 
-Private Function YearHasChanges(ByVal year As String, ByVal row As Long) As Boolean
-    Dim key As Variant
-    Dim parts As Variant
-    Dim overrideRow As Long
-    Dim originalKey As String
-    For Each key In draftChanges.Keys
-        parts = Split(CStr(key), "|")
-        If parts(0) = "Settings" And CLng(parts(1)) = row And CLng(parts(2)) >= 4 And CLng(parts(2)) <= 9 Then
-            YearHasChanges = True
-            Exit Function
-        End If
-        If parts(0) = "Fields" And CLng(parts(2)) >= 8 Then
-            overrideRow = CLng(parts(1))
-            If ReadCell("Fields", overrideRow, 8) = year Then
-                YearHasChanges = True
-                Exit Function
-            End If
-            originalKey = "Fields|" & overrideRow & "|8"
-            If originalValues.Exists(originalKey) Then
-                If CStr(originalValues(originalKey)) = year Then
-                    YearHasChanges = True
-                    Exit Function
-                End If
-            End If
-        End If
-    Next
-End Function
 
-Public Function CloneChanges() As Object
-    Dim result As Object
-    Dim key As Variant
-    Set result = Dictionary()
-    For Each key In draftChanges.Keys
-        result.Add key, draftChanges(key)
-    Next
-    Set CloneChanges = result
-End Function
+
+
+
+
+
+
+
+
+
+
+
 
 Public Sub StageDisable(ByVal year As String)
     StageCell "Settings", CLng(draftYears(year)("Row")), 7, "No"
@@ -1228,7 +724,6 @@ Public Sub StageDisable(ByVal year As String)
     draftYears(year)("State") = "解除・保存待ち"
 End Sub
 
-' --- SetupSave ---
 Private Function IsSameSnapshot(ByVal before As Object, ByVal after As Object) As Boolean
     Dim key As Variant
     If before.Count <> after.Count Then Exit Function
@@ -1262,6 +757,24 @@ Private Function CreateBackup(ByVal book As Workbook) As String
     Dim folder As String
     Dim path As String
     Dim suffix As Long
+    If IsWeb(book.FullName) Then
+        folder = ReadCell("Settings", ConfigRow("BackupFolder"), 2)
+        If Not IsDirectUrl(folder) Then Err.Raise 5, , "SharePointの設定バックアップ先を指定してください。"
+        If Right$(folder, 1) = "/" Then folder = Left$(folder, Len(folder) - 1)
+        Randomize
+        path = folder & "/CONTROLLER_config_" & Format$(Now, "yyyymmdd_hhnnss") & "_" & Format$(Rnd() * 100000000, "00000000") & ".xlsm"
+        book.SaveCopyAs path
+        Dim backupBook As Workbook
+        Dim message As String
+        Set backupBook = SafeOpen(path, False, message)
+        If backupBook Is Nothing Then Err.Raise 5, , message
+        Dim matches As Boolean
+        matches = IsSameSnapshot(Snapshot(book), Snapshot(backupBook))
+        backupBook.Close False
+        If Not matches Then Err.Raise 5, , "設定のバックアップ内容が一致しません。"
+        CreateBackup = path
+        Exit Function
+    End If
     Set files = Filesystem()
     folder = files.BuildPath(book.Path, "設定バックアップ")
     If Not files.FolderExists(folder) Then files.CreateFolder folder
@@ -1276,55 +789,34 @@ Private Function CreateBackup(ByVal book As Workbook) As String
 End Function
 
 Private Function CheckDraft(ByRef message As String) As Boolean
-    Dim year As Variant
-    Dim item As Object
-    Dim site As String
-    Dim backup As String
+    Dim staff As String
+    Dim general As String
+    Dim staffFolder As String
+    Dim generalFolder As String
     Dim transport As String
-    Dim row As Long
+    Dim backup As String
     transport = ReadCell("Settings", ConfigRow("Transport"), 2)
-    site = ReadCell("Settings", ConfigRow("SharePointSite"), 2)
+    staff = ReadCell("Settings", ConfigRow("StaffLedger"), 2)
+    general = ReadCell("Settings", ConfigRow("GeneralLedger"), 2)
+    staffFolder = ReadCell("Settings", ConfigRow("StaffFolder"), 2)
+    generalFolder = ReadCell("Settings", ConfigRow("GeneralFolder"), 2)
     backup = ReadCell("Settings", ConfigRow("BackupFolder"), 2)
-    For Each year In draftYears.Keys
-        Set item = draftYears(year)
-        If item("Enabled") Then
-            If transport = "SharePoint" Then
-                If Not IsDirectUrl(site) Or Right$(site, 1) = "/" Then
-                    message = "運用設定でSharePointのサイトURLを指定してください。"
-                    Exit Function
-                End If
-                If Not IsWorkbookUrl(item("Staff")) Or Not IsWorkbookUrl(item("General")) Then GoTo InvalidYear
-                If InStr(1, item("Staff"), site & "/", vbTextCompare) <> 1 Or _
-                    InStr(1, item("General"), site & "/", vbTextCompare) <> 1 Then
-                    message = year & "年度の候補パスは設定したSharePointサイト内を指定してください。"
-                    Exit Function
-                End If
-            ElseIf transport <> "Local" Or IsWeb(item("Staff")) Or IsWeb(item("General")) Then
-                GoTo InvalidYear
-            End If
-            If item("Write") = "Yes" And transport = "SharePoint" Then
-                If ReadCell("Settings", ConfigRow("SharePointExclusive"), 2) <> "Yes" Then
-                    message = year & "年度を書込可にする前に必須チェックアウト運用を確認してください。"
-                    Exit Function
-                End If
-            End If
-        End If
-    Next
-    If Len(backup) > 0 Then
-        If transport = "SharePoint" Then
-            If Not IsDirectUrl(backup) Or InStr(1, backup, site & "/", vbTextCompare) <> 1 Then
-                message = "バックアップ先に、設定したSharePointサイト内のフォルダURLを指定してください。"
-                Exit Function
-            End If
-        ElseIf Not Filesystem().FolderExists(backup) Then
-            message = "バックアップフォルダが見つかりません。運用設定で選び直してください。"
-            Exit Function
-        End If
+    message = "常勤・非常勤の異なるフォルダと管理簿.xlsmの直接アドレスを確認してください。"
+    If Not IsDirectWorkbookAddress(staff) Or Not IsDirectWorkbookAddress(general) Then Exit Function
+    If AddressFileName(staff) <> "管理簿.xlsm" Or AddressFileName(general) <> "管理簿.xlsm" Then Exit Function
+    If IsSameWorkbookAddress(staffFolder, generalFolder) Then Exit Function
+    If Not IsSameWorkbookAddress(AddressFolder(staff), staffFolder) Then Exit Function
+    If Not IsSameWorkbookAddress(AddressFolder(general), generalFolder) Then Exit Function
+    If transport = "SharePoint" Then
+        If Not IsWeb(staff) Or Not IsWeb(general) Or Not IsWeb(targetPath) Or Not IsDirectUrl(backup) Then Exit Function
+        If Not IsDirectUrl(ReadCell("Settings", ConfigRow("SharePointSite"), 2)) Then Exit Function
+    ElseIf transport = "Local" Then
+        If IsWeb(staff) Or IsWeb(general) Or IsWeb(targetPath) Then Exit Function
+    Else
+        Exit Function
     End If
+    message = ""
     CheckDraft = True
-    Exit Function
-InvalidYear:
-    message = year & "年度の候補と保存方式が一致していません。"
 End Function
 
 Private Function MacroName(ByVal book As Workbook, ByVal macro As String) As String
@@ -1471,7 +963,6 @@ Public Function ActiveYearCount() As Long
     Next
 End Function
 
-' --- PresentationSetup ---
 Public Function SupportsPresentation() As Boolean
     SupportsPresentation = (ReadCell("Fields", 1, 11) = "DisplayFormat" And ReadCell("Settings", 1, 16) = "文書名")
 End Function
@@ -1595,66 +1086,194 @@ Public Sub EditDisplayFormat()
     If Len(label) > 0 Then StageDisplayFormat id, CStr(choices(label))
 End Sub
 
-Public Function CopyLedgerWithTax(ByVal source As String, ByVal sheetName As String, ByVal documentHeader As String, _
-    ByVal destination As String, ByRef message As String) As Boolean
-    Dim book As Workbook
-    Dim ws As Worksheet
-    Dim lastColumn As Long
-    Dim index As Long
-    Dim documentColumn As Long
-    Dim heading As String
-    Dim taxColumn As Range
-    Dim oldEvents As Boolean
-    Dim temporary As String
-    Dim files As Object
-    oldEvents = Application.EnableEvents
-    Set files = Filesystem()
-    On Error GoTo Failed
-    message = "ローカルの .xlsx を選び、元ファイルとは別の未使用の保存先を指定してください。"
-    If IsWeb(source) Or IsWeb(destination) Or IsSameAddress(source, destination) Then Exit Function
-    If LCase$(Right$(source, 5)) <> ".xlsx" Or LCase$(Right$(destination, 5)) <> ".xlsx" Then Exit Function
-    If Filesystem().FileExists(destination) Then Exit Function
-    Application.EnableEvents = False
-    Set book = SafeOpen(source, False, message)
-    If book Is Nothing Then GoTo Finished
-    Set ws = book.Worksheets(sheetName)
-    message = "対象シートが保護されているか、文書名の見出しを一意に確認できません。"
-    If ws.ProtectContents Then GoTo Finished
-    lastColumn = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
-    For index = 1 To lastColumn
-        If IsError(ws.Cells(1, index).Value2) Then GoTo Finished
-        heading = CStr(ws.Cells(1, index).Value2)
-        If Trim$(Replace(heading, "　", " ")) = "税目" Then
-            message = "この管理簿には税目列が既にあります。"
-            GoTo Finished
+Public Function IsHttpsAddress(ByVal address As String) As Boolean
+    IsHttpsAddress = (StrComp(Left$(address, 8), "https://", vbTextCompare) = 0)
+End Function
+
+Public Function CanonicalAddress(ByVal address As String) As String
+    Dim slash As Long
+    Dim host As String
+    Dim path As String
+    Dim segment As Variant
+    If Not IsHttpsAddress(address) Then
+        If Mid$(address, 2, 2) = ":\" Or Left$(address, 2) = "\\" Then CanonicalAddress = Replace(address, "/", "\")
+        Exit Function
+    End If
+    slash = InStr(9, address, "/")
+    If slash = 0 Then
+        host = Mid$(address, 9)
+    Else
+        host = Mid$(address, 9, slash - 9)
+    End If
+    If Len(host) = 0 Or InStr(host, ".") = 0 Or host Like "*[!A-Za-z0-9.-]*" Then Exit Function
+    If InStr(address, "?") > 0 Or InStr(address, "\") > 0 Then Exit Function
+    If slash = 0 Then
+        CanonicalAddress = "https://" & LCase$(host)
+        Exit Function
+    End If
+    path = DecodeAddressPath(Mid$(address, slash))
+    If Len(path) = 0 Then Exit Function
+    If InStr(path, "\") > 0 Or InStr(path, vbCr) > 0 Or InStr(path, vbLf) > 0 Or InStr(path, Chr$(0)) > 0 Then Exit Function
+    If InStr(path, "/:") > 0 Or InStr(path, "//") > 0 Or InStr(1, path, "/_layouts/", vbTextCompare) > 0 Then Exit Function
+    For Each segment In Split(path, "/")
+        If segment = "." Or segment = ".." Then Exit Function
+    Next
+    If Right$(path, 1) = "/" Then path = Left$(path, Len(path) - 1)
+    CanonicalAddress = "https://" & LCase$(host) & path
+End Function
+
+Private Function DecodeAddressPath(ByVal path As String) As String
+    Dim i As Long
+    Dim octet As Long
+    Dim code As Long
+    Dim pending As Long
+    Dim minimum As Long
+    Dim pair As String
+    Dim result As String
+    i = 1
+    Do While i <= Len(path)
+        pair = Mid$(path, i + 1, 2)
+        If Mid$(path, i, 1) = "%" And Len(pair) = 2 And UCase$(pair) Like "[0-9A-F][0-9A-F]" Then
+            octet = CLng("&H" & pair)
+            If pending > 0 Then
+                If octet < 128 Or octet > 191 Then Exit Function
+                code = code * 64 + octet - 128
+                pending = pending - 1
+                If pending = 0 Then
+                    If code < minimum Or code > &H10FFFF Or (code >= &HD800& And code <= &HDFFF&) Then Exit Function
+                    If code > 65535 Then
+                        code = code - 65536
+                        result = result & ChrW(&HD800& + code \ 1024) & ChrW(&HDC00& + code Mod 1024)
+                    Else
+                        result = result & ChrW(code)
+                    End If
+                End If
+            ElseIf octet < 128 Then
+                '区切りをエンコードしたリンクは、別パスに解釈しない。
+                If octet = 47 Or octet = 92 Then Exit Function
+                result = result & ChrW(octet)
+            ElseIf octet >= 194 And octet <= 223 Then
+                code = octet - 192
+                pending = 1
+                minimum = 128
+            ElseIf octet >= 224 And octet <= 239 Then
+                code = octet - 224
+                pending = 2
+                minimum = 2048
+            ElseIf octet >= 240 And octet <= 244 Then
+                code = octet - 240
+                pending = 3
+                minimum = 65536
+            Else
+                Exit Function
+            End If
+            i = i + 3
+        Else
+            If pending > 0 Then Exit Function
+            result = result & Mid$(path, i, 1)
+            i = i + 1
         End If
-        If heading = documentHeader Then
-            If documentColumn > 0 Or ws.Cells(1, index).MergeCells Then GoTo Finished
-            documentColumn = index
+    Loop
+    If pending = 0 Then DecodeAddressPath = result
+End Function
+
+Public Function IsSameWorkbookAddress(ByVal first As String, ByVal second As String) As Boolean
+    Dim leftAddress As String
+    Dim rightAddress As String
+    leftAddress = CanonicalAddress(first)
+    rightAddress = CanonicalAddress(second)
+    If Len(leftAddress) = 0 Or Len(rightAddress) = 0 Then Exit Function
+    IsSameWorkbookAddress = (StrComp(leftAddress, rightAddress, vbTextCompare) = 0)
+End Function
+
+Public Function IsDirectWorkbookAddress(ByVal address As String) As Boolean
+    Dim path As String
+    Dim extension As String
+    path = CanonicalAddress(address)
+    If Len(path) = 0 Then Exit Function
+    extension = LCase$(Mid$(path, InStrRev(path, ".") + 1))
+    IsDirectWorkbookAddress = (extension = "xlsm" Or extension = "xlsx" Or extension = "xlsb" Or extension = "xls")
+End Function
+
+Public Function AddressFileName(ByVal address As String) As String
+    Dim path As String
+    path = Replace(CanonicalAddress(address), "\", "/")
+    If Len(path) > 0 Then AddressFileName = Mid$(path, InStrRev(path, "/") + 1)
+End Function
+
+Public Function AddressFolder(ByVal address As String) As String
+    Dim slash As Long
+    slash = InStrRev(address, IIf(IsHttpsAddress(address), "/", "\"))
+    If slash > 0 Then AddressFolder = Left$(address, slash - 1)
+End Function
+
+Public Function OpenAddressWorkbook(ByVal address As String, ByVal isReadOnly As Boolean, _
+    ByVal allowTrustedMacros As Boolean, ByRef message As String) As Workbook
+    Dim candidate As Workbook
+    Dim book As Workbook
+    Dim previousEvents As Boolean
+    Dim previousSecurity As Long
+
+    message = ""
+    If Not IsDirectWorkbookAddress(address) Then
+        message = "Excelファイルの直接URLまたは検証用の絶対パスを指定してください。"
+        Exit Function
+    End If
+    For Each candidate In Application.Workbooks
+        If IsSameWorkbookAddress(candidate.FullName, address) Or _
+            StrComp(candidate.Name, AddressFileName(address), vbTextCompare) = 0 Then
+            message = "対象または同名のブックを閉じてから操作してください。"
+            Exit Function
         End If
     Next
-    If documentColumn = 0 Then GoTo Finished
-    Set taxColumn = ws.Columns(documentColumn + 1)
-    taxColumn.Insert Shift:=xlToRight, CopyOrigin:=xlFormatFromRightOrBelow
-    ws.Cells(1, documentColumn + 1).Value2 = "税目"
-    ws.Cells(2, documentColumn + 1).Resize(Application.Max(1, SheetLastRow(ws, "A:XFD") - 1), 1).NumberFormat = "@"
-    If CStr(ws.Cells(1, documentColumn).Value2) <> documentHeader Then GoTo Finished
-    If Filesystem().FileExists(destination) Then GoTo Finished
-    temporary = files.BuildPath(files.GetParentFolderName(destination), files.GetTempName() & ".xlsx")
-    book.SaveCopyAs temporary
-    files.MoveFile temporary, destination
-    If Not Filesystem().FileExists(destination) Then GoTo Finished
-    CopyLedgerWithTax = True
-    message = "税目列を文書名の直後に追加した作業コピーを保存しました。" & vbCrLf & destination
+    previousEvents = Application.EnableEvents
+    previousSecurity = Application.AutomationSecurity
+    On Error GoTo Failed
+    Application.EnableEvents = False
+    If Not allowTrustedMacros Then Application.AutomationSecurity = msoAutomationSecurityForceDisable
+    Set book = Application.Workbooks.Open(Filename:=ExcelOpenAddress(address), UpdateLinks:=0, ReadOnly:=isReadOnly, _
+        Notify:=False, AddToMru:=False, IgnoreReadOnlyRecommended:=True)
+    If Not IsSameWorkbookAddress(book.FullName, address) Then
+        message = "Excelが開いたブックのアドレスが設定と一致しません。直接URLを確認してください。"
+    ElseIf Not isReadOnly And book.ReadOnly Then
+        message = "読み取り専用です。編集権限と他の利用者の使用状況を確認してください。"
+    ElseIf book.Date1904 Then
+        message = "1904年日付システムのブックは対象外です。"
+    Else
+        If Not isReadOnly And IsHttpsAddress(address) Then
+            'オートセーブが既に無効な環境では、書き込みを試みない。
+            If book.AutoSaveOn Then book.AutoSaveOn = False
+            If book.AutoSaveOn Then Err.Raise 5, , "自動保存を停止できません。"
+        End If
+        Set OpenAddressWorkbook = book
+        Set book = Nothing
+    End If
 Finished:
     On Error Resume Next
-    If Not book Is Nothing Then book.Close False
-    Application.EnableEvents = oldEvents
-    If Len(temporary) > 0 Then
-        If files.FileExists(temporary) Then files.DeleteFile temporary
-    End If
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    Application.AutomationSecurity = previousSecurity
+    Application.EnableEvents = previousEvents
+    On Error GoTo 0
     Exit Function
 Failed:
-    message = "作業コピーを作成できませんでした。シート名、保存先、ファイルの権限を確認してください。"
+    message = "Excelで開けません。直接URL、Officeのサインイン、権限、使用状況を確認してください。エラー番号 " & Err.Number
     Resume Finished
+End Function
+
+Public Function ExcelOpenAddress(ByVal address As String) As String
+    Dim i As Long
+    Dim ch As String
+    If Not IsHttpsAddress(address) Then
+        ExcelOpenAddress = address
+        Exit Function
+    End If
+    For i = 1 To Len(address)
+        ch = Mid$(address, i, 1)
+        If ch = "#" Then
+            ch = "%23"
+        ElseIf ch = "%" Then
+            If Not UCase$(Mid$(address, i + 1, 2)) Like "[0-9A-F][0-9A-F]" Then ch = "%25"
+        End If
+        ExcelOpenAddress = ExcelOpenAddress & ch
+    Next
 End Function

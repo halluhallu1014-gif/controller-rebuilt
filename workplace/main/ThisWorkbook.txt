@@ -3,6 +3,10 @@ Option Explicit
 Private Sub Workbook_Open()
     On Error GoTo Failed
     SignOutOwner
+    If Sheet("Calendar").Visible = xlSheetVisible Then
+        Sheet("検索").Activate
+        Sheet("Calendar").Visible = xlSheetVeryHidden
+    End If
     InitializeControllerUi
     Exit Sub
 Failed:
@@ -14,6 +18,11 @@ Private Sub Workbook_SheetSelectionChange(ByVal Sh As Object, ByVal Target As Ra
 End Sub
 
 Private Sub Workbook_SheetBeforeDoubleClick(ByVal Sh As Object, ByVal Target As Range, Cancel As Boolean)
+    If Sh.Name = "Calendar" Then
+        Cancel = True
+        PickDispatchDate Target
+        Exit Sub
+    End If
     If Sh.Name <> "検索" Then Exit Sub
     If Intersect(Target, Sh.Range("C20:U33")) Is Nothing Then Exit Sub
     Cancel = True
@@ -35,4 +44,7 @@ Private Sub Workbook_BeforeClose(Cancel As Boolean)
     Else
         SignOutOwner
     End If
+End Sub
+Private Sub Workbook_SheetChange(ByVal Sh As Object, ByVal Target As Range)
+    If Sh.Name = "詳細" Then RefreshEditedStatus Target
 End Sub

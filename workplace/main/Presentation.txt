@@ -5,7 +5,7 @@ Private Const CHOICE_MAX_ROW As Long = 501
 Private Function ChoiceColumn(ByVal id As String) As Long
     Select Case id
         Case "DocumentName": ChoiceColumn = 16
-        Case "TaxType": ChoiceColumn = 17
+        Case "SubmissionFormat": ChoiceColumn = 17
         Case "Status": ChoiceColumn = 18
     End Select
 End Function
@@ -25,7 +25,7 @@ Public Function ValidatePresentation(ByRef message As String) As Boolean
     Dim seen As Object
     Dim blankSeen As Boolean
     Set ws = Sheet("Settings")
-    For Each id In Array("DocumentName", "TaxType", "Status")
+    For Each id In Array("DocumentName", "SubmissionFormat", "Status")
         column = ChoiceColumn(CStr(id))
         Set seen = NewDictionary()
         seen.CompareMode = vbTextCompare
@@ -117,14 +117,14 @@ Public Function ValidateDetailChoices(ByVal values As Object, ByVal record As Ca
     Dim choices As Object
     Dim value As String
     Dim wasChanged As Boolean
-    For Each id In Array("DocumentName", "TaxType", "Status")
+    For Each id In Array("DocumentName", "SubmissionFormat", "Status")
         If values.Exists(id) Then
             value = CStr(values(id))
             wasChanged = True
             If Not record Is Nothing Then wasChanged = Not SameValue(value, record.values(id))
             If wasChanged And Len(value) > 0 Then
                 Set choices = ChoiceList(CStr(id))
-                If choices.Count > 0 And Not choices.Exists(value) Then
+                If choices.Count > 0 And Not choices.Exists(value) And Not (id = "Status" And IsAutomaticStatus(value)) Then
                     message = CStr(Sheet("Settings").Cells(1, ChoiceColumn(CStr(id))).Value2) & "は選択肢から選んでください。"
                     Exit Function
                 End If

@@ -60,28 +60,29 @@ Public Function LoadConfiguration(ByRef message As String) As Boolean
             fieldDefinitions.Add fieldId, definition
         End If
     Next
-    For Each id In Array("MaskedNumber", "Branch", "PersonName")
+    For Each id In Array("CommonNumber", "PersonName")
         message = "Fields：必須定義がありません。" & CStr(id)
         If Not fieldDefinitions.Exists(id) Then Exit Function
     Next
-    If fieldDefinitions("MaskedNumber")(1) <> "Text" Or fieldDefinitions("Branch")(1) <> "Text" Then Exit Function
+    If fieldDefinitions.Count <> 24 Or fieldDefinitions("CommonNumber")(1) <> "Text" Then Exit Function
     Set ws = Sheet("Settings")
     For rowIndex = 2 To LastRow(ws)
         year = CStr(ws.Cells(rowIndex, 4).Value2)
         If Len(year) > 0 Then
+            If Not IsDigits(year, 4) Then Exit Function
             message = "Settings 年度表 行" & rowIndex & "：年度重複、Enabled、直接アドレス、シート名を確認してください。"
             If ws.Cells(rowIndex, 7).Value2 <> "No" Then
                 yearProblem = ""
                 If CStr(ws.Cells(rowIndex, 7).Value2) <> "Yes" Then yearProblem = "EnabledはYesまたはNoにしてください。"
-                address = CStr(ws.Cells(rowIndex, 5).Value2)
-                If Len(address) = 0 Or Len(CStr(ws.Cells(rowIndex, 6).Value2)) = 0 Or Len(CStr(ws.Cells(rowIndex, 9).Value2)) = 0 Then yearProblem = "常勤用・非常勤用アドレスとシート名を設定してください。"
+                address = Setting("StaffLedger")
+                If Len(address) = 0 Or Len(CStr(ws.Cells(rowIndex, 6).Value2)) = 0 Or Len(Setting("GeneralLedger")) = 0 Then yearProblem = "常勤用・非常勤用アドレスとシート名を設定してください。"
                 If ws.Cells(rowIndex, 8).Value2 <> "Yes" And ws.Cells(rowIndex, 8).Value2 <> "No" Then yearProblem = "AllowWriteはYesまたはNoにしてください。"
                 If yearDefinitions.Exists(year) Then
                     previous = yearDefinitions(year)
                     previous(5) = "年度が重複しています。Settingsの年度表を確認してください。"
                     yearDefinitions(year) = previous
                 Else
-                    yearDefinitions.Add year, Array(address, CStr(ws.Cells(rowIndex, 6).Value2), CStr(ws.Cells(rowIndex, 8).Value2), address, CStr(ws.Cells(rowIndex, 9).Value2), yearProblem)
+                    yearDefinitions.Add year, Array(address, CStr(ws.Cells(rowIndex, 6).Value2), CStr(ws.Cells(rowIndex, 8).Value2), address, Setting("GeneralLedger"), yearProblem)
                 End If
             End If
         End If
@@ -120,57 +121,20 @@ Public Function HeaderFor(ByVal fieldId As String, ByVal year As String, ByRef m
 End Function
 
 Public Function ColumnMap(ByVal ws As Worksheet, ByVal year As String, ByRef message As String) As Object
-    Dim headers As Object
+    Dim expected As Variant
     Dim result As Object
-    Dim usedColumns As Object
-    Dim data As Variant
-    Dim colIndex As Long
-    Dim id As Variant
-    Dim heading As String
-    Set headers = NewDictionary()
+    Dim item As Variant
+    Dim position As Long
+    expected = LedgerColumnDefinitions()
     Set result = NewDictionary()
-    Set usedColumns = NewDictionary()
-    If LastColumn(ws) < 2 Then
-        message = year & "年度：見出し行に番号・枝番を含む管理簿の項目がありません。"
-        Exit Function
-    End If
-    data = ws.Range(ws.Cells(1, 1), ws.Cells(1, LastColumn(ws))).Value2
-    For colIndex = 1 To UBound(data, 2)
-        If IsError(data(1, colIndex)) Then
-            message = year & "年度：見出しにExcelエラーがあります。"
-            Exit Function
-        End If
-        heading = CStr(data(1, colIndex))
-        If Len(heading) > 0 Then
-            If headers.Exists(heading) Then
-                message = year & "年度：見出しが重複しています。列" & colIndex
-                Exit Function
-            End If
-            headers.Add heading, colIndex
-        End If
+    For Each item In expected
+        position = position + 1
+        message = year & "年度の列 " & position & " は「" & item(1) & "」が必要です。"
+        If IsError(ws.Cells(1, position).Value2) Then Exit Function
+        If CStr(ws.Cells(1, position).Value2) <> item(1) Or Not fields.Exists(item(0)) Then Exit Function
+        result.Add item(0), position
     Next
-    For Each id In fields.Keys
-        heading = HeaderFor(CStr(id), year, message)
-        If Len(message) > 0 Then Exit Function
-        If id = "TaxType" And heading = "税目" And Not headers.Exists(heading) Then heading = "[Absent]"
-        If id = "CompletedDate" And heading = "完了日" And Not headers.Exists(heading) Then heading = "[Absent]"
-        If heading <> "[Absent]" Then
-            If Not headers.Exists(heading) Then
-                message = year & "年度：" & CStr(id) & "の見出しがありません。管理簿1行目とFieldsのHeaderを確認してください。"
-                Exit Function
-            End If
-            If usedColumns.Exists(CStr(headers(heading))) Then
-                message = year & "年度：複数項目が同じ列を参照しています。" & CStr(id)
-                Exit Function
-            End If
-            usedColumns.Add CStr(headers(heading)), True
-            result.Add id, headers(heading)
-        ElseIf id = "MaskedNumber" Or id = "Branch" Or fields(id)(4) = "Yes" Then
-            message = year & "年度：識別項目と必須項目は[Absent]にできません。" & CStr(id)
-            Exit Function
-        End If
-    Next
-
+    message = ""
     Set ColumnMap = result
 End Function
 
@@ -200,9 +164,8 @@ Public Function ValidateValues(ByVal values As Object, ByRef message As String) 
         End If
         values(id) = normalized
     Next
-    message = "Masked Numberまたは枝番の形式が不正です。更新・コピーを中止します。"
-    If Not RestoreNumber(values("MaskedNumber"), number) Then Exit Function
-    If Not IsDigits(values("Branch"), 5) Then Exit Function
+    message = "共通番号は18桁の文字列で入力してください。"
+    If Not IsDigits(values("CommonNumber"), 18) Then Exit Function
     message = ""
     ValidateValues = True
 End Function
@@ -212,7 +175,7 @@ Public Function IsClosedState(ByVal values As Object, ByVal closedStates As Obje
     If Not values.Exists("Status") Then Exit Function
     If IsError(values("Status")) Or IsNull(values("Status")) Then Exit Function
     status = Trim$(CStr(values("Status")))
-    IsClosedState = status = "終了" Or status = "他グループ・署へ移管" Or closedStates.Exists(status)
+    IsClosedState = status = "終了【終】" Or IsTransferStatus(status) Or status = "終了" Or status = "他グループ・署へ移管" Or closedStates.Exists(status)
 End Function
 
 Public Function HasCompletionValue(ByVal values As Object, ByVal fieldId As String) As Boolean
@@ -232,6 +195,24 @@ Public Function HasCompletionMismatch(ByVal values As Object, ByVal closedStates
         HasCompletionMismatch = HasCompletionValue(values, "IssuedDate") Or IsClosedState(values, closedStates)
     End If
 End Function
+
+Public Function IsTransferStatus(ByVal status As String) As Boolean
+    IsTransferStatus = (status = "署へ移行【終】" Or status = "他グループへ移行【終】")
+End Function
+
+Public Sub ApplyWorkflowStatus(ByVal values As Object, ByVal previousStatus As String)
+    Dim status As String
+    status = CStr(values("Status"))
+    If IsTransferStatus(status) Then Exit Sub
+    If HasCompletionValue(values, "IssuedDate") Then
+        values("Status") = "終了【終】"
+        values("CompletedDate") = values("IssuedDate")
+    ElseIf HasCompletionValue(values, "ApprovedDate") Then
+        values("Status") = "決裁済"
+    ElseIf HasCompletionValue(values, "DraftDate") Then
+        values("Status") = "起案済"
+    End If
+End Sub
 
 Public Function ValidateCompletion(ByVal values As Object, ByVal columns As Object, ByRef message As String) As Boolean
     If Not HasCompletionValue(values, "CompletedDate") Then

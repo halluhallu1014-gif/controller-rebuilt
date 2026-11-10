@@ -101,7 +101,7 @@ Private Sub WriteReportRow(ByVal report As Worksheet, ByVal row As Long, ByVal s
     If Not source Is Nothing Then
         output(1, 1) = source.sourceYear
         output(1, 2) = source.values("PersonName")
-        output(1, 3) = source.values("Branch")
+        output(1, 3) = source.PersonKey
         output(1, 9) = source.sourceSheet & " / 行 " & source.sourceRow
         If Len(fieldId) > 0 Then output(1, 6) = source.values(fieldId)
     End If
@@ -149,13 +149,13 @@ Public Function ComparisonRules(ByRef message As String, Optional ByVal isPicked
                 keyCount = keyCount + 1
                 If rules(fieldId)(2) Then Exit Function
             Else
-                If fieldId = "SourceYear" Or fieldId = "MaskedNumber" Or fieldId = "Branch" Then Exit Function
+                If fieldId = "SourceYear" Or fieldId = "CommonNumber" Then Exit Function
                 compareCount = compareCount + 1
             End If
         End If
     Next
     If (Not isPickedSource And (keyCount = 0 Or compareCount = 0)) Or _
-        (isPickedSource And Not rules.Exists("MaskedNumber")) Then
+        (isPickedSource And Not rules.Exists("CommonNumber")) Then
         message = "Comparisonに照合キーと比較する項目を設定してください。"
         Exit Function
     End If
@@ -262,12 +262,11 @@ Public Function ComparisonKey(ByVal record As CaseRecord, ByVal rules As Object,
             value = record.values(fieldId)
             If isLedger Then
                 If fieldId = "SourceYear" Then value = record.sourceYear
-                If fieldId = "MaskedNumber" Then value = record.PersonKey
+                If fieldId = "CommonNumber" Then value = record.PersonKey
             End If
             If IsError(value) Or IsNull(value) Then Exit Function
             If Len(CStr(value)) = 0 Then Exit Function
-            If fieldId = "MaskedNumber" And Not IsDigits(value, 13) Then Exit Function
-            If fieldId = "Branch" And Not IsDigits(value, 5) Then Exit Function
+            If fieldId = "CommonNumber" And Not IsDigits(value, 18) Then Exit Function
             key = key & Len(CStr(value)) & ":" & CStr(value)
         End If
     Next
@@ -356,7 +355,7 @@ Public Function TransferComparisonField(ByVal source As CaseRecord, ByVal target
         message = "逆方向の転記にはオーナー認証と既存の明示許可が必要です。"
         Exit Function
     End If
-    If Setting("ControllerRole") <> "Staff" Then
+    If ControllerFolderRole(ThisWorkbook.FullName) <> "Staff" Then
         message = "手動転記は常勤の管理担当だけが実行できます。"
         Exit Function
     End If
@@ -372,8 +371,8 @@ Public Function TransferComparisonField(ByVal source As CaseRecord, ByVal target
         message = "先に保存または移動の結果を確認してください。"
         Exit Function
     End If
-    If Not rules.Exists("SourceYear") Or Not rules.Exists("MaskedNumber") Or Not rules.Exists("Branch") Then GoTo Rejected
-    If Not rules("SourceYear")(1) Or Not rules("MaskedNumber")(1) Or Not rules("Branch")(1) Then GoTo Rejected
+    If Not rules.Exists("SourceYear") Or Not rules.Exists("CommonNumber") Then GoTo Rejected
+    If Not rules("SourceYear")(1) Or Not rules("CommonNumber")(1) Then GoTo Rejected
     address = CStr(Sheet("Comparison").Range("B2").Value2)
     For Each year In years.Keys
         If StrComp(address, years(year)(3), vbTextCompare) = 0 Or StrComp(address, years(year)(4), vbTextCompare) = 0 Then GoTo Rejected
@@ -416,11 +415,7 @@ Public Function TransferComparisonField(ByVal source As CaseRecord, ByVal target
     PutValue destination, currentSource.values(fieldId), (fields(fieldId)(1) = "Date")
     book.Save
     If Not book.Saved Then GoTo Failed
-    If IsWebAddress(address) Then
-        book.CheckIn SaveChanges:=True
-    Else
-        book.Close False
-    End If
+    book.Close False
     Set book = Nothing
     Application.EnableEvents = previousEvents
     Set currentRows = ReadComparison(rules, message)
@@ -444,11 +439,7 @@ Rejected:
     If Len(message) = 0 Then message = "転記元・転記先の変更、対象の重複、書込禁止または変更なしを検出しました。再照合してください。"
     On Error Resume Next
     If Not book Is Nothing Then
-        If IsWebAddress(address) And book.CanCheckIn Then
-            book.CheckIn SaveChanges:=False
-        Else
-            book.Close False
-        End If
+        book.Close False
     End If
     Exit Function
 Failed:

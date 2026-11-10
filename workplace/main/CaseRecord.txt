@@ -14,15 +14,13 @@ Private Sub Class_Initialize()
 End Sub
 
 Public Property Get PersonKey() As String
-    Dim number As String
-    If RestoreNumber(values("MaskedNumber"), number) Then PersonKey = number
+    If values.Exists("CommonNumber") Then
+        If IsDigits(values("CommonNumber"), 18) Then PersonKey = CStr(values("CommonNumber"))
+    End If
 End Property
 
 Public Property Get CaseIdentity() As String
-    Dim number As String
-    number = PersonKey
-    If Len(number) = 0 Or Not IsDigits(values("Branch"), 5) Then Exit Property
-    CaseIdentity = number & CStr(values("Branch"))
+    CaseIdentity = PersonKey
 End Property
 
 Public Property Get Key() As String
