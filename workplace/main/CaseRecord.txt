@@ -8,6 +8,7 @@ Public originalRow As Variant
 Public sourceColumns As Object
 Public values As Object
 Public invalidReason As String
+Public comparisonNumber As String
 
 Private Sub Class_Initialize()
     Set values = CreateObject("Scripting.Dictionary")

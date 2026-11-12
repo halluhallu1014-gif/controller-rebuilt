@@ -1,0 +1,215 @@
+Option Explicit
+
+Private pendingPage As Worksheet
+
+Public Sub OpenPendingReport()
+    Dim basis As Variant
+    Dim filter As Variant
+    Dim limit As Variant
+    Dim year As Variant
+    Dim office As Variant
+    Dim status As Variant
+    Dim order As Variant
+    Dim fieldId As String
+    Dim criterion As String
+    Dim description As String
+    Dim threshold As Date
+
+    If Cases Is Nothing Then
+        Notify "先に管理簿を読み込んでください。"
+        Exit Sub
+    End If
+    basis = Application.InputBox("1 申請日 / 2 設定済みの日付項目", "抽出する日付項目", 1, Type:=1)
+    If VarType(basis) = vbBoolean Then Exit Sub
+    Select Case basis
+        Case 1: fieldId = "ApplicationDate"
+        Case 2: fieldId = CStr(Sheet("Settings").Range("S3").Value2)
+        Case Else: Exit Sub
+    End Select
+    If Not fields.Exists(fieldId) Then
+        Notify "日付項目が登録されていません。設定で日付型の項目IDを指定してください。"
+        Exit Sub
+    End If
+    If fields(fieldId)(1) <> "Date" Or (basis = 2 And fieldId = "ApplicationDate") Then
+        Notify "申請日には申請日と別の日付型の項目を指定してください。"
+        Exit Sub
+    End If
+    filter = Application.InputBox("1 2か月超 / 2 3か月超 / 3 任意月数超 / 4 指定日以前 / 5 日付未入力", "抽出条件", 1, Type:=1)
+    If VarType(filter) = vbBoolean Then Exit Sub
+    Select Case filter
+        Case 1, 2
+            threshold = DateAdd("m", -(CLng(filter) + 1), Date)
+            criterion = "Before"
+            description = (CLng(filter) + 1) & "か月超"
+        Case 3
+            limit = Application.InputBox("1～1200の整数を入力してください。", "経過月数", Type:=1)
+            If VarType(limit) = vbBoolean Then Exit Sub
+            If limit < 1 Or limit > 1200 Or limit <> Fix(limit) Then Exit Sub
+            threshold = DateAdd("m", -CLng(limit), Date)
+            criterion = "Before"
+            description = CLng(limit) & "か月超"
+        Case 4
+            limit = Application.InputBox("例 2026/11/10", "指定日以前", Type:=2)
+            If VarType(limit) = vbBoolean Then Exit Sub
+            If Not IsDate(limit) Then
+                Notify "日付を入力してください。"
+                Exit Sub
+            End If
+            threshold = DateValue(CStr(limit))
+            criterion = "Through"
+            description = Format$(threshold, "yyyy/mm/dd") & "以前"
+        Case 5
+            criterion = "Blank"
+            description = "日付未入力"
+        Case Else
+            Exit Sub
+    End Select
+    year = Application.InputBox("空欄は全年度", "年度", Type:=2)
+    If VarType(year) = vbBoolean Then Exit Sub
+    office = Application.InputBox("空欄は全署", "署", Type:=2)
+    If VarType(office) = vbBoolean Then Exit Sub
+    status = Application.InputBox("空欄は全状態", "処理状態", Type:=2)
+    If VarType(status) = vbBoolean Then Exit Sub
+    order = Application.InputBox("1 古い日付順 / 2 新しい日付順 / 3 経過期間順 / 4 署別 / 5 年度別", "並べ替え", 1, Type:=1)
+    If VarType(order) = vbBoolean Then Exit Sub
+    If order < 1 Or order > 5 Or order <> Fix(order) Then Exit Sub
+    BuildPendingReport Array(fieldId, criterion, threshold, Trim$(CStr(year)), Trim$(CStr(office)), Trim$(CStr(status)), CLng(order), description)
+End Sub
+
+Public Function PendingDateMatches(ByVal value As Variant, ByVal criterion As String, ByVal threshold As Date) As Boolean
+    If IsError(value) Or IsNull(value) Then Exit Function
+    If criterion = "Blank" Then
+        PendingDateMatches = Len(CStr(value)) = 0
+    ElseIf IsNumeric(value) And VarType(value) <> vbString And Len(CStr(value)) > 0 Then
+        Select Case criterion
+            Case "Before": PendingDateMatches = (CDbl(value) < CDbl(threshold))
+            Case "Through": PendingDateMatches = (CDbl(value) < CDbl(threshold) + 1)
+        End Select
+    End If
+End Function
+
+Public Sub BuildPendingReport(ByVal criteria As Variant)
+    Dim book As Workbook
+    Dim ws As Worksheet
+    Dim entry As CaseRecord
+    Dim key As Variant
+    Dim closed As Object
+    Dim output As Variant
+    Dim count As Long
+    Dim row As Long
+    Dim sortColumn As Long
+    Dim sortOrder As XlSortOrder
+    Dim fieldId As String
+    Dim day As Variant
+    Dim label As String
+
+    On Error GoTo Failed
+    If Cases Is Nothing Then Exit Sub
+    If Cases.Count = 0 Then
+        Notify "対象の事案がありません。"
+        Exit Sub
+    End If
+    fieldId = CStr(criteria(0))
+    Set closed = ConfiguredList(15)
+    ReDim output(1 To Cases.Count, 1 To 8)
+    For Each key In Cases.Keys
+        Set entry = Cases(key)
+        If Not IsCaseClosed(entry.values, closed) And Len(entry.invalidReason) = 0 Then
+            If (Len(criteria(3)) = 0 Or entry.sourceYear = criteria(3)) And _
+                (Len(criteria(4)) = 0 Or entry.values("Office") = criteria(4)) And _
+                (Len(criteria(5)) = 0 Or entry.values("Status") = criteria(5)) Then
+                If entry.sourceColumns.Exists(fieldId) Then
+                    day = entry.values(fieldId)
+                    If PendingDateMatches(day, CStr(criteria(1)), CDate(criteria(2))) Then
+                        count = count + 1
+                        output(count, 1) = entry.sourceYear
+                        output(count, 2) = entry.values("Office")
+                        output(count, 3) = entry.PersonKey
+                        output(count, 4) = entry.values("InquiryNumber")
+                        output(count, 5) = entry.values("PersonName")
+                        output(count, 6) = entry.values("DocumentName")
+                        output(count, 7) = entry.values("Status")
+                        If Len(CStr(day)) > 0 Then output(count, 8) = day
+                    End If
+                End If
+            End If
+        End If
+    Next
+    Set book = Workbooks.Add(xlWBATWorksheet)
+    Set ws = book.Worksheets(1)
+    Set pendingPage = ws
+    ws.Name = "未処理リスト"
+    label = IIf(fieldId = "ApplicationDate", "申請日", fieldId)
+    ws.Range("A1").Value2 = "未処理リスト"
+    ws.Range("A2").Value2 = label & " / " & criteria(7) & " / 年度 " & ReportFilter(criteria(3)) & _
+        " / 署 " & ReportFilter(criteria(4)) & " / 状態 " & ReportFilter(criteria(5))
+    ws.Range("A3").Value2 = Format$(Date, "yyyy/mm/dd") & " 出力  " & count & "件"
+    ws.Range("A6:H6").Value2 = Array("年度", "署", "共通番号", "お問い合わせ番号", "氏名", "文書名", "処理状態", label)
+    FormatWorkflowReport ws, "H"
+    ws.Columns("C").ColumnWidth = 23
+    ws.Columns("F").ColumnWidth = 30
+    If count > 0 Then
+        ws.Range("A7:G" & (count + 6)).NumberFormat = "@"
+        ws.Range("H7:H" & (count + 6)).NumberFormat = "yyyy/mm/dd"
+        ws.Range("A7").Resize(count, 8).Value2 = output
+        sortColumn = 8
+        sortOrder = xlAscending
+        Select Case criteria(6)
+            Case 2: sortOrder = xlDescending
+            Case 4: sortColumn = 2
+            Case 5: sortColumn = 1
+        End Select
+        ws.Range("A6:H" & (count + 6)).Sort Key1:=ws.Cells(7, sortColumn), Order1:=sortOrder, Header:=xlYes
+    End If
+    AddWorkflowButton ws, "PendingPreview", "印刷プレビュー", "PreviewPendingReport", ws.Range("K2:L3")
+    AddWorkflowButton ws, "PendingPrint", "印刷", "PrintPendingReport", ws.Range("K5:L6")
+    ApplyPendingPrint ws, count + 6
+    Exit Sub
+Failed:
+    Notify SafeFailure("未処理リスト", Err.Number)
+End Sub
+
+Private Function ReportFilter(ByVal value As String) As String
+    ReportFilter = value
+    If Len(value) = 0 Then ReportFilter = "すべて"
+End Function
+
+Public Sub FormatWorkflowReport(ByVal ws As Worksheet, ByVal lastColumn As String)
+    ws.Columns("A:" & lastColumn).ColumnWidth = 15
+    ws.Range("A1").Font.Size = 18
+    With ws.Range("A6:" & lastColumn & "6")
+        .Interior.Color = RGB(22, 44, 67)
+        .Font.Color = vbWhite
+        .Font.Bold = True
+    End With
+End Sub
+
+Private Sub ApplyPendingPrint(ByVal ws As Worksheet, ByVal bottom As Long)
+    With ws.PageSetup
+        .PrintArea = "$A$1:$H$" & bottom
+        .PrintTitleRows = "$1:$6"
+        .Orientation = xlLandscape
+        .PaperSize = xlPaperA4
+        .Zoom = False
+        .FitToPagesWide = 1
+        .FitToPagesTall = False
+        .RightFooter = "&P / &N"
+    End With
+End Sub
+
+Public Sub PreviewPendingReport()
+    On Error GoTo Failed
+    If ActiveSheet Is pendingPage Then pendingPage.PrintPreview
+    Exit Sub
+Failed:
+    Notify "印刷プレビューを開けません。Excelのプリンター設定を確認してください。"
+End Sub
+
+Public Sub PrintPendingReport()
+    On Error GoTo Failed
+    If Not ActiveSheet Is pendingPage Then Exit Sub
+    If MsgBox("現在の未処理リストを印刷しますか？", vbYesNo Or vbDefaultButton2) = vbYes Then pendingPage.PrintOut
+    Exit Sub
+Failed:
+    Notify "印刷できません。Excelのプリンター設定を確認してください。"
+End Sub

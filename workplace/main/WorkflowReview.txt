@@ -1,0 +1,411 @@
+Option Explicit
+
+Private reviewPage As Worksheet
+Private reviewRows As Object
+Private reviewSnapshots As Object
+
+Public Sub ChooseComparisonSource()
+    Dim address As Variant
+    Dim book As Workbook
+    Dim candidateSheet As Worksheet
+    Dim entries As Collection
+    Dim rules As Object
+    Dim selected As Variant
+    Dim prompt As String
+    Dim message As String
+    Dim i As Long
+    On Error GoTo Failed
+    If Cases Is Nothing Then
+        Notify "先に管理簿を読み込んでください。"
+        Exit Sub
+    End If
+    If yearErrors.Count > 0 Then
+        Notify "読込に失敗した年度があります。設定を確認して最新を再読込してください。"
+        Exit Sub
+    End If
+    Set rules = ComparisonRules(message, True)
+    If rules Is Nothing Then GoTo Finished
+    If Not rules.Exists("CommonNumber") Then
+        message = "設定ツールの照合設定で共通番号を対応付けてください。"
+        GoTo Finished
+    End If
+    address = Application.GetOpenFilename("Excel ブック (*.xlsx;*.xlsm;*.xlsb;*.xls),*.xlsx;*.xlsm;*.xlsb;*.xls", , "一般事務整理簿を選択")
+    If VarType(address) = vbBoolean Then Exit Sub
+    Set book = OpenLedger(CStr(address), True, message)
+    If book Is Nothing Then GoTo Finished
+    For Each candidateSheet In book.Worksheets
+        i = i + 1
+        If Len(prompt) < 170 Then prompt = prompt & i & " " & candidateSheet.Name & vbLf
+    Next
+    selected = Application.InputBox(Left$(prompt, 175) & "シート番号、または正確なシート名を入力してください。", "照合対象シート", Type:=2)
+    If VarType(selected) = vbBoolean Then GoTo Finished
+    Set candidateSheet = Nothing
+    For i = 1 To book.Worksheets.Count
+        If CStr(i) = selected Or book.Worksheets(i).Name = selected Then
+            Set candidateSheet = book.Worksheets(i)
+            Exit For
+        End If
+    Next
+    If candidateSheet Is Nothing Then
+        message = "対象シートを確認してください。"
+        GoTo Finished
+    End If
+    Set entries = ComparisonRows(candidateSheet, rules, message)
+    book.Close False
+    Set book = Nothing
+    If Not entries Is Nothing Then BuildReviewReport entries, rules
+Finished:
+    If Not book Is Nothing Then book.Close False
+    If Len(message) > 0 Then Notify message
+    Exit Sub
+Failed:
+    message = SafeFailure("一般事務整理簿との照合", Err.Number)
+    Resume Finished
+End Sub
+
+Private Sub AddReviewMember(ByVal groups As Object, ByVal number As String, ByVal entry As CaseRecord)
+    Dim group As Collection
+    If Not groups.Exists(number) Then
+        Set group = New Collection
+        groups.Add number, group
+    End If
+    Set group = groups(number)
+    group.Add entry
+End Sub
+
+Private Function IsMatchingReviewCase(ByVal left As CaseRecord, ByVal right As CaseRecord, ByVal rules As Object, ByVal isSingle As Boolean) As Boolean
+    Dim field As Variant
+    Dim fieldValue As Variant
+    Dim used As Boolean
+    For Each field In rules.Keys
+        Select Case field
+            Case "CommonNumber":
+            Case "SourceYear"
+                If rules(field)(1) And Len(ReviewText(right.values(field))) > 0 Then
+                    If left.sourceYear <> ReviewText(right.values(field)) Then Exit Function
+                    used = True
+                End If
+            Case Else
+                If rules(field)(1) Or field = "TaxYear" Or field = "DocumentName" Or field = "SubmissionFormat" Then
+                    fieldValue = right.values(field)
+                    If Len(ReviewText(fieldValue)) > 0 Then
+                        If Not left.sourceColumns.Exists(field) Then Exit Function
+                        If StrComp(ReviewText(left.values(field)), ReviewText(fieldValue), vbTextCompare) <> 0 Then Exit Function
+                        used = True
+                    End If
+                End If
+        End Select
+    Next
+    IsMatchingReviewCase = used Or isSingle
+End Function
+
+Private Function ReviewText(ByVal value As Variant) As String
+    If Not IsError(value) And Not IsNull(value) Then ReviewText = Trim$(CStr(value))
+End Function
+
+Private Function ReviewPriority(ByVal field As String, ByVal defaultValue As Long) As Long
+    Dim ws As Worksheet
+    Dim row As Long
+    Dim value As Variant
+    ReviewPriority = ReviewCategoryPriority(defaultValue)
+    Set ws = Sheet("Comparison")
+    For row = 8 To LastRow(ws)
+        If CStr(ws.Cells(row, 1).Value2) = field Then
+            value = ws.Cells(row, 6).Value2
+            If IsNumeric(value) Then
+                If CDbl(value) >= 1 And CDbl(value) <= 5 And CDbl(value) = Fix(CDbl(value)) Then ReviewPriority = CLng(value)
+            End If
+            Exit Function
+        End If
+    Next
+End Function
+
+Private Function ReviewCategoryPriority(ByVal category As Long) As Long
+    Dim value As Variant
+    ReviewCategoryPriority = category
+    value = Sheet("Settings").Cells(category + 4, 19).Value2
+    If IsNumeric(value) Then
+        If CDbl(value) >= 1 And CDbl(value) <= 5 And CDbl(value) = Fix(CDbl(value)) Then ReviewCategoryPriority = CLng(value)
+    End If
+End Function
+
+Public Sub BuildReviewReport(ByVal entries As Collection, ByVal rules As Object)
+    Dim people As Object
+    Dim internalCase As CaseRecord
+    Dim outside As CaseRecord
+    Dim target As CaseRecord
+    Dim group As Collection
+    Dim matches As Collection
+    Dim tentative As Object
+    Dim counts As Object
+    Dim commonChecks As Object
+    Dim issues As Collection
+    Dim record As Variant
+    Dim field As Variant
+    Dim id As Variant
+    Dim number As String
+    Dim editableKey As String
+    Dim message As String
+    Dim priority As Long
+
+    Set people = NewDictionary()
+    Set tentative = NewDictionary()
+    Set counts = NewDictionary()
+    Set commonChecks = NewDictionary()
+    Set issues = New Collection
+    For Each id In Cases.Keys
+        Set internalCase = Cases(id)
+        If Len(internalCase.PersonKey) > 0 Then AddReviewMember people, internalCase.PersonKey, internalCase
+    Next
+    For Each outside In entries
+        number = outside.PersonKey
+        Set matches = New Collection
+        If people.Exists(number) Then
+            Set group = people(number)
+            For Each internalCase In group
+                If IsMatchingReviewCase(internalCase, outside, rules, group.Count = 1) Then matches.Add internalCase
+            Next
+            If matches.Count = 1 Then
+                Set target = matches(1)
+                tentative.Add CStr(outside.sourceRow), target
+                If Not counts.Exists(target.Key) Then counts.Add target.Key, 0
+                counts(target.Key) = CLng(counts(target.Key)) + 1
+            ElseIf matches.Count > 1 Then
+                issues.Add Array(number, outside.sourceRow, "重複候補", "", "", "", "", ReviewCategoryPriority(1))
+            Else
+                issues.Add Array(number, outside.sourceRow, "事案対応不明", "", "", "", "", ReviewCategoryPriority(2))
+            End If
+        ElseIf Len(number) = 0 Then
+            issues.Add Array("", outside.sourceRow, "18桁の共通番号を確認", "", "", "", "", ReviewCategoryPriority(2))
+        Else
+            issues.Add Array(number, outside.sourceRow, "登録漏れ候補", "", "", "", "", ReviewCategoryPriority(1))
+        End If
+    Next
+    For Each outside In entries
+        If tentative.Exists(CStr(outside.sourceRow)) Then
+            Set target = tentative(CStr(outside.sourceRow))
+            If counts(target.Key) > 1 Or Len(target.invalidReason) > 0 Then
+                issues.Add Array(outside.PersonKey, outside.sourceRow, "重複・要確認", "", "", "", "", ReviewCategoryPriority(1))
+            Else
+                For Each field In rules.Keys
+                    If field <> "SourceYear" And field <> "CommonNumber" Then
+                        If target.sourceColumns.Exists(field) Then
+                            If Not SameValue(target.values(field), outside.values(field)) Then
+                                message = "不一致"
+                                priority = 5
+                                If Len(ReviewText(target.values(field))) = 0 Then
+                                    message = "記入漏れ・補完候補"
+                                    priority = IIf(fields(field)(4) = "Yes", 3, 4)
+                                ElseIf Len(ReviewText(outside.values(field))) = 0 Then
+                                    message = "整理簿の記入漏れ"
+                                End If
+                                If rules(field)(1) Or field = "TaxYear" Or field = "DocumentName" Or field = "SubmissionFormat" Then priority = 2
+                                priority = ReviewPriority(CStr(field), priority)
+                                id = outside.PersonKey & "|" & field
+                                Select Case field
+                                    Case "PersonName", "Furigana", "Address", "PostalCode", "PhoneNumber"
+                                        If Not commonChecks.Exists(id) Then
+                                            commonChecks.Add id, True
+                                            Set group = people(outside.PersonKey)
+                                            editableKey = ""
+                                            If group.Count = 1 Then editableKey = target.Key
+                                            issues.Add Array(outside.PersonKey, outside.sourceRow, message, field, _
+                                                ReviewText(target.values(field)), ReviewText(outside.values(field)), editableKey, priority)
+                                        End If
+                                    Case Else
+                                        issues.Add Array(outside.PersonKey, outside.sourceRow, message, field, _
+                                            ReviewText(target.values(field)), ReviewText(outside.values(field)), target.Key, priority)
+                                End Select
+                            End If
+                        End If
+                    End If
+                Next
+            End If
+        End If
+    Next
+    DisplayReviewReport issues
+End Sub
+
+Private Sub DisplayReviewReport(ByVal issues As Collection)
+    Dim book As Workbook
+    Dim ws As Worksheet
+    Dim entry As Variant
+    Dim rank As Object
+    Dim row As Long
+    Dim field As String
+    Dim value As Variant
+    Dim data As Variant
+    Dim target As CaseRecord
+    Set rank = NewDictionary()
+    For Each entry In issues
+        If Not rank.Exists(entry(0)) Then rank.Add entry(0), 5
+        If entry(7) < rank(entry(0)) Then rank(entry(0)) = entry(7)
+    Next
+    Set book = Workbooks.Add(xlWBATWorksheet)
+    Set ws = book.Worksheets(1)
+    ws.Name = "照合・補完"
+    Set reviewPage = ws
+    Set reviewRows = NewDictionary()
+    Set reviewSnapshots = NewDictionary()
+    ws.Range("A1").Value2 = "照合・補完  " & issues.Count & "件"
+    ws.Range("A2").Value2 = "訂正欄を入力して一括更新。共通項目・要確認は詳細で対象を確認してください。"
+    ws.Range("A6:L6").Value2 = Array("共通番号", "整理簿行", "判定", "項目", "管理簿", "整理簿", "訂正欄", "結果", "対象キー", "人物順位", "項目順位", "更新対象の事案")
+    FormatWorkflowReport ws, "L"
+    ws.Columns("L").ColumnWidth = 32
+    ws.Columns("C").ColumnWidth = 23
+    ws.Columns("E:G").ColumnWidth = 20
+    ws.Columns("H").ColumnWidth = 30
+    row = 7
+    If issues.Count > 0 Then
+        ReDim data(1 To issues.Count, 1 To 12)
+        For Each entry In issues
+            data(row - 6, 1) = entry(0)
+            data(row - 6, 2) = entry(1)
+            data(row - 6, 3) = entry(2)
+            data(row - 6, 4) = entry(3)
+            data(row - 6, 5) = entry(4)
+            data(row - 6, 6) = entry(5)
+            data(row - 6, 9) = entry(6)
+            data(row - 6, 10) = rank(entry(0))
+            data(row - 6, 11) = entry(7)
+            If Len(entry(6)) > 0 Then
+                Set target = Cases(entry(6))
+                data(row - 6, 12) = target.sourceYear & "年度 / " & ReviewText(target.values("DocumentName"))
+            End If
+            row = row + 1
+        Next
+        ws.Range("A7:I" & (row - 1)).NumberFormat = "@"
+        ws.Range("A7").Resize(issues.Count, 12).Value2 = data
+        ws.Range("A6:L" & (row - 1)).Sort Key1:=ws.Range("J7"), Order1:=xlAscending, _
+            Key2:=ws.Range("A7"), Order2:=xlAscending, Key3:=ws.Range("K7"), Order3:=xlAscending, Header:=xlYes
+        For row = 7 To issues.Count + 6
+            value = ws.Cells(row, 9).Value2
+            field = CStr(ws.Cells(row, 4).Value2)
+            If Len(CStr(value)) > 0 And Len(field) > 0 Then
+                reviewRows.Add CStr(row), Array(CStr(value), field)
+                If Not reviewSnapshots.Exists(CStr(value)) Then reviewSnapshots.Add CStr(value), Cases(CStr(value))
+                ws.Cells(row, 7).Locked = False
+                ws.Cells(row, 7).Interior.Color = RGB(230, 245, 225)
+                If fields(field)(1) = "Date" Then ws.Cells(row, 7).NumberFormat = "yyyy/mm/dd"
+            End If
+        Next
+    End If
+    ws.Columns("I:K").Hidden = True
+    AddWorkflowButton ws, "ReviewApply", "一括更新", "ApplyReviewCorrections", ws.Range("G2:H3")
+    ws.Protect
+End Sub
+
+Public Sub ApplyReviewCorrections()
+    Dim message As String
+    If Not ActiveSheet Is reviewPage Then
+        Notify "現在のセッションで作成した最新の照合一覧を使用してください。"
+        Exit Sub
+    End If
+    If MsgBox("入力した訂正を新管理簿へ保存しますか？", vbYesNo Or vbQuestion Or vbDefaultButton2) <> vbYes Then Exit Sub
+    message = SaveReviewCorrections()
+    Notify message
+End Sub
+
+Public Function SaveReviewCorrections() As String
+    Dim plans As Object
+    Dim rowsByCase As Object
+    Dim plan As Object
+    Dim chosen As Collection
+    Dim completed As Collection
+    Dim entry As Variant
+    Dim key As Variant
+    Dim row As Variant
+    Dim value As Variant
+    Dim record As CaseRecord
+    Dim message As String
+    Dim good As Long
+    Dim bad As Long
+    Dim yearsToRefresh As Object
+    Dim attempted As Long
+
+    If reviewPage Is Nothing Or reviewRows Is Nothing Then Exit Function
+    If Not BeginAction() Then Exit Function
+    On Error GoTo Failed
+    Set plans = NewDictionary()
+    Set rowsByCase = NewDictionary()
+    Set yearsToRefresh = NewDictionary()
+    Set completed = New Collection
+    reviewPage.Unprotect
+    For Each row In reviewRows.Keys
+        entry = reviewRows(row)
+        value = reviewPage.Cells(CLng(row), 7).Value2
+        If reviewPage.Cells(CLng(row), 7).HasFormula Or IsError(value) Then
+            reviewPage.Cells(CLng(row), 8).Value2 = "数式・エラーは入力できません"
+            bad = bad + 1
+        ElseIf Len(CStr(value)) > 0 Then
+            key = entry(0)
+            If Not plans.Exists(key) Then
+                Set plan = NewDictionary()
+                plans.Add key, plan
+                Set chosen = New Collection
+                rowsByCase.Add key, chosen
+            End If
+            Set plan = plans(key)
+            Set chosen = rowsByCase(key)
+            chosen.Add CLng(row)
+            If plan.Exists(entry(1)) Then plan("__Conflict") = True
+            plan(entry(1)) = value
+        End If
+    Next
+    For Each key In plans.Keys
+        attempted = attempted + 1
+        Set plan = plans(key)
+        Set chosen = rowsByCase(key)
+        message = ""
+        If Not Cases.Exists(key) Or plan.Exists("__Conflict") Then
+            message = "対象不明または同じ項目に複数の訂正があります。"
+        Else
+            Set record = reviewSnapshots(key)
+            For Each entry In record.values.Keys
+                If Not plan.Exists(entry) Then plan.Add entry, record.values(entry)
+            Next
+            If ValidateDetailChoices(plan, record, message) Then
+                If SaveCase(record, plan, False, message) Then
+                    For Each row In chosen
+                        completed.Add row
+                    Next
+                    good = good + chosen.Count
+                    yearsToRefresh(record.sourceYear) = True
+                    message = ""
+                ElseIf Len(message) = 0 Then
+                    message = "保存できませんでした。"
+                End If
+            End If
+        End If
+        If Len(message) > 0 Then
+            For Each row In chosen
+                PutValue reviewPage.Cells(CLng(row), 8), message
+            Next
+            bad = bad + chosen.Count
+        End If
+        If PendingSave() Then Exit For
+    Next
+    For Each key In yearsToRefresh.Keys
+        message = ""
+        RefreshOneYear CStr(key), message
+    Next
+    For Each row In completed
+        reviewRows.Remove CStr(row)
+        With reviewPage.Range("A" & row & ":L" & row)
+            .ClearContents
+            .Locked = True
+            .EntireRow.Hidden = True
+        End With
+    Next
+    SaveReviewCorrections = "更新済み " & good & "項目 / 失敗 " & bad & "項目"
+    If attempted < plans.Count Then SaveReviewCorrections = SaveReviewCorrections & " / 未処理 " & (plans.Count - attempted) & "事案"
+    If PendingSave() Then SaveReviewCorrections = SaveReviewCorrections & vbCrLf & "未確定の保存があります。オーナーに連絡してください。"
+Finished:
+    On Error Resume Next
+    reviewPage.Protect
+    isBusy = False
+    Exit Function
+Failed:
+    SaveReviewCorrections = "更新確認済み " & good & "項目。処理が中断されました。保存を再送せずオーナーに連絡してください。"
+    Resume Finished
+End Function

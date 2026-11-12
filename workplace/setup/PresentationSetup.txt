@@ -1,0 +1,124 @@
+Option Explicit
+
+Public Function SupportsPresentation() As Boolean
+    SupportsPresentation = (ReadCell("Fields", 1, 11) = "DisplayFormat" And ReadCell("Settings", 1, 16) = "文書名")
+End Function
+
+Public Function DraftChoices(ByVal column As Long) As Collection
+    Dim result As New Collection
+    Dim row As Long
+    Dim value As String
+    For row = 2 To 501
+        value = ReadCell("Settings", row, column)
+        If Len(value) > 0 Then result.Add value
+    Next
+    Set DraftChoices = result
+End Function
+
+Public Function StageChoices(ByVal column As Long, ByVal items As Collection, ByRef message As String) As Boolean
+    Dim seen As Object
+    Dim item As Variant
+    Dim value As String
+    Dim index As Long
+    message = ""
+    If Not SupportsPresentation() Or column < 16 Or column > 18 Then Exit Function
+    If items.Count > 500 Then
+        message = "選択肢は500件までです。"
+        Exit Function
+    End If
+    Set seen = Dictionary()
+    seen.CompareMode = vbTextCompare
+    For Each item In items
+        value = Trim$(CStr(item))
+        If Len(value) = 0 Or Len(value) > 255 Or seen.Exists(value) Or InStr(value, vbCr) > 0 Or InStr(value, vbLf) > 0 Then
+            message = "選択肢には重複のない255文字以内の値を入力してください。"
+            Exit Function
+        End If
+        seen.Add value, True
+    Next
+    index = 2
+    For Each item In items
+        StageCell "Settings", index, column, Trim$(CStr(item))
+        index = index + 1
+    Next
+    For index = index To 501
+        StageCell "Settings", index, column, ""
+    Next
+    StageChoices = True
+End Function
+
+Public Function FormatChoices(ByVal id As String, ByVal fieldType As String) As Object
+    Dim result As Object
+    Set result = Dictionary()
+    result.Add "標準（自動）", ""
+    If fieldType = "Date" Then
+        result.Add "日付  yyyy/mm/dd", "dateSlash"
+        result.Add "日付  yyyy-mm-dd", "dateDash"
+        result.Add "日付  yyyy年m月d日", "dateJapanese"
+    ElseIf fieldType = "Text" Then
+        result.Add "文字列（先頭ゼロ保持）", "text"
+        Select Case id
+            Case "PostalCode", "PhoneNumber": result.Add "数字のまま（ハイフンなし）", "digits"
+            Case "TaxYear"
+                result.Add "4桁表示（数字の年分のみ）", "year4"
+                result.Add "整数表示（数字の年分のみ）", "integer"
+        End Select
+    End If
+    Set FormatChoices = result
+End Function
+
+Public Function StageDisplayFormat(ByVal id As String, ByVal preset As String) As Boolean
+    Dim row As Long
+    Dim choices As Object
+    Dim label As Variant
+    If Not SupportsPresentation() Or id = "HistoryMemo" Or Len(id) = 0 Then Exit Function
+    For row = 2 To 500
+        If ReadCell("Fields", row, 1) = id Then
+            Set choices = FormatChoices(id, ReadCell("Fields", row, 3))
+            For Each label In choices.Keys
+                If choices(label) = preset Then
+                    StageCell "Fields", row, 11, preset
+                    StageDisplayFormat = True
+                    Exit Function
+                End If
+            Next
+            Exit Function
+        End If
+    Next
+End Function
+
+Private Function DictionaryLabels(ByVal dictionary As Object) As Collection
+    Dim result As New Collection
+    Dim label As Variant
+    For Each label In dictionary.Keys
+        result.Add CStr(label)
+    Next
+    Set DictionaryLabels = result
+End Function
+
+Public Sub EditDisplayFormat()
+    Dim ids As Object
+    Dim choices As Object
+    Dim row As Long
+    Dim id As String
+    Dim label As String
+    Dim selected As String
+    Dim current As String
+    Set ids = Dictionary()
+    For row = 2 To 500
+        id = ReadCell("Fields", row, 1)
+        If Len(id) > 0 And id <> "HistoryMemo" Then ids.Add FieldLabel(id), row
+    Next
+    selected = PickValue("表示形式を設定する項目を選択してください。", DictionaryLabels(ids))
+    If Len(selected) = 0 Then Exit Sub
+    row = ids(selected)
+    id = ReadCell("Fields", row, 1)
+    Set choices = FormatChoices(id, ReadCell("Fields", row, 3))
+    current = "標準（自動）"
+    Dim key As Variant
+    For Each key In choices.Keys
+        If choices(key) = ReadCell("Fields", row, 11) Then current = CStr(key)
+    Next
+    label = PickValue(selected & " ／ 現在 " & current & vbCrLf & "管理簿の保存型は変わりません。", DictionaryLabels(choices), current)
+    If Len(label) > 0 Then StageDisplayFormat id, CStr(choices(label))
+End Sub

@@ -18,11 +18,6 @@ Private Sub Workbook_SheetSelectionChange(ByVal Sh As Object, ByVal Target As Ra
 End Sub
 
 Private Sub Workbook_SheetBeforeDoubleClick(ByVal Sh As Object, ByVal Target As Range, Cancel As Boolean)
-    If Sh.Name = "Calendar" Then
-        Cancel = True
-        PickDispatchDate Target
-        Exit Sub
-    End If
     If Sh.Name <> "検索" Then Exit Sub
     If Intersect(Target, Sh.Range("C20:U33")) Is Nothing Then Exit Sub
     Cancel = True

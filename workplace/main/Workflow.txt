@@ -1,0 +1,112 @@
+Option Explicit
+
+Private isOwnerSignedIn As Boolean
+Private Const OWNER_PAGE As String = "オーナー専用"
+
+Public Sub InstallWorkflow()
+    Dim config As Worksheet
+    Dim search As Worksheet
+    Dim detail As Worksheet
+    Dim owner As Worksheet
+    Dim button As Shape
+    Dim labels As Variant
+    Dim i As Long
+
+    Set config = Sheet("Settings")
+    config.Range("S1").Value2 = "OwnerWindowsAccounts"
+    config.Range("S4").Value2 = "S2: オーナー / S3: 申請日項目ID"
+    labels = Array("コピー元画面", "項目名", "項目ID", "位置", "区切り", "整形・検証")
+    For i = 0 To UBound(labels)
+        config.Cells(1, 20 + i).Value2 = labels(i)
+    Next
+    If Len(CStr(config.Range("T2").Value2)) = 0 Then InstallImportDefaults config
+    Sheet("Comparison").Range("F7").Value2 = "優先度（1～5）"
+    Set search = Sheet("検索")
+    Set detail = Sheet("詳細")
+    For Each button In search.Shapes
+        If button.OnAction Like "*ConfirmSaveResult" Or button.OnAction Like "*OpenOperations" Then button.Visible = msoFalse
+    Next
+    Set button = search.Shapes("ControllerCompare")
+    button.OnAction = MacroAddress("ChooseComparisonSource")
+    AddWorkflowButton search, "WorkflowExtract", "抽出・印刷", "OpenPendingReport", search.Range("S40:W41")
+    detail.Shapes("UI_コピー取込").OnAction = MacroAddress("ImportMultipleFields")
+    detail.Shapes("UI_コピー取込").TextFrame2.TextRange.Text = "複数項目を取込"
+    detail.Shapes("UI_選択項目へ取込").OnAction = MacroAddress("ImportOneField")
+    detail.Shapes("UI_選択項目へ取込").TextFrame2.TextRange.Text = "選択欄へ取込"
+    Set owner = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Worksheets(ThisWorkbook.Worksheets.Count))
+    owner.Name = OWNER_PAGE
+    owner.Range("B2:J3").Merge
+    owner.Range("B2").Value2 = "CONTROLLER / オーナー専用"
+    owner.Range("B2:J3").Interior.Color = RGB(22, 44, 67)
+    owner.Range("B2:J3").Font.Color = vbWhite
+    owner.Range("B2:J3").Font.Size = 17
+    owner.Range("B5").Value2 = "常勤の管理には従来どおり担当区分の権限が必要です。"
+    AddWorkflowButton owner, "WorkflowRecovery", "保存を再確認", "ConfirmSaveResult", owner.Range("B7:E8")
+    AddWorkflowButton owner, "WorkflowOperations", "常勤の管理", "OpenOperations", owner.Range("F7:I8")
+    AddWorkflowButton owner, "WorkflowSignOut", "ログアウト", "SignOutOwner", owner.Range("B10:E11")
+    search.Activate
+    owner.Visible = xlSheetVeryHidden
+End Sub
+
+Public Sub AddWorkflowButton(ByVal ws As Worksheet, ByVal id As String, ByVal caption As String, _
+    ByVal action As String, ByVal position As Range)
+    Dim button As Shape
+    Set button = ws.Shapes.AddShape(msoShapeRoundedRectangle, position.Left, position.Top, position.Width, position.Height)
+    button.Name = id
+    button.Fill.ForeColor.RGB = RGB(31, 96, 143)
+    button.Line.Visible = msoFalse
+    button.TextFrame2.TextRange.Text = caption
+    button.TextFrame2.TextRange.Font.Size = 11
+    button.TextFrame2.TextRange.Font.Fill.ForeColor.RGB = vbWhite
+    button.TextFrame2.TextRange.ParagraphFormat.Alignment = msoAlignCenter
+    button.TextFrame2.VerticalAnchor = msoAnchorMiddle
+    button.OnAction = MacroAddress(action)
+End Sub
+
+Private Function CurrentOwnerListed() As Boolean
+    Dim account As Variant
+    Dim login As String
+    login = Environ$("USERDOMAIN") & "\" & Environ$("USERNAME")
+    If Len(Environ$("USERNAME")) = 0 Or Len(Environ$("USERDOMAIN")) = 0 Then Exit Function
+    For Each account In Split(CStr(Sheet("Settings").Range("S2").Value2), ";")
+        If StrComp(Trim$(CStr(account)), login, vbTextCompare) = 0 Then
+            CurrentOwnerListed = True
+            Exit Function
+        End If
+    Next
+End Function
+
+Public Function IsOwnerAuthorized() As Boolean
+    If isOwnerSignedIn Then IsOwnerAuthorized = CurrentOwnerListed()
+End Function
+
+Public Sub OpenOwnerWorkspace()
+    If Not CurrentOwnerListed() Then
+        Notify "このWindowsアカウントはオーナーとして登録されていません。"
+        Exit Sub
+    End If
+    If Not UiCanLeaveDetail() Then Exit Sub
+    If MsgBox("現在のWindowsアカウントでオーナー操作を開始しますか？", vbQuestion Or vbYesNo Or vbDefaultButton2) <> vbYes Then Exit Sub
+    SignInWindowsOwner
+End Sub
+
+Public Function SignInWindowsOwner() As Boolean
+    If Not CurrentOwnerListed() Then Exit Function
+    isOwnerSignedIn = True
+    Sheet(OWNER_PAGE).Visible = xlSheetVisible
+    Sheet(OWNER_PAGE).Activate
+    SignInWindowsOwner = True
+End Function
+
+Public Sub SignOutOwner()
+    isOwnerSignedIn = False
+    HideOwnerWorkspace
+End Sub
+
+Public Sub HideOwnerWorkspace()
+    Dim ws As Worksheet
+    Set ws = Sheet(OWNER_PAGE)
+    If ws.Visible = xlSheetVeryHidden Then Exit Sub
+    If ActiveSheet Is ws Then Sheet("検索").Activate
+    ws.Visible = xlSheetVeryHidden
+End Sub

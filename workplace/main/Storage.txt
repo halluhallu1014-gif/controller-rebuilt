@@ -65,7 +65,7 @@ Rejected:
     book.Close SaveChanges:=False
     Exit Function
 Failed:
-    message = year & "年度の読込を中止しました。シート名、見出し、セル型を確認してください。エラー番号 " & Err.Number
+    message = year & "年度の読込を中止しました。シート名、見出し、セル型を確認してください。詳細：" & Err.Description
     On Error Resume Next
     If Not book Is Nothing Then book.Close SaveChanges:=False
     On Error GoTo 0
@@ -102,6 +102,9 @@ Private Function ReadRecord(ByRef data As Variant, ByRef formulas As Variant, By
         original(1, colIndex) = formulas(rowIndex, colIndex)
     Next
     record.originalRow = original
+    If columns.Exists("ComparisonNumber") Then
+        If Not IsError(data(rowIndex, columns("ComparisonNumber"))) Then record.comparisonNumber = CStr(data(rowIndex, columns("ComparisonNumber")))
+    End If
     For Each id In fields.Keys
         record.values.Add id, ""
         If columns.Exists(id) Then
@@ -163,14 +166,11 @@ Public Function SaveCase(ByVal record As CaseRecord, ByVal values As Object, ByV
     Dim definition As Variant
     Dim rowIndex As Long
     Dim id As Variant
-    Dim latest As Variant
-    Dim colIndex As Long
     Dim changed As Object
     Dim number As String
     Dim personKey As String
     Dim writeStarted As Boolean
     Dim events As Boolean
-    Dim original As Variant
     Dim normalizedOriginal As Variant
     Dim offices As Object
     events = Application.EnableEvents
@@ -203,7 +203,7 @@ Public Function SaveCase(ByVal record As CaseRecord, ByVal values As Object, ByV
         message = "この年度のAllowWriteはYesではありません。保存は実行していません。"
         Exit Function
     End If
-    If ControllerFolderRole(ThisWorkbook.FullName) = "" Then
+    If ControllerFolderRole(ThisWorkbook.FullName) = "" And Not IsLocalDevelopment() And Not IsLocalSingleLedger() Then
         message = "CONTROLLERの起動フォルダを特定できません。"
         Exit Function
     End If
@@ -243,36 +243,10 @@ Public Function SaveCase(ByVal record As CaseRecord, ByVal values As Object, ByV
         End If
         rowIndex = LastRow(ws) + 1
     Else
-        If columns.Count <> record.sourceColumns.Count Then
-            message = "項目構成が読込時から変更されています。最新を再読込してください。更新は実行していません。"
-            GoTo Rejected
-        End If
-        For Each id In columns.Keys
-            If Not record.sourceColumns.Exists(id) Then
-                message = "項目構成が変更されています。最新を再読込してください。"
-                GoTo Rejected
-            End If
-            If columns(id) <> record.sourceColumns(id) Then
-                message = "管理簿の列順または見出し対応が変更されています。最新を再読込してください。"
-                GoTo Rejected
-            End If
-        Next
         If rowIndex = 0 Then
-            message = "対象事案が管理簿にありません。最新を再読込してください。更新は実行していません。"
+            message = "対象事案が管理簿にありません。最新を再読込してください。"
             GoTo Rejected
         End If
-        latest = ws.Range(ws.Cells(rowIndex, 1), ws.Cells(rowIndex, LastColumn(ws))).Formula
-        original = record.originalRow
-        If UBound(latest, 2) <> UBound(original, 2) Then
-            message = "管理簿の列構成が変更されています。最新を再読込してください。更新は実行していません。"
-            GoTo Rejected
-        End If
-        For colIndex = 1 To UBound(latest, 2)
-            If Not SameValue(latest(1, colIndex), original(1, colIndex)) Then
-                message = "他の職員による変更または行の内容変更を検出しました。上書きせず更新を中止しました。編集内容を控えて最新を再読込してください。"
-                GoTo Rejected
-            End If
-        Next
     End If
     Set changed = NewDictionary()
     For Each id In fields.Keys
@@ -290,7 +264,7 @@ Public Function SaveCase(ByVal record As CaseRecord, ByVal values As Object, ByV
             If Not SameValue(values(id), record.values(id)) Then changed.Add id, values(id)
         End If
     Next
-    If changed.Exists("Office") And Len(CStr(values("Office"))) > 0 Then
+    If changed.Exists("Office") And Len(CStr(values("Office"))) > 0 And Not IsLocalSingleLedger() And Not IsLocalDevelopment() Then
         Set offices = ConfiguredList(14)
         If offices.Count > 0 And Not offices.Exists(CStr(values("Office"))) Then
             message = "署はSettingsの署一覧から選んでください。"
@@ -307,30 +281,28 @@ Public Function SaveCase(ByVal record As CaseRecord, ByVal values As Object, ByV
             GoTo Rejected
         End If
     Next
-    If Not PrepareJournal(record, definition, values, changed, message) Then GoTo Rejected
-    '保存記録を作成している間に更新された場合にも書き込まない。
     If isNew Then
         If LocateRow(ws, columns, personKey, True, message) <> 0 Or Len(message) > 0 Or rowIndex <> LastRow(ws) + 1 Then
-            message = "保存直前に登録位置が変わりました。書込みを中止しました。"
+            message = "登録位置が変わりました。最新を再読込してください。"
             GoTo Rejected
         End If
     Else
         If LocateRow(ws, columns, personKey, False, message) <> rowIndex Or Len(message) > 0 Then
-            message = "保存直前に対象行が移動しました。書込みを中止しました。"
+            message = "対象行が移動しました。最新を再読込してください。"
             GoTo Rejected
         End If
-        If LastColumn(ws) <> UBound(original, 2) Then
-            message = "保存直前に列構成が変わりました。書込みを中止しました。"
-            GoTo Rejected
-        End If
-        latest = ws.Range(ws.Cells(rowIndex, 1), ws.Cells(rowIndex, LastColumn(ws))).Formula
-        For colIndex = 1 To UBound(latest, 2)
-            If Not SameValue(latest(1, colIndex), original(1, colIndex)) Then
-                message = "保存直前に競合を検出しました。書込みを行っていません。保存記録はオーナーが確認してください。"
+        For Each id In changed.Keys
+            If Not record.sourceColumns.Exists(id) Then
+                message = "見出し対応が変わりました。最新を再読込してください。"
+                GoTo Rejected
+            End If
+            If Not SameValue(ws.Cells(rowIndex, columns(id)).Formula, record.originalRow(1, record.sourceColumns(id))) Then
+                message = "「" & fields(id)(0) & "」が管理簿で変更されています。入力は保持しています。最新の値を確認してください。"
                 GoTo Rejected
             End If
         Next
     End If
+    If Not PrepareJournal(record, definition, values, changed, message) Then GoTo Rejected
     Application.EnableEvents = False
     writeStarted = True
     '非管理列・数式を保護するため、登録時も定義済み列だけに書く。
@@ -433,7 +405,7 @@ Private Function VerifyRecordedSave(ByRef message As String) As Boolean
     Set expected = NewDictionary()
     For index = 6 To LastRow(recovery)
         id = CStr(recovery.Cells(index, 1).Value2)
-        If Len(id) > 0 Then expected.Add id, recovery.Cells(index, 2).Value2
+        If id = "CommonNumber" Or recovery.Cells(index, 4).Value2 = "Yes" Then expected.Add id, recovery.Cells(index, 2).Value2
     Next
     If Not IsDigits(expected("CommonNumber"), 18) Then GoTo Unconfirmed
     Set book = OpenLedger(definition(0), True, message)
@@ -457,7 +429,7 @@ Private Function VerifyRecordedSave(ByRef message As String) As Boolean
     recovery.Range("B1").ClearContents
     ThisWorkbook.Save
     If Not ThisWorkbook.Saved Then GoTo Unconfirmed
-    message = "保存確認済み：管理簿を開き直して保存予定の全項目との一致を確認しました。"
+    message = "保存確認済み：管理簿を開き直して保存対象の項目との一致を確認しました。"
     VerifyRecordedSave = True
     Exit Function
 Unconfirmed:

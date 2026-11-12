@@ -1,6 +1,10 @@
 Option Explicit
 
 Public Sub InstallControllerMain()
+    BuildControllerMain True
+End Sub
+
+Public Sub BuildControllerMain(ByVal showResult As Boolean)
     Dim book As Workbook
     Dim page As Worksheet
     Dim sheetName As Variant
@@ -70,7 +74,7 @@ Public Sub InstallControllerMain()
     VerifyControllerInstall book
     Application.EnableEvents = previousEvents
     Application.ScreenUpdating = previousScreen
-    MsgBox "CONTROLLERの構築と構成確認が完了しました。", vbInformation
+    If showResult Then MsgBox "CONTROLLERの構築と構成確認が完了しました。", vbInformation
     Exit Sub
 Failed:
     Dim message As String
@@ -78,7 +82,11 @@ Failed:
         "。ブックを保存せず閉じてください。"
     Application.EnableEvents = previousEvents
     Application.ScreenUpdating = previousScreen
-    MsgBox message, vbCritical
+    If showResult Then
+        MsgBox message, vbCritical
+    Else
+        Err.Raise 5, , message
+    End If
 End Sub
 
 Private Sub AddInstallChoice(ByVal book As Workbook, ByVal column As String, ByVal fieldId As String, ByVal address As String)

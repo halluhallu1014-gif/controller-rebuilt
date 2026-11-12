@@ -25,6 +25,7 @@ Public Function LoadConfiguration(ByRef message As String) As Boolean
     Dim id As Variant
     Dim yearProblem As String
     Dim previous As Variant
+    Dim hasYearSettings As Boolean
     On Error GoTo Failed
     If ThisWorkbook.Date1904 Then
         message = "CONTROLLERが1904年日付システムです。日付のずれを防ぐため処理を中止します。標準の1900年日付システムの別ブックで構築してください。"
@@ -64,18 +65,19 @@ Public Function LoadConfiguration(ByRef message As String) As Boolean
         message = "Fields：必須定義がありません。" & CStr(id)
         If Not fieldDefinitions.Exists(id) Then Exit Function
     Next
-    If fieldDefinitions.Count <> 24 Or fieldDefinitions("CommonNumber")(1) <> "Text" Then Exit Function
+    If fieldDefinitions("CommonNumber")(1) <> "Text" Then Exit Function
     Set ws = Sheet("Settings")
     For rowIndex = 2 To LastRow(ws)
         year = CStr(ws.Cells(rowIndex, 4).Value2)
         If Len(year) > 0 Then
+            hasYearSettings = True
             If Not IsDigits(year, 4) Then Exit Function
             message = "Settings 年度表 行" & rowIndex & "：年度重複、Enabled、直接アドレス、シート名を確認してください。"
             If ws.Cells(rowIndex, 7).Value2 <> "No" Then
                 yearProblem = ""
                 If CStr(ws.Cells(rowIndex, 7).Value2) <> "Yes" Then yearProblem = "EnabledはYesまたはNoにしてください。"
                 address = Setting("StaffLedger")
-                If Len(address) = 0 Or Len(CStr(ws.Cells(rowIndex, 6).Value2)) = 0 Or Len(Setting("GeneralLedger")) = 0 Then yearProblem = "常勤用・非常勤用アドレスとシート名を設定してください。"
+                If Len(CStr(ws.Cells(rowIndex, 6).Value2)) = 0 Then yearProblem = "年度シート名を設定してください。"
                 If ws.Cells(rowIndex, 8).Value2 <> "Yes" And ws.Cells(rowIndex, 8).Value2 <> "No" Then yearProblem = "AllowWriteはYesまたはNoにしてください。"
                 If yearDefinitions.Exists(year) Then
                     previous = yearDefinitions(year)
@@ -87,8 +89,15 @@ Public Function LoadConfiguration(ByRef message As String) As Boolean
             End If
         End If
     Next
-    message = "Settings：有効な年度がありません。"
-    If yearDefinitions.Count = 0 Then Exit Function
+
+    Set fields = fieldDefinitions
+    If Not hasYearSettings Then
+        If Not DiscoverYears(yearDefinitions, message) Then Exit Function
+    End If
+    If yearDefinitions.Count = 0 Then
+        message = "有効な管理簿の年度がありません。設定ツールで対象年度を確認してください。"
+        Exit Function
+    End If
     message = ""
     If Not ValidatePresentation(message) Then Exit Function
     Set fields = fieldDefinitions
@@ -97,6 +106,62 @@ Public Function LoadConfiguration(ByRef message As String) As Boolean
     Exit Function
 Failed:
     message = message & " 定義したセルが存在し、単一セルまたは結合セルの左上で、数式なしであることを確認してください。"
+End Function
+
+
+Private Function DiscoverYears(ByVal definitions As Object, ByRef message As String) As Boolean
+    Dim address As String
+    Dim book As Workbook
+    Dim ws As Worksheet
+    Dim year As String
+    Dim columns As Object
+    Dim issue As String
+    On Error GoTo Failed
+    address = LocateFixedLedger(message)
+    If Len(address) = 0 Then Exit Function
+    Set book = OpenLedger(address, True, message)
+    If book Is Nothing Then Exit Function
+    For Each ws In book.Worksheets
+        year = YearFromSheet(ws.Name)
+        If Len(year) > 0 Then
+            Set columns = ColumnMap(ws, year, issue)
+            If Not columns Is Nothing Then
+                If definitions.Exists(year) Then
+                    message = year & "年度の管理簿シートが複数あります。設定ツールで使用するシートを指定してください。"
+                    GoTo Finished
+                End If
+                definitions.Add year, Array(address, ws.Name, "Yes", address, "", "")
+            ElseIf Len(message) = 0 Then
+                message = ws.Name & "：" & issue
+            End If
+        End If
+    Next
+    DiscoverYears = definitions.Count > 0
+    If DiscoverYears Then
+        message = ""
+    ElseIf Len(message) = 0 Then
+        message = "管理簿に年度を特定できるシートがありません。設定ツールで使用するシートを指定してください。"
+    End If
+Finished:
+    book.Close False
+    Exit Function
+Failed:
+    message = "管理簿の年度と見出しを確認できませんでした。"
+    If Not book Is Nothing Then book.Close False
+End Function
+
+Private Function YearFromSheet(ByVal name As String) As String
+    Dim value As Long
+    name = Trim$(name)
+    If Right$(name, 2) = "年度" Then name = Left$(name, Len(name) - 2)
+    If IsDigits(name, 4) Then
+        value = CLng(name)
+    ElseIf name Like "令和#" Or name Like "令和##" Then
+        value = 2018 + CLng(Mid$(name, 3))
+    ElseIf name = "令和元" Then
+        value = 2019
+    End If
+    If value >= 1900 And value <= 2099 Then YearFromSheet = CStr(value)
 End Function
 
 Public Function FieldCell(ByVal fieldId As String) As Range
@@ -121,20 +186,53 @@ Public Function HeaderFor(ByVal fieldId As String, ByVal year As String, ByRef m
 End Function
 
 Public Function ColumnMap(ByVal ws As Worksheet, ByVal year As String, ByRef message As String) As Object
-    Dim expected As Variant
+    Dim headers As Object
     Dim result As Object
-    Dim item As Variant
+    Dim used As Object
+    Dim id As Variant
+    Dim heading As String
+    Dim value As Variant
     Dim position As Long
-    expected = LedgerColumnDefinitions()
+    Dim last As Long
+    Set headers = NewDictionary()
     Set result = NewDictionary()
-    For Each item In expected
-        position = position + 1
-        message = year & "年度の列 " & position & " は「" & item(1) & "」が必要です。"
-        If IsError(ws.Cells(1, position).Value2) Then Exit Function
-        If CStr(ws.Cells(1, position).Value2) <> item(1) Or Not fields.Exists(item(0)) Then Exit Function
-        result.Add item(0), position
-    Next
+    Set used = NewDictionary()
     message = ""
+    last = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    For position = 1 To last
+        value = ws.Cells(1, position).Value2
+        If IsError(value) Then
+            message = "管理簿の1行目にExcelエラーがあります。"
+            Exit Function
+        End If
+        heading = Trim$(Replace(CStr(value), ChrW(&H3000), " "))
+        If Len(heading) > 0 Then
+            If headers.Exists(heading) Then
+                headers(heading) = 0
+            Else
+                headers.Add heading, position
+            End If
+        End If
+    Next
+    For Each id In fields.Keys
+        heading = Trim$(Replace(HeaderFor(CStr(id), year, message), ChrW(&H3000), " "))
+        If Len(message) > 0 Then Exit Function
+        If headers.Exists(heading) Then
+            position = CLng(headers(heading))
+            If position = 0 Or used.Exists(heading) Then
+                message = "管理簿の見出し「" & heading & "」が重複しています。"
+                Exit Function
+            End If
+            used.Add heading, True
+            result.Add id, position
+        ElseIf fields(id)(4) = "Yes" Then
+            message = "管理簿の1行目に必須の見出し「" & heading & "」がありません。"
+            Exit Function
+        End If
+    Next
+    If headers.Exists("照合番号") Then
+        If CLng(headers("照合番号")) > 0 Then result.Add "ComparisonNumber", CLng(headers("照合番号"))
+    End If
     Set ColumnMap = result
 End Function
 
@@ -206,7 +304,7 @@ Public Sub ApplyWorkflowStatus(ByVal values As Object, ByVal previousStatus As S
     If IsTransferStatus(status) Then Exit Sub
     If HasCompletionValue(values, "IssuedDate") Then
         values("Status") = "終了【終】"
-        values("CompletedDate") = values("IssuedDate")
+        If Not HasCompletionValue(values, "CompletedDate") Then values("CompletedDate") = values("IssuedDate")
     ElseIf HasCompletionValue(values, "ApprovedDate") Then
         values("Status") = "決裁済"
     ElseIf HasCompletionValue(values, "DraftDate") Then

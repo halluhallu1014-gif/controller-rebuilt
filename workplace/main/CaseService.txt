@@ -1,0 +1,130 @@
+Option Explicit
+Option Private Module
+
+Public Sub ReloadCases(ByRef message As String)
+    Dim year As Variant
+    Dim loaded As Object
+    Dim key As Variant
+    Dim detail As String
+    Dim invalidCount As Long
+    Dim address As String
+    Set Cases = NewDictionary()
+    Set yearErrors = NewDictionary()
+    Set yearColumnMaps = NewDictionary()
+    address = LocateFixedLedger(detail)
+    If Len(address) = 0 Then
+        For Each year In years.Keys
+            yearErrors.Add year, detail
+        Next
+        message = detail
+        Exit Sub
+    End If
+    For Each year In years.Keys
+        detail = ""
+        Set loaded = ReadYear(CStr(year), detail, address)
+        If loaded Is Nothing Then
+            yearErrors.Add year, detail
+            message = message & CStr(year) & "年度：" & detail & vbCrLf
+        Else
+            For Each key In loaded.Keys
+                Cases.Add key, loaded(key)
+                If Len(loaded(key).invalidReason) > 0 Then invalidCount = invalidCount + 1
+            Next
+        End If
+    Next
+    message = "読込件数 " & Cases.Count & "。正常年度の検索を利用できます。" & vbCrLf & message
+    If invalidCount > 0 Then message = message & vbCrLf & "番号・型・重複などの要確認事案 " & invalidCount & "件は更新できません。詳細画面で理由を確認してください。"
+End Sub
+
+Public Function SearchRecords(ByVal query As String, ByVal office As String, ByVal excludeClosed As Boolean, Optional ByVal status As String = "") As Collection
+    Dim result As New Collection
+    Dim closedStates As Object
+    Dim key As Variant
+    Dim record As CaseRecord
+    Dim normalizedQuery As String
+    Dim hasName As Boolean
+    Dim hasOffice As Boolean
+    Dim isClosed As Boolean
+    normalizedQuery = SearchText(query)
+    Set closedStates = ConfiguredList(15)
+    For Each key In Cases.Keys
+        Set record = Cases(key)
+        hasName = Len(normalizedQuery) = 0
+        If Not hasName Then
+            hasName = InStr(1, SearchText(CStr(record.values("PersonName"))), normalizedQuery, vbTextCompare) > 0
+            If Not hasName Then hasName = InStr(1, SearchText(CStr(record.values("Furigana"))), normalizedQuery, vbTextCompare) > 0
+        End If
+        hasOffice = Len(office) = 0 Or StrComp(CStr(record.values("Office")), office, vbTextCompare) = 0
+        isClosed = excludeClosed And IsCaseClosed(record.values, closedStates)
+        If hasName And hasOffice And Not isClosed Then
+            If Len(status) = 0 Or StrComp(CStr(record.values("Status")), status, vbTextCompare) = 0 Then result.Add CStr(key)
+        End If
+    Next
+    Set SearchRecords = result
+End Function
+
+Private Function SearchText(ByVal text As String) As String
+    Dim normalized As String
+    normalized = Replace(Replace(Trim$(text), "　", ""), " ", "")
+    On Error Resume Next
+    SearchText = StrConv(StrConv(normalized, vbWide, 1041), vbKatakana, 1041)
+    If Err.Number <> 0 Then SearchText = normalized
+    On Error GoTo 0
+End Function
+
+Public Function ScreenValues(ByVal record As CaseRecord, ByVal year As String, ByRef message As String) As Object
+    Dim result As Object
+    Dim id As Variant
+    Dim value As Variant
+    Dim normalized As Variant
+    Set result = NewDictionary()
+    For Each id In fields.Keys
+        If Not DetailFieldAvailable(CStr(id), year, record, message) And Not record Is Nothing Then
+            result.Add id, ""
+        Else
+
+            If IsDispatchField(CStr(id)) Then
+                If Not ReadDispatchArea(CStr(id), value, message) Then Exit Function
+            Else
+                value = FieldCell(CStr(id)).Value2
+            End If
+            If Not record Is Nothing Then
+                If SameValue(value, DetailValue(CStr(id), record.values(id))) Then value = record.values(id)
+            ElseIf Not DetailFieldAvailable(CStr(id), year, record, message) Then
+                If CStr(value) = "（保存先未設定）" Then value = ""
+            End If
+            If Not NormalizeValue(CStr(id), value, normalized) Then
+                message = "入力項目 " & CStr(id) & "の型または形式が不正です。FieldsのTypeと入力値を確認してください。"
+                Exit Function
+            End If
+            result.Add id, normalized
+        End If
+    Next
+    Set ScreenValues = result
+End Function
+
+Public Sub DisplayValues(ByVal values As Object)
+    Dim id As Variant
+    For Each id In fields.Keys
+        PutValue FieldCell(CStr(id)), DisplayValue(CStr(id), values(id)), (fields(id)(1) = "Date")
+    Next
+End Sub
+
+Public Sub RefreshOneYear(ByVal year As String, ByRef message As String)
+    Dim loaded As Object
+    Dim key As Variant
+    Dim detail As String
+    Set loaded = ReadYear(year, detail)
+    For Each key In Cases.Keys
+        If Cases(key).sourceYear = year Then Cases.Remove key
+    Next
+    If loaded Is Nothing Then
+        yearErrors(year) = detail
+        message = message & vbCrLf & "保存は照合済みですが、年度の再読込に失敗しました。" & detail
+    Else
+        If yearErrors.Exists(year) Then yearErrors.Remove year
+        For Each key In loaded.Keys
+            Cases.Add key, loaded(key)
+        Next
+    End If
+End Sub

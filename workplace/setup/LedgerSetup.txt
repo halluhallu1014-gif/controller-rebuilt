@@ -1,0 +1,292 @@
+Option Explicit
+
+Private Const ABSENT As String = "[Absent]"
+
+Public Function FieldLabel(ByVal fieldId As String) As String
+    If fieldId = "CommonNumber" Then
+        FieldLabel = "共通番号"
+    ElseIf fieldId = "SubmissionFormat" Then
+        FieldLabel = "提出形式"
+    ElseIf fieldId = "HistoryMemo" Then
+        FieldLabel = "処理履歴メモ"
+    ElseIf fieldId = "SourceYear" Then
+        FieldLabel = "受付年度"
+    Else
+        FieldLabel = CStr(fieldSpecs(fieldId)(0))
+        If FieldLabel = ABSENT Then FieldLabel = "その他の項目"
+    End If
+End Function
+
+Private Function NormalHeader(ByVal heading As String) As String
+    NormalHeader = Trim$(Replace(Replace(heading, ChrW(&H3000), " "), vbTab, " "))
+End Function
+
+Private Function AliasHeader(ByVal fieldId As String) As String
+    Select Case fieldId
+        Case "CommonNumber": AliasHeader = "CommonNumber"
+        Case "Furigana": AliasHeader = "氏名(フリガナ)"
+        Case "SubmissionFormat": AliasHeader = "提出形式"
+    End Select
+End Function
+
+Private Function UniqueHeading(ByVal headers As Object, ByVal heading As String) As String
+    Dim key As Variant
+    If Len(heading) = 0 Or heading = ABSENT Then Exit Function
+    If headers.Exists(heading) Then
+        UniqueHeading = heading
+        Exit Function
+    End If
+    For Each key In headers.Keys
+        If NormalHeader(CStr(key)) = NormalHeader(heading) Then
+            If Len(UniqueHeading) > 0 Then
+                UniqueHeading = ""
+                Exit Function
+            End If
+            UniqueHeading = CStr(key)
+        End If
+    Next
+End Function
+
+Private Function HeaderList(ByVal sheet As Worksheet, ByRef message As String) As Object
+    Dim result As Object
+    Dim last As Range
+    Dim index As Long
+    Dim value As Variant
+    Set result = Dictionary()
+    Set last = sheet.Rows(1).Find(What:="*", After:=sheet.Cells(1, 1), LookIn:=xlFormulas, LookAt:=xlPart, _
+        SearchOrder:=xlByColumns, SearchDirection:=xlPrevious, MatchCase:=False, SearchFormat:=False)
+    If last Is Nothing Then
+        message = sheet.Name & " の1行目に見出しがありません。"
+        Exit Function
+    End If
+    For index = 1 To last.Column
+        value = sheet.Cells(1, index).Value2
+        If IsError(value) Then
+            message = sheet.Name & " の1行目にExcelエラーがあります。"
+            Exit Function
+        End If
+        If Len(CStr(value)) > 0 Then
+            If result.Exists(CStr(value)) Then
+                message = sheet.Name & " の見出し「" & CStr(value) & "」が重複しています。"
+                Exit Function
+            End If
+            result.Add CStr(value), index
+        End If
+    Next
+    If result.Count < 2 Then
+        message = sheet.Name & " の1行目に複数の見出しが必要です。"
+        Exit Function
+    End If
+    Set HeaderList = result
+End Function
+
+Private Function LooksLikeLedger(ByVal headers As Object) As Boolean
+    Dim id As Variant
+    For Each id In Array("CommonNumber", "PersonName")
+        If Len(UniqueHeading(headers, CStr(fieldSpecs(id)(0)))) = 0 Then
+            If Len(UniqueHeading(headers, AliasHeader(CStr(id)))) = 0 Then Exit Function
+        End If
+    Next
+    LooksLikeLedger = True
+End Function
+
+Public Function ReadTable(ByVal address As String, ByVal preferredSheet As String, ByVal isLedger As Boolean, ByRef message As String) As Object
+    Dim book As Workbook
+    Dim sheet As Worksheet
+    Dim selected As Worksheet
+    Dim headerMap As Object
+    Dim result As Object
+    Dim plausible As New Collection
+    Dim names As New Collection
+    Dim name As Variant
+    Dim ignore As String
+    On Error GoTo Failed
+    message = ""
+    If IsWeb(address) And Not IsWorkbookUrl(address) Then
+        message = "共有リンクではなく、拡張子までの直接URLを入力してください。"
+        Exit Function
+    End If
+    If IsSameAddress(address, targetPath) Or IsSameAddress(address, ThisWorkbook.FullName) Then
+        message = "設定ブックと本体は管理簿として選べません。"
+        Exit Function
+    End If
+    Set book = SafeOpen(address, False, message)
+    If book Is Nothing Then Exit Function
+    If book.Date1904 Then
+        message = "1904年日付形式のファイルは本体で読み込めません。"
+        GoTo Finished
+    End If
+    For Each sheet In book.Worksheets
+        names.Add sheet.Name
+        If sheet.Name = preferredSheet Then Set selected = sheet
+        ignore = ""
+        Set headerMap = HeaderList(sheet, ignore)
+        If Not headerMap Is Nothing Then
+            If Not isLedger Or LooksLikeLedger(headerMap) Then plausible.Add sheet.Name
+        End If
+    Next
+    If selected Is Nothing Then
+        If names.Count = 1 Then
+            Set selected = book.Worksheets(CStr(names(1)))
+        ElseIf plausible.Count = 1 Then
+            Set selected = book.Worksheets(CStr(plausible(1)))
+        Else
+            If plausible.Count > 1 Then Set names = plausible
+            name = PickValue("読み込むシートを選択してください。", names)
+            If Len(CStr(name)) = 0 Then GoTo Finished
+            Set selected = book.Worksheets(CStr(name))
+        End If
+    End If
+    Set headerMap = HeaderList(selected, message)
+    If headerMap Is Nothing Then GoTo Finished
+    Set result = Dictionary()
+
+    result.Add "Address", book.FullName
+    result.Add "Year", DetectLedgerYear(selected.Name, book.Name)
+    result.Add "Columns", selected.Cells(1, selected.Columns.Count).End(xlToLeft).Column
+    result.Add "Sheet", selected.Name
+    result.Add "Headers", headerMap
+    result.Add "Count", SheetLastRow(selected, "A:XFD") - 1
+    Set ReadTable = result
+Finished:
+    If Not book Is Nothing Then book.Close False
+    Exit Function
+Failed:
+    message = FileLabel(address) & " のシートまたは見出しを読み取れません。"
+    Resume Finished
+End Function
+
+
+
+Public Function IsYear(ByVal value As String) As Boolean
+    IsYear = Len(value) = 4 And value Like "####"
+    If IsYear Then IsYear = CLng(value) >= 1900 And CLng(value) <= 2099
+End Function
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Public Sub StageDisable(ByVal year As String)
+    StageCell "Settings", CLng(draftYears(year)("Row")), 7, "No"
+    draftYears(year)("Enabled") = False
+    draftYears(year)("State") = "解除・保存待ち"
+End Sub
+
+
+Public Sub CheckLedgerHeadings(ByVal year As String, ByVal headers As Object, ByVal review As Boolean, ByVal item As Object)
+    Dim id As Variant
+    Dim key As Variant
+    Dim heading As String
+    Dim picked As String
+    Dim row As Long
+    Dim rows As Object
+    Dim used As Object
+    Dim missing As Object
+    Dim options As Collection
+    Set rows = Dictionary()
+    Set used = Dictionary()
+    Set missing = Dictionary()
+    For Each id In fieldSpecs.Keys
+        row = LedgerHeadingRow(year, CStr(id))
+        heading = CStr(fieldSpecs(id)(0))
+        If row > 0 Then heading = ReadCell("Fields", row, 10)
+        heading = UniqueHeading(headers, heading)
+        If Len(heading) = 0 And row = 0 Then
+            heading = UniqueHeading(headers, AliasHeader(CStr(id)))
+            If Len(heading) > 0 Then SaveLedgerHeading year, CStr(id), heading, row
+        End If
+        If Len(heading) > 0 And Not used.Exists(heading) Then
+            used.Add heading, True
+        ElseIf fieldSpecs(id)(0) <> ABSENT Or row > 0 Then
+            rows.Add id, row
+            missing.Add id, FieldLabel(CStr(id))
+        End If
+    Next
+    item("Unmapped") = ""
+    For Each id In missing.Keys
+        If review Then
+            Set options = New Collection
+            For Each key In headers.Keys
+                If Not used.Exists(key) Then options.Add CStr(key)
+            Next
+            picked = PickValue("管理簿で「" & missing(id) & "」に当たる見出しを選んでください。", options)
+            If Len(picked) > 0 Then
+                SaveLedgerHeading year, CStr(id), picked, CLng(rows(id))
+                used.Add picked, True
+            End If
+        Else
+            picked = ""
+        End If
+        If Len(picked) = 0 Then
+            If Len(item("Unmapped")) > 0 Then item("Unmapped") = item("Unmapped") & "、"
+            item("Unmapped") = item("Unmapped") & missing(id)
+        End If
+    Next
+End Sub
+
+Private Function LedgerHeadingRow(ByVal year As String, ByVal fieldId As String) As Long
+    Dim row As Long
+    row = 2
+    Do While Len(ReadCell("Fields", row, 8) & ReadCell("Fields", row, 9)) > 0
+        If ReadCell("Fields", row, 8) = year And ReadCell("Fields", row, 9) = fieldId Then
+            LedgerHeadingRow = row
+            Exit Function
+        End If
+        row = row + 1
+    Loop
+End Function
+
+Private Sub SaveLedgerHeading(ByVal year As String, ByVal fieldId As String, ByVal heading As String, ByVal existingRow As Long)
+    Dim row As Long
+    row = existingRow
+    If row = 0 Then
+        row = 2
+        Do While Len(ReadCell("Fields", row, 8) & ReadCell("Fields", row, 9) & ReadCell("Fields", row, 10)) > 0
+            row = row + 1
+        Loop
+    End If
+    StageCell "Fields", row, 8, year
+    StageCell "Fields", row, 9, fieldId
+    StageCell "Fields", row, 10, heading
+End Sub
+
+Private Function DetectLedgerYear(ByVal sheetName As String, ByVal filename As String) As String
+    Dim source As Variant
+    Dim index As Long
+    Dim candidate As String
+    Dim years As Object
+    If IsYear(sheetName) Then
+        DetectLedgerYear = sheetName
+        Exit Function
+    End If
+    Set years = Dictionary()
+    For Each source In Array(sheetName, filename)
+        For index = 1 To Len(CStr(source)) - 3
+            candidate = Mid$(CStr(source), index, 4)
+            If IsYear(candidate) Then
+                If Not Mid$(" " & CStr(source), index, 1) Like "#" And _
+                    Not Mid$(CStr(source) & " ", index + 4, 1) Like "#" Then years(candidate) = True
+            End If
+        Next
+    Next
+    If years.Count = 1 Then DetectLedgerYear = CStr(years.Keys()(0))
+End Function

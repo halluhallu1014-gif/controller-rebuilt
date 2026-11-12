@@ -1,0 +1,193 @@
+Option Explicit
+
+Public Function IsHttpsAddress(ByVal address As String) As Boolean
+    IsHttpsAddress = (StrComp(Left$(address, 8), "https://", vbTextCompare) = 0)
+End Function
+
+Public Function CanonicalAddress(ByVal address As String) As String
+    Dim slash As Long
+    Dim host As String
+    Dim path As String
+    Dim segment As Variant
+    If Not IsHttpsAddress(address) Then
+        If Mid$(address, 2, 2) = ":\" Or Left$(address, 2) = "\\" Then CanonicalAddress = Replace(address, "/", "\")
+        Exit Function
+    End If
+    slash = InStr(9, address, "/")
+    If slash = 0 Then
+        host = Mid$(address, 9)
+    Else
+        host = Mid$(address, 9, slash - 9)
+    End If
+    If Len(host) = 0 Or InStr(host, ".") = 0 Or host Like "*[!A-Za-z0-9.-]*" Then Exit Function
+    If InStr(address, "?") > 0 Or InStr(address, "\") > 0 Then Exit Function
+    If slash = 0 Then
+        CanonicalAddress = "https://" & LCase$(host)
+        Exit Function
+    End If
+    path = DecodeAddressPath(Mid$(address, slash))
+    If Len(path) = 0 Then Exit Function
+    If InStr(path, "\") > 0 Or InStr(path, vbCr) > 0 Or InStr(path, vbLf) > 0 Or InStr(path, Chr$(0)) > 0 Then Exit Function
+    If InStr(path, "/:") > 0 Or InStr(path, "//") > 0 Or InStr(1, path, "/_layouts/", vbTextCompare) > 0 Then Exit Function
+    For Each segment In Split(path, "/")
+        If segment = "." Or segment = ".." Then Exit Function
+    Next
+    If Right$(path, 1) = "/" Then path = Left$(path, Len(path) - 1)
+    CanonicalAddress = "https://" & LCase$(host) & path
+End Function
+
+Private Function DecodeAddressPath(ByVal path As String) As String
+    Dim i As Long
+    Dim octet As Long
+    Dim code As Long
+    Dim pending As Long
+    Dim minimum As Long
+    Dim pair As String
+    Dim result As String
+    i = 1
+    Do While i <= Len(path)
+        pair = Mid$(path, i + 1, 2)
+        If Mid$(path, i, 1) = "%" And Len(pair) = 2 And UCase$(pair) Like "[0-9A-F][0-9A-F]" Then
+            octet = CLng("&H" & pair)
+            If pending > 0 Then
+                If octet < 128 Or octet > 191 Then Exit Function
+                code = code * 64 + octet - 128
+                pending = pending - 1
+                If pending = 0 Then
+                    If code < minimum Or code > &H10FFFF Or (code >= &HD800& And code <= &HDFFF&) Then Exit Function
+                    If code > 65535 Then
+                        code = code - 65536
+                        result = result & ChrW(&HD800& + code \ 1024) & ChrW(&HDC00& + code Mod 1024)
+                    Else
+                        result = result & ChrW(code)
+                    End If
+                End If
+            ElseIf octet < 128 Then
+                '区切りをエンコードしたリンクは、別パスに解釈しない。
+                If octet = 47 Or octet = 92 Then Exit Function
+                result = result & ChrW(octet)
+            ElseIf octet >= 194 And octet <= 223 Then
+                code = octet - 192
+                pending = 1
+                minimum = 128
+            ElseIf octet >= 224 And octet <= 239 Then
+                code = octet - 224
+                pending = 2
+                minimum = 2048
+            ElseIf octet >= 240 And octet <= 244 Then
+                code = octet - 240
+                pending = 3
+                minimum = 65536
+            Else
+                Exit Function
+            End If
+            i = i + 3
+        Else
+            If pending > 0 Then Exit Function
+            result = result & Mid$(path, i, 1)
+            i = i + 1
+        End If
+    Loop
+    If pending = 0 Then DecodeAddressPath = result
+End Function
+
+Public Function IsSameWorkbookAddress(ByVal first As String, ByVal second As String) As Boolean
+    Dim leftAddress As String
+    Dim rightAddress As String
+    leftAddress = CanonicalAddress(first)
+    rightAddress = CanonicalAddress(second)
+    If Len(leftAddress) = 0 Or Len(rightAddress) = 0 Then Exit Function
+    IsSameWorkbookAddress = (StrComp(leftAddress, rightAddress, vbTextCompare) = 0)
+End Function
+
+Public Function IsDirectWorkbookAddress(ByVal address As String) As Boolean
+    Dim path As String
+    Dim extension As String
+    path = CanonicalAddress(address)
+    If Len(path) = 0 Then Exit Function
+    extension = LCase$(Mid$(path, InStrRev(path, ".") + 1))
+    IsDirectWorkbookAddress = (extension = "xlsm" Or extension = "xlsx" Or extension = "xlsb" Or extension = "xls")
+End Function
+
+Public Function AddressFileName(ByVal address As String) As String
+    Dim path As String
+    path = Replace(CanonicalAddress(address), "\", "/")
+    If Len(path) > 0 Then AddressFileName = Mid$(path, InStrRev(path, "/") + 1)
+End Function
+
+Public Function AddressFolder(ByVal address As String) As String
+    Dim slash As Long
+    slash = InStrRev(address, IIf(IsHttpsAddress(address), "/", "\"))
+    If slash > 0 Then AddressFolder = Left$(address, slash - 1)
+End Function
+
+Public Function OpenAddressWorkbook(ByVal address As String, ByVal isReadOnly As Boolean, _
+    ByVal allowTrustedMacros As Boolean, ByRef message As String) As Workbook
+    Dim candidate As Workbook
+    Dim book As Workbook
+    Dim previousEvents As Boolean
+    Dim previousSecurity As Long
+
+    message = ""
+    If Not IsDirectWorkbookAddress(address) Then
+        message = "Excelファイルの直接URLまたは検証用の絶対パスを指定してください。"
+        Exit Function
+    End If
+    For Each candidate In Application.Workbooks
+        If IsSameWorkbookAddress(candidate.FullName, address) Or _
+            StrComp(candidate.Name, AddressFileName(address), vbTextCompare) = 0 Then
+            message = "対象または同名のブックを閉じてから操作してください。"
+            Exit Function
+        End If
+    Next
+    previousEvents = Application.EnableEvents
+    previousSecurity = Application.AutomationSecurity
+    On Error GoTo Failed
+    Application.EnableEvents = False
+    If Not allowTrustedMacros Then Application.AutomationSecurity = msoAutomationSecurityForceDisable
+    Set book = Application.Workbooks.Open(Filename:=ExcelOpenAddress(address), UpdateLinks:=0, ReadOnly:=isReadOnly, _
+        Notify:=False, AddToMru:=False, IgnoreReadOnlyRecommended:=True)
+    If Not IsSameWorkbookAddress(book.FullName, address) Then
+        message = "Excelが開いたブックのアドレスが設定と一致しません。直接URLを確認してください。"
+    ElseIf Not isReadOnly And book.ReadOnly Then
+        message = "読み取り専用です。編集権限と他の利用者の使用状況を確認してください。"
+    ElseIf book.Date1904 Then
+        message = "1904年日付システムのブックは対象外です。"
+    Else
+        If Not isReadOnly And IsHttpsAddress(address) Then
+            'オートセーブが既に無効な環境では、書き込みを試みない。
+            If book.AutoSaveOn Then book.AutoSaveOn = False
+            If book.AutoSaveOn Then Err.Raise 5, , "自動保存を停止できません。"
+        End If
+        Set OpenAddressWorkbook = book
+        Set book = Nothing
+    End If
+Finished:
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    Application.AutomationSecurity = previousSecurity
+    Application.EnableEvents = previousEvents
+    On Error GoTo 0
+    Exit Function
+Failed:
+    message = "Excelで開けません。直接URL、Officeのサインイン、権限、使用状況を確認してください。エラー番号 " & Err.Number
+    Resume Finished
+End Function
+
+Public Function ExcelOpenAddress(ByVal address As String) As String
+    Dim i As Long
+    Dim ch As String
+    If Not IsHttpsAddress(address) Then
+        ExcelOpenAddress = address
+        Exit Function
+    End If
+    For i = 1 To Len(address)
+        ch = Mid$(address, i, 1)
+        If ch = "#" Then
+            ch = "%23"
+        ElseIf ch = "%" Then
+            If Not UCase$(Mid$(address, i + 1, 2)) Like "[0-9A-F][0-9A-F]" Then ch = "%25"
+        End If
+        ExcelOpenAddress = ExcelOpenAddress & ch
+    Next
+End Function

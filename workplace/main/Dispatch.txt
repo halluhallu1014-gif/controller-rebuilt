@@ -1,0 +1,462 @@
+Option Explicit
+
+
+
+Public Const DISPATCH_FIRST As Long = 69
+Private Const DISPATCH_ROWS As Long = 2
+Private shownDay(1 To 3) As Variant
+Private shownTitle(1 To 3) As String
+Private shownNote(1 To 3) As String
+Private dispatchTitles As Object
+
+Public Function IsDispatchField(ByVal id As String) As Boolean
+    IsDispatchField = (id = "Dispatch1" Or id = "Dispatch2" Or id = "Dispatch3")
+End Function
+
+Public Sub InstallDispatchAreas()
+    Dim ws As Worksheet
+    Dim block As Long
+    Dim row As Long
+    Dim button As Shape
+    Dim template As Shape
+    Dim anchor As Range
+    Dim wasProtected As Boolean
+    Set ws = Sheet("詳細")
+    wasProtected = ws.ProtectContents
+    If wasProtected Then ws.Unprotect
+    ws.Rows("65:68").Hidden = True
+    ws.Columns("AZ").Hidden = True
+    ws.Range("C69:V85").UnMerge
+    ws.Range("C69:V85").Clear
+    ws.Rows("69:75").Hidden = False
+    ws.Rows("76:85").Hidden = True
+    ws.Rows(69).RowHeight = 18
+    DispatchBand ws.Range("C69:V69"), "発送文書", RGB(214, 229, 246), RGB(24, 48, 80)
+    ws.Range("C69:V75").Font.Name = "Meiryo UI"
+    ws.Range("C69:V75").Font.Size = 11
+    Set template = ws.Shapes("Calendar_ReceivedDate")
+    For block = 1 To 3
+        row = DispatchRow(block)
+        ws.Rows(row + 1).RowHeight = ws.Rows(32).RowHeight
+        ws.Rows(row + 2).RowHeight = 16
+
+        DispatchBand ws.Range("C" & row + 1 & ":D" & row + 1), "文書" & block, RGB(214, 229, 246), RGB(24, 48, 80)
+        DispatchBand ws.Cells(row + 1, 5), "発送日", RGB(214, 229, 246), RGB(24, 48, 80)
+        ws.Cells(row + 1, 5).HorizontalAlignment = xlCenter
+        DispatchBand ws.Range("M" & row + 1 & ":O" & row + 1), "文書名", RGB(214, 229, 246), RGB(24, 48, 80)
+        DispatchBand ws.Range("C" & row + 2 & ":E" & row + 2), "備考", RGB(214, 229, 246), RGB(24, 48, 80)
+        DispatchBox ws.Range("F" & row + 1 & ":K" & row + 1)
+        DispatchBox ws.Range("P" & row + 1 & ":V" & row + 1)
+        DispatchBox ws.Range("F" & row + 2 & ":V" & row + 2)
+        ws.Cells(row + 1, 6).NumberFormat = ws.Range("F32").NumberFormat
+        Set anchor = ws.Cells(row + 1, 12)
+        Set button = Nothing
+        On Error Resume Next
+        Set button = ws.Shapes("Calendar_Dispatch" & block)
+        On Error GoTo 0
+        If button Is Nothing Then Set button = template.Duplicate
+        button.Name = "Calendar_Dispatch" & block
+        button.Left = anchor.Left + (anchor.Width - template.Width) / 2
+        button.Top = anchor.Top + (anchor.Height - template.Height) / 2
+        button.Width = template.Width
+        button.Height = template.Height
+        button.Placement = xlMove
+        button.OnAction = template.OnAction
+    Next
+    Set button = Nothing
+    On Error Resume Next
+    Set button = ws.Shapes("DispatchCalendar")
+    On Error GoTo 0
+    If Not button Is Nothing Then button.Delete
+    Set button = Nothing
+    On Error Resume Next
+    Set button = ws.Shapes("DispatchSave")
+    On Error GoTo 0
+
+    ws.Rows(59).Hidden = False
+    ws.Rows(59).RowHeight = 36
+    Set anchor = ws.Range("R59:V59")
+    If button Is Nothing Then
+        AddWorkflowButton ws, "DispatchSave", "登録・更新", "SaveDetail", anchor
+        Set button = ws.Shapes("DispatchSave")
+    End If
+    button.Width = anchor.Width - 4
+    button.Height = 26
+    button.Left = anchor.Left + 2
+    button.Top = anchor.Top + (anchor.Height - button.Height) / 2
+    button.TextFrame2.TextRange.ParagraphFormat.Alignment = msoAlignCenter
+    button.TextFrame2.VerticalAnchor = msoAnchorMiddle
+    AlignCopyButtons ws
+    If wasProtected Then ws.Protect DrawingObjects:=False, UserInterfaceOnly:=True
+End Sub
+
+
+Private Sub AlignCopyButtons(ByVal ws As Worksheet)
+    Dim names As Variant
+    Dim button As Shape
+    Dim area As Range
+    Dim width As Double
+    Dim index As Long
+    Const GAP As Double = 4
+    names = Array("ControllerCopyNumber", "UI_選択項目をコピー", "UI_コピー取込", "UI_選択項目へ取込")
+    Set area = ws.Range("C58:V58")
+    width = (area.Width - GAP * 5) / 4
+    For index = 0 To UBound(names)
+        Set button = ws.Shapes(CStr(names(index)))
+        button.Width = width
+        button.Left = area.Left + GAP + index * (width + GAP)
+        button.Top = area.Top + (area.Height - button.Height) / 2
+    Next
+End Sub
+
+Private Sub DispatchBand(ByVal area As Range, ByVal caption As String, ByVal background As Long, ByVal ink As Long)
+    area.Merge
+    area.Cells(1, 1).Value2 = caption
+    area.Interior.Color = background
+    area.Font.Color = ink
+    area.Font.Bold = True
+    area.VerticalAlignment = xlCenter
+End Sub
+
+Private Sub DispatchBox(ByVal area As Range)
+    area.Merge
+    area.Interior.Color = vbWhite
+    area.Font.Color = RGB(24, 48, 80)
+    area.Borders.Color = RGB(190, 206, 225)
+    area.HorizontalAlignment = xlLeft
+    area.VerticalAlignment = xlCenter
+End Sub
+
+Private Function DispatchRow(ByVal block As Long) As Long
+    DispatchRow = DISPATCH_FIRST + (block - 1) * DISPATCH_ROWS
+End Function
+
+Public Sub LoadDispatchAreas()
+    Dim ws As Worksheet
+    Dim candidates As Object
+    Dim configured As Object
+    Dim key As Variant
+    Dim block As Long
+    Dim row As Long
+    Dim count As Long
+    Dim title As String
+    Dim raw As String
+    Dim record As CaseRecord
+    Set ws = Sheet("詳細")
+    Set configured = ConfiguredList(16)
+    Set candidates = configured
+    If configured.Count = 0 Then
+        Set candidates = NewDictionary()
+        If Not Cases Is Nothing Then
+            For Each key In Cases.Keys
+                Set record = Cases(key)
+                For block = 1 To 3
+                    raw = CStr(record.values("Dispatch" & block))
+                    title = DispatchKnownTitle(raw)
+                    If Len(title) > 0 Then candidates(title) = True
+                Next
+            Next
+        End If
+    End If
+    Set dispatchTitles = candidates
+    ws.Range("AZ100:AZ599").ClearContents
+    For Each key In candidates.Keys
+        If count = 500 Then Exit For
+        PutValue ws.Cells(100 + count, 52), CStr(key)
+        count = count + 1
+    Next
+    For block = 1 To 3
+        LoadDispatchArea block
+        row = DispatchRow(block)
+        With ws.Cells(row + 1, 16).Validation
+            .Delete
+            If count > 0 Then
+                .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, Formula1:="=$AZ$100:$AZ$" & 99 + count
+                .InCellDropdown = True
+                .IgnoreBlank = True
+                .ShowError = False
+            End If
+        End With
+    Next
+End Sub
+
+Public Sub LoadDispatchArea(ByVal block As Long)
+    Dim ws As Worksheet
+    Dim row As Long
+    Dim original As Range
+    Dim day As Variant
+    Dim title As String
+    Dim note As String
+    Dim recognized As Boolean
+    Set ws = Sheet("詳細")
+    row = DispatchRow(block)
+    Set original = FieldCell("Dispatch" & block)
+    day = ""
+    If Not original.Locked Then
+        recognized = ParseDispatch(CStr(original.Value2), day, title, note)
+    End If
+    ws.Cells(row + 2, 3).Value2 = "備考"
+    If original.Locked Then
+        ws.Cells(row + 2, 3).Value2 = "保存先未設定"
+    ElseIf Not recognized Then
+        ws.Cells(row + 2, 3).Value2 = "備考（原文）"
+    End If
+    PutValue ws.Cells(row + 1, 6), day, True
+    ws.Cells(row + 1, 6).NumberFormat = ws.Range("F32").NumberFormat
+    PutValue ws.Cells(row + 1, 16), title
+    PutValue ws.Cells(row + 2, 6), note
+    ws.Cells(row + 1, 6).MergeArea.Locked = original.Locked
+    ws.Cells(row + 1, 16).MergeArea.Locked = original.Locked
+    ws.Cells(row + 2, 6).MergeArea.Locked = original.Locked
+    shownDay(block) = day
+    shownTitle(block) = title
+    shownNote(block) = note
+End Sub
+
+Private Function DispatchKnownTitle(ByVal raw As String) As String
+    Dim day As Variant
+    Dim note As String
+    Dim title As String
+    If ParseDispatch(raw, day, title, note, False) Then DispatchKnownTitle = title
+End Function
+
+Private Function ParseDispatch(ByVal raw As String, ByRef day As Variant, ByRef title As String, _
+    ByRef note As String, Optional ByVal allowTitleOnly As Boolean = True) As Boolean
+    Dim text As String
+    Dim header As String
+    Dim tail As String
+    Dim parts As Variant
+    Dim position As Long
+    Dim candidates As Object
+    day = ""
+    title = ""
+    note = ""
+    If Len(raw) = 0 Then
+        ParseDispatch = True
+        Exit Function
+    End If
+    text = Replace(Replace(raw, vbCrLf, vbLf), vbCr, vbLf)
+    position = InStr(text, vbLf)
+    header = text
+    If position > 0 Then
+        header = Left$(text, position - 1)
+        tail = Mid$(text, position + 1)
+    End If
+    If Len(header) = 0 Then
+        note = tail
+        ParseDispatch = True
+        Exit Function
+    End If
+    If TryDispatchDate(Left$(header, 10), day) Then
+        Select Case Mid$(header, 11)
+            Case ""
+                note = tail
+                ParseDispatch = True
+            Case Else
+                If Mid$(header, 11, 1) = ChrW(&H3000) Then
+                    title = Mid$(header, 12)
+                    note = tail
+                    ParseDispatch = True
+                ElseIf position = 0 Then
+                    parts = Split(header, " / ")
+                    If UBound(parts) = 2 Then
+                        If Len(parts(0)) = 10 And Len(parts(1)) > 0 And Len(parts(2)) > 0 Then
+                            title = CStr(parts(1))
+                            note = "お問い合わせ番号：" & parts(2)
+                            ParseDispatch = True
+                        End If
+                    End If
+                End If
+        End Select
+    ElseIf allowTitleOnly Then
+        Set candidates = ConfiguredList(16)
+        If candidates.Exists(header) Or DispatchListedOnSheet(header) Then
+            title = header
+            note = tail
+            ParseDispatch = True
+        End If
+    End If
+    If Not ParseDispatch Then
+        day = ""
+        note = raw
+    End If
+End Function
+
+Private Function DispatchListedOnSheet(ByVal title As String) As Boolean
+    If Not dispatchTitles Is Nothing Then DispatchListedOnSheet = dispatchTitles.Exists(title)
+End Function
+
+Private Function TryDispatchDate(ByVal text As String, ByRef serial As Variant) As Boolean
+    Dim value As Date
+    On Error GoTo Invalid
+    If Not text Like "####/##/##" Then Exit Function
+    value = DateSerial(CLng(Left$(text, 4)), CLng(Mid$(text, 6, 2)), CLng(Right$(text, 2)))
+    If Format$(value, "yyyy/mm/dd") <> text Or CDbl(value) < 1 Then Exit Function
+    serial = CDbl(value)
+    TryDispatchDate = True
+Invalid:
+End Function
+
+Public Function DispatchAreaChanged(ByVal id As String) As Boolean
+    Dim block As Long
+    Dim row As Long
+    Dim ws As Worksheet
+    If Not IsDispatchField(id) Then Exit Function
+    block = CLng(Right$(id, 1))
+    row = DispatchRow(block)
+    Set ws = Sheet("詳細")
+    DispatchAreaChanged = Not SameValue(ws.Cells(row + 1, 6).Value2, shownDay(block)) Or _
+        Not SameValue(ws.Cells(row + 1, 16).Value2, shownTitle(block)) Or _
+        Not SameValue(ws.Cells(row + 2, 6).Value2, shownNote(block))
+End Function
+
+Public Function ReadDispatchArea(ByVal id As String, ByRef value As Variant, ByRef message As String) As Boolean
+    Dim ws As Worksheet
+    Dim row As Long
+    Dim day As Variant
+    Dim title As Variant
+    Dim note As Variant
+    Dim normalized As Variant
+    Dim header As String
+    Set ws = Sheet("詳細")
+    If Not DispatchAreaChanged(id) Then
+        value = FieldCell(id).Value2
+        ReadDispatchArea = True
+        Exit Function
+    End If
+    row = DispatchRow(CLng(Right$(id, 1)))
+    day = ws.Cells(row + 1, 6).Value2
+    title = ws.Cells(row + 1, 16).Value2
+    note = ws.Cells(row + 2, 6).Value2
+    message = "発送文書" & Right$(id, 1)
+    If Not NormalizeValue("ApplicationDate", day, normalized) Then
+        message = message & "の発送日を日付で入力してください。"
+        Exit Function
+    End If
+    If IsError(title) Or IsError(note) Then
+        message = message & "に入力エラーがあります。"
+        Exit Function
+    End If
+    title = Trim$(CStr(title))
+    If InStr(title, vbCr) > 0 Or InStr(title, vbLf) > 0 Then
+        message = message & "の文書名は1行で入力してください。"
+        Exit Function
+    End If
+    If Len(CStr(normalized)) > 0 Then header = Format$(CDate(normalized), "yyyy/mm/dd")
+    If Len(header) > 0 And Len(title) > 0 Then header = header & ChrW(&H3000)
+    header = header & title
+    If Len(CStr(note)) > 0 Then header = header & vbLf & Replace(Replace(CStr(note), vbCrLf, vbLf), vbCr, vbLf)
+    If Len(header) > 32767 Then
+        message = message & "がExcelの1セルの文字数上限を超えています。"
+        Exit Function
+    End If
+    value = header
+    message = ""
+    ReadDispatchArea = True
+End Function
+
+Public Sub CreateLedgerYear()
+    Dim entry As Variant
+    Dim name As Variant
+    Dim address As String
+    Dim message As String
+    Dim book As Workbook
+    Dim page As Worksheet
+    Dim ws As Worksheet
+    Dim item As Variant
+    Dim col As Long
+    On Error GoTo Failed
+    If Not CanMoveLedger(message) Then GoTo Finished
+    If Not IsOwnerAuthorized() Then
+        message = "年度シートの作成にはオーナー認証が必要です。"
+        GoTo Finished
+    End If
+    If PendingSave() Or Len(CStr(Sheet("MoveRecovery").Range("B1").Value2)) > 0 Then
+        message = "未確定の保存または移動があります。先に照合してください。"
+        GoTo Finished
+    End If
+    entry = Application.InputBox("作成する年度を西暦4桁で入力してください。", "年度追加", Type:=2)
+    If VarType(entry) = vbBoolean Then Exit Sub
+    If Not IsDigits(entry, 4) Then Exit Sub
+    address = LocateFixedLedger(message, True)
+    If Len(address) = 0 Then GoTo Finished
+    Set book = OpenLedger(address, False, message)
+    If book Is Nothing Then GoTo Finished
+    For Each ws In book.Worksheets
+        If StrComp(ws.Name, CStr(entry), vbTextCompare) = 0 Then
+            message = "同名の年度シートがあります。"
+            GoTo Finished
+        End If
+    Next
+    Set page = book.Worksheets.Add(After:=book.Worksheets(book.Worksheets.Count))
+    page.Name = CStr(entry)
+    For Each item In LedgerColumnDefinitions()
+        col = col + 1
+        page.Cells(1, col).Value2 = item(1)
+        page.Columns(col).NumberFormat = IIf(item(2) = "Date", "yyyy/mm/dd", "@")
+    Next
+    book.Save
+    If Not book.Saved Then GoTo Failed
+    book.Close False
+    Set book = OpenLedger(address, True, message)
+    If book Is Nothing Then GoTo Failed
+    Set page = book.Worksheets(CStr(entry))
+    If CStr(page.Range("A1").Value2) <> "共通番号" Then GoTo Failed
+    message = "年度シートを作成しました。設定ツールで年度・シートを登録してください。"
+Finished:
+    If Not book Is Nothing Then book.Close False
+    If Len(message) > 0 Then Notify message
+    Exit Sub
+Failed:
+    message = "年度作成の結果を確認できません。管理簿を開いて年度シートを確認してから操作してください。"
+    Resume Finished
+End Sub
+
+Public Sub ArchiveLedgerYear()
+    Dim year As Variant
+    Dim filename As Variant
+    Dim address As String
+    Dim message As String
+    Dim source As Workbook
+    Dim archive As Workbook
+    On Error GoTo Failed
+    If Not IsOwnerAuthorized() Or Not CanMoveLedger(message) Then
+        message = "年度保管にはオーナー認証と常勤フォルダからの起動が必要です。"
+        GoTo Finished
+    End If
+    year = Application.InputBox("登録済みの年度を入力してください。", "年度の保管", Type:=2)
+    If VarType(year) = vbBoolean Then Exit Sub
+    If Not LoadConfiguration(message) Then GoTo Finished
+    If Not years.Exists(CStr(year)) Then
+        message = "対象年度がありません。"
+        GoTo Finished
+    End If
+    filename = Application.InputBox("保管先の未使用の直接URLを入力してください。ファイル名は「保管_」で始め、.xlsxにしてください。", "年度の保管", Type:=2)
+    If VarType(filename) = vbBoolean Then Exit Sub
+    If Not IsDirectWorkbookAddress(CStr(filename)) Or Not IsHttpsAddress(CStr(filename)) Then Exit Sub
+    If Left$(AddressFileName(CStr(filename)), 3) <> "保管_" Or LCase$(Right$(CStr(filename), 5)) <> ".xlsx" Then Exit Sub
+    Dim target As Object
+    Set target = FileState(CStr(filename), message)
+    If target Is Nothing Then GoTo Finished
+    If target("Exists") Then
+        message = "保管先がすでに存在します。上書きしません。"
+        GoTo Finished
+    End If
+    address = ResolveYearAddress(CStr(year), message)
+    If Len(address) = 0 Then GoTo Finished
+    Set source = OpenLedger(address, True, message)
+    If source Is Nothing Then GoTo Finished
+    Dim book As Workbook
+    Set archive = Workbooks.Add(xlWBATWorksheet)
+    source.Worksheets(years(CStr(year))(1)).Copy Before:=archive.Worksheets(1)
+    archive.SaveAs CStr(filename), xlOpenXMLWorkbook
+    message = "年度シートを保管しました。正式な更新先は変わりません。"
+Finished:
+    If Not archive Is Nothing Then archive.Close False
+    If Not source Is Nothing Then source.Close False
+    If Len(message) > 0 Then Notify message
+    Exit Sub
+Failed:
+    message = "保管結果を確認できません。保存先を開いて確認してください。"
+    Resume Finished
+End Sub

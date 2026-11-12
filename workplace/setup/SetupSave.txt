@@ -1,0 +1,171 @@
+Option Explicit
+
+Private Function IsSameSnapshot(ByVal before As Object, ByVal after As Object) As Boolean
+    Dim key As Variant
+    If before.Count <> after.Count Then Exit Function
+    For Each key In before.Keys
+        If Not after.Exists(key) Then Exit Function
+        If VarType(before(key)) <> VarType(after(key)) Then Exit Function
+        If StrComp(CStr(before(key)), CStr(after(key)), vbBinaryCompare) <> 0 Then Exit Function
+    Next
+    IsSameSnapshot = True
+End Function
+
+Private Function ExpectedSnapshot() As Object
+    Dim result As Object
+    Dim key As Variant
+    Set result = Dictionary()
+    For Each key In originalValues.Keys
+        result.Add key, originalValues(key)
+    Next
+    For Each key In draftChanges.Keys
+        If Len(CStr(draftChanges(key))) = 0 Then
+            If result.Exists(key) Then result.Remove key
+        Else
+            result(key) = draftChanges(key)
+        End If
+    Next
+    Set ExpectedSnapshot = result
+End Function
+
+Private Function CreateBackup(ByVal book As Workbook) As String
+    Dim files As Object
+    Dim folder As String
+    Dim path As String
+    Dim suffix As Long
+    If IsWeb(book.FullName) Then
+        folder = ReadCell("Settings", ConfigRow("BackupFolder"), 2)
+        If Not IsDirectUrl(folder) Then Err.Raise 5, , "SharePointの設定バックアップ先を指定してください。"
+        If Right$(folder, 1) = "/" Then folder = Left$(folder, Len(folder) - 1)
+        Randomize
+        path = folder & "/CONTROLLER_config_" & Format$(Now, "yyyymmdd_hhnnss") & "_" & Format$(Rnd() * 100000000, "00000000") & ".xlsm"
+        book.SaveCopyAs path
+        Dim backupBook As Workbook
+        Dim message As String
+        Set backupBook = SafeOpen(path, False, message)
+        If backupBook Is Nothing Then Err.Raise 5, , message
+        Dim matches As Boolean
+        matches = IsSameSnapshot(Snapshot(book), Snapshot(backupBook))
+        backupBook.Close False
+        If Not matches Then Err.Raise 5, , "設定のバックアップ内容が一致しません。"
+        CreateBackup = path
+        Exit Function
+    End If
+    Set files = Filesystem()
+    folder = files.BuildPath(book.Path, "設定バックアップ")
+    If Not files.FolderExists(folder) Then files.CreateFolder folder
+    Do
+        path = files.BuildPath(folder, files.GetBaseName(book.Name) & "_" & Format$(Now, "yyyymmdd_hhnnss") & "_" & suffix & ".xlsm")
+        suffix = suffix + 1
+    Loop While files.FileExists(path)
+    book.SaveCopyAs path
+    If Not files.FileExists(path) Then Err.Raise 5, , "退避先にブックを作成できません。"
+    If files.GetFile(path).Size = 0 Then Err.Raise 5, , "退避したブックが空です。"
+    CreateBackup = path
+End Function
+
+
+
+
+Public Function SaveSetup(ByRef message As String, ByRef backup As String) As Boolean
+    Dim book As Workbook
+    Dim current As Object
+    Dim expected As Object
+    Dim key As Variant
+    Dim parts As Variant
+    Dim cell As Range
+    Dim previousEvents As Boolean
+    Dim previousAlerts As Boolean
+    Dim previousScreen As Boolean
+    Dim saveStarted As Boolean
+    Dim address As String
+    previousEvents = Application.EnableEvents
+    previousAlerts = Application.DisplayAlerts
+    previousScreen = Application.ScreenUpdating
+    On Error GoTo Failed
+    message = ""
+    backup = ""
+    If Not IsDirty() Then
+        message = "保存する変更はありません。"
+        Exit Function
+    End If
+    address = targetPath
+    Application.EnableEvents = False
+    Application.DisplayAlerts = False
+    Application.ScreenUpdating = False
+    Set book = SafeOpen(address, True, message)
+    If book Is Nothing Then GoTo Finished
+    If Not IsSameAddress(book.FullName, address) Or Not IsController(book, message) Then GoTo Finished
+    Set current = Snapshot(book)
+    If Not IsSameSnapshot(originalValues, current) Then
+        message = "本体の設定が先に変更されています。変更を控え、本体を選び直してください。"
+        GoTo Finished
+    End If
+    Set expected = ExpectedSnapshot()
+    For Each key In draftChanges.Keys
+        parts = Split(CStr(key), "|")
+        Set cell = book.Worksheets(parts(0)).Cells(CLng(parts(1)), CLng(parts(2)))
+        If cell.HasFormula Or cell.MergeCells Or cell.Parent.ProtectContents Then
+            message = "書込先に保護、結合セル、または数式があります。元の設定を確認してください。"
+            GoTo Finished
+        End If
+    Next
+
+    Dim backupKey As String
+    Dim backupWarning As String
+    backupKey = "Settings|" & ConfigRow("BackupFolder") & "|2"
+    If originalValues.Exists(backupKey) Then
+        If Len(CStr(originalValues(backupKey))) > 0 And Not draftChanges.Exists(backupKey) Then
+            On Error Resume Next
+            backup = CreateBackup(book)
+            If Err.Number <> 0 Then backupWarning = vbCrLf & "設定の退避先には接続できませんでした。"
+            Err.Clear
+            On Error GoTo Failed
+        End If
+    End If
+    For Each key In draftChanges.Keys
+        parts = Split(CStr(key), "|")
+        Set cell = book.Worksheets(parts(0)).Cells(CLng(parts(1)), CLng(parts(2)))
+        If Len(CStr(draftChanges(key))) = 0 Then
+            cell.ClearContents
+        Else
+            cell.Formula = "'" & CStr(draftChanges(key))
+        End If
+    Next
+    saveStarted = True
+    book.Save
+    If Not book.Saved Then GoTo Failed
+    book.Close False
+    Set book = Nothing
+    Set book = SafeOpen(address, True, message)
+    If book Is Nothing Then GoTo Failed
+    Set current = Snapshot(book)
+    If Not IsSameSnapshot(expected, current) Then GoTo Failed
+    book.Close False
+    Set book = Nothing
+    If Not LoadTarget(address, message) Then GoTo Failed
+    message = "入力済みの設定を保存しました。本体の「最新を再読込」で管理簿を確認できます。" & backupWarning
+    SaveSetup = True
+Finished:
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close False
+    Application.EnableEvents = previousEvents
+    Application.DisplayAlerts = previousAlerts
+    Application.ScreenUpdating = previousScreen
+    On Error GoTo 0
+    Exit Function
+Failed:
+    If saveStarted Then
+        message = "保存結果を確定できません。本体と退避ファイルを確認してください。" & vbCrLf & backup
+    Else
+        message = "設定を保存できませんでした。書込権限、設定形式、退避先を確認してください。"
+    End If
+    Resume Finished
+End Function
+
+Public Function ActiveYearCount() As Long
+    Dim year As Variant
+    For Each year In draftYears.Keys
+        If draftYears(year)("Enabled") Then ActiveYearCount = ActiveYearCount + 1
+    Next
+End Function

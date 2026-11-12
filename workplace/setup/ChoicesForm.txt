@@ -1,0 +1,77 @@
+Option Explicit
+
+Private choiceColumn As Long
+
+Public Sub EditChoices(ByVal column As Long)
+    Dim item As Variant
+    StyleControls Me
+    choiceColumn = column
+    Caption = ReadCell("Settings", 1, column) & "の選択肢"
+    For Each item In DraftChoices(column)
+        Entries.AddItem CStr(item)
+    Next
+    Show
+End Sub
+
+Private Sub Entries_Click()
+    If Entries.ListIndex >= 0 Then Candidate.value = Entries.List(Entries.ListIndex)
+End Sub
+
+Private Sub AddChoice_Click()
+    If Len(Trim$(Candidate.value)) = 0 Then Exit Sub
+    Entries.AddItem Trim$(Candidate.value)
+    Entries.ListIndex = Entries.ListCount - 1
+    Candidate.value = ""
+    Candidate.SetFocus
+End Sub
+
+Private Sub RenameChoice_Click()
+    If Entries.ListIndex < 0 Or Len(Trim$(Candidate.value)) = 0 Then Exit Sub
+    Entries.List(Entries.ListIndex) = Trim$(Candidate.value)
+End Sub
+
+Private Sub RemoveChoice_Click()
+    If Entries.ListIndex < 0 Then Exit Sub
+    Entries.RemoveItem Entries.ListIndex
+    Candidate.value = ""
+End Sub
+
+Private Sub MoveUp_Click()
+    MoveChoice -1
+End Sub
+
+Private Sub MoveDown_Click()
+    MoveChoice 1
+End Sub
+
+Private Sub MoveChoice(ByVal offset As Long)
+    Dim previous As Long
+    Dim destination As Long
+    Dim label As String
+    previous = Entries.ListIndex
+    If previous < 0 Then Exit Sub
+    destination = previous + offset
+    If destination < 0 Or destination >= Entries.ListCount Then Exit Sub
+    label = Entries.List(previous)
+    Entries.List(previous) = Entries.List(destination)
+    Entries.List(destination) = label
+    Entries.ListIndex = destination
+End Sub
+
+Private Sub ApplyChoices_Click()
+    Dim items As New Collection
+    Dim index As Long
+    Dim message As String
+    For index = 0 To Entries.ListCount - 1
+        items.Add Entries.List(index)
+    Next
+    If StageChoices(choiceColumn, items, message) Then
+        Unload Me
+    Else
+        MsgBox message, vbExclamation, Caption
+    End If
+End Sub
+
+Private Sub CancelChoices_Click()
+    Unload Me
+End Sub

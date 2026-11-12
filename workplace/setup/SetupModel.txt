@@ -1,0 +1,264 @@
+Option Explicit
+
+Public targetPath As String
+Public draftYears As Object
+Public fieldSpecs As Object
+Public originalValues As Object
+Public draftChanges As Object
+Public comparisonPath As String
+Public comparisonSheet As String
+
+Public Function Dictionary() As Object
+    Set Dictionary = CreateObject("Scripting.Dictionary")
+End Function
+
+Public Function Filesystem() As Object
+    Set Filesystem = CreateObject("Scripting.FileSystemObject")
+End Function
+
+Public Function SheetLastRow(ByVal sheet As Worksheet, ByVal columns As String) As Long
+    Dim found As Range
+    Set found = sheet.Range(columns).Find(What:="*", After:=sheet.Range(columns).Cells(1, 1), LookIn:=xlFormulas, _
+        LookAt:=xlPart, SearchOrder:=xlByRows, SearchDirection:=xlPrevious, MatchCase:=False, SearchFormat:=False)
+    SheetLastRow = 1
+    If Not found Is Nothing Then SheetLastRow = found.Row
+End Function
+
+Public Function FileLabel(ByVal address As String) As String
+    address = Replace(address, "\", "/")
+    FileLabel = Mid$(address, InStrRev(address, "/") + 1)
+End Function
+
+Public Function IsWeb(ByVal address As String) As Boolean
+    IsWeb = LCase$(Left$(address, 8)) = "https://"
+End Function
+
+Public Function IsDirectUrl(ByVal address As String) As Boolean
+    IsDirectUrl = IsHttpsAddress(address) And Len(CanonicalAddress(address)) > 0
+End Function
+
+Public Function IsWorkbookUrl(ByVal address As String) As Boolean
+    IsWorkbookUrl = IsHttpsAddress(address) And IsDirectWorkbookAddress(address)
+End Function
+
+Public Function IsSameAddress(ByVal first As String, ByVal second As String) As Boolean
+    If IsWeb(first) Or IsWeb(second) Then
+        IsSameAddress = IsSameWorkbookAddress(first, second)
+    Else
+        IsSameAddress = StrComp(first, second, vbTextCompare) = 0
+    End If
+End Function
+
+Public Function SafeOpen(ByVal address As String, ByVal writableTarget As Boolean, ByRef message As String) As Workbook
+    Set SafeOpen = OpenAddressWorkbook(address, Not writableTarget, writableTarget, message)
+End Function
+
+Public Function HeadersMatch(ByVal sheet As Worksheet, ByVal firstColumn As Long, ByVal expected As Variant) As Boolean
+    Dim index As Long
+    For index = LBound(expected) To UBound(expected)
+        If CStr(sheet.Cells(1, firstColumn + index).Value2) <> CStr(expected(index)) Then Exit Function
+    Next
+    HeadersMatch = True
+End Function
+
+Public Function IsController(ByVal book As Workbook, ByRef message As String) As Boolean
+    Dim settings As Worksheet
+    Dim fields As Worksheet
+    Dim comparison As Worksheet
+    Dim other As Worksheet
+    On Error GoTo Invalid
+    If book.FileFormat <> xlOpenXMLWorkbookMacroEnabled Or book.Date1904 Then GoTo Invalid
+    Set settings = book.Worksheets("Settings")
+    Set fields = book.Worksheets("Fields")
+    Set comparison = book.Worksheets("Comparison")
+    Set other = book.Worksheets("検索")
+    Set other = book.Worksheets("詳細")
+    If Not HeadersMatch(settings, 1, Array("Setting", "Value")) Then GoTo Invalid
+    If Not HeadersMatch(settings, 4, Array("Year", "（未使用）", "Sheet", "Enabled", "AllowWrite", "（未使用）")) Then GoTo Invalid
+    If Not HeadersMatch(fields, 1, Array("FieldId", "Header", "Type", "Sheet", "Cell", "Required")) Then GoTo Invalid
+    If Not HeadersMatch(fields, 8, Array("Year", "FieldId", "HeaderOverride")) Then GoTo Invalid
+    If CStr(comparison.Range("A2").Value2) <> "Address" Or CStr(comparison.Range("A3").Value2) <> "Sheet" Then GoTo Invalid
+    If CStr(book.Worksheets("Recovery").Range("B1").Value2) <> "" Or _
+        CStr(book.Worksheets("MoveRecovery").Range("B1").Value2) <> "" Then
+        message = "本体で前回の保存・移動結果を確認してから設定してください。"
+        Exit Function
+    End If
+    IsController = True
+    Exit Function
+Invalid:
+    message = "対応するCONTROLLERの設定構造が見つかりません。統合版の .xlsm を選択してください。"
+End Function
+
+Public Function Snapshot(ByVal book As Workbook) As Object
+    Dim result As Object
+    Dim sheetName As Variant
+    Dim sheet As Worksheet
+    Dim columnCount As Long
+    Dim rowIndex As Long
+    Dim colIndex As Long
+    Dim area As Range
+    Dim formulas As Variant
+    Dim values As Variant
+    Dim value As Variant
+    Set result = Dictionary()
+    For Each sheetName In Array("Settings", "Fields", "Comparison")
+        Set sheet = book.Worksheets(CStr(sheetName))
+        Select Case sheetName
+            Case "Settings": columnCount = 25
+            Case "Fields": columnCount = 11
+            Case "Comparison": columnCount = 6
+        End Select
+        Set area = sheet.Range(sheet.Cells(1, 1), sheet.Cells(Application.Max(7, SheetLastRow(sheet, "A:" & _
+            Split(sheet.Cells(1, columnCount).Address, "$")(1))), columnCount))
+        'Formulaは数値定数を文字列で返すことがある。定数の型はValue2で保持する。
+        formulas = area.Formula
+        values = area.Value2
+        For rowIndex = 1 To UBound(values, 1)
+            For colIndex = 1 To columnCount
+                value = values(rowIndex, colIndex)
+                If VarType(formulas(rowIndex, colIndex)) = vbString Then
+                    If Left$(formulas(rowIndex, colIndex), 1) = "=" Then
+                        If area.Cells(rowIndex, colIndex).HasFormula Then value = formulas(rowIndex, colIndex)
+                    End If
+                End If
+                If IsError(value) Then Err.Raise 5, , "設定シートにExcelエラーがあります。"
+                If Len(CStr(value)) > 0 Then
+                    result.Add CStr(sheetName) & "|" & rowIndex & "|" & colIndex, value
+                End If
+            Next
+        Next
+    Next
+    Set Snapshot = result
+End Function
+
+Public Function ReadCell(ByVal sheetName As String, ByVal row As Long, ByVal column As Long) As String
+    Dim key As String
+    key = sheetName & "|" & row & "|" & column
+    If draftChanges.Exists(key) Then
+        ReadCell = CStr(draftChanges(key))
+    ElseIf originalValues.Exists(key) Then
+        ReadCell = CStr(originalValues(key))
+    End If
+End Function
+
+Public Sub StageCell(ByVal sheetName As String, ByVal row As Long, ByVal column As Long, ByVal value As String)
+    Dim key As String
+    Dim original As String
+    key = sheetName & "|" & row & "|" & column
+    If originalValues.Exists(key) Then original = CStr(originalValues(key))
+    If value = original Then
+        If draftChanges.Exists(key) Then draftChanges.Remove key
+    Else
+        draftChanges(key) = value
+    End If
+End Sub
+
+Public Function ConfigRow(ByVal name As String) As Long
+    Dim key As Variant
+    Dim parts As Variant
+    For Each key In originalValues.Keys
+        parts = Split(CStr(key), "|")
+        If parts(0) = "Settings" And parts(2) = "1" Then
+            If originalValues(key) = name Then
+                ConfigRow = CLng(parts(1))
+                Exit Function
+            End If
+        End If
+    Next
+    Err.Raise 5, , "必要な運用設定が本体にありません。"
+End Function
+
+Public Function IsDirty() As Boolean
+    If Not draftChanges Is Nothing Then IsDirty = draftChanges.Count > 0
+End Function
+
+Public Function LoadTarget(ByVal address As String, ByRef message As String) As Boolean
+    Dim book As Workbook
+    Dim sheet As Worksheet
+    Dim row As Long
+    Dim fieldId As String
+    Dim year As String
+    Dim localYears As Object
+    Dim localFields As Object
+    Dim localValues As Object
+    Dim item As Object
+    On Error GoTo Failed
+    message = ""
+    Set book = SafeOpen(address, False, message)
+    If book Is Nothing Then Exit Function
+    If Not IsController(book, message) Then GoTo Finished
+    Set localValues = Snapshot(book)
+    Set localFields = Dictionary()
+    Set localYears = Dictionary()
+    Set sheet = book.Worksheets("Fields")
+    For row = 2 To SheetLastRow(sheet, "A:A")
+        fieldId = CStr(sheet.Cells(row, 1).Value2)
+        If Len(fieldId) > 0 Then
+            localFields.Add fieldId, Array(CStr(sheet.Cells(row, 2).Value2), _
+                sheet.Cells(row, 6).Value2 = "Yes" Or fieldId = "CommonNumber", CStr(sheet.Cells(row, 3).Value2))
+        End If
+    Next
+    If Not localFields.Exists("CommonNumber") Or Not localFields.Exists("PersonName") Then
+        message = "本体の必須項目の定義が不足しています。"
+        GoTo Finished
+    End If
+    Set sheet = book.Worksheets("Settings")
+    For row = 2 To SheetLastRow(sheet, "D:I")
+        year = CStr(sheet.Cells(row, 4).Value2)
+        If Len(year) > 0 Then
+            If localYears.Exists(year) Then
+                message = year & "年度が本体の設定で重複しています。重複を整理してから開き直してください。"
+                GoTo Finished
+            End If
+            Set item = NewYearItem(row)
+            item("Staff") = CStr(sheet.Range("B7").Value2)
+            item("Sheet") = CStr(sheet.Cells(row, 6).Value2)
+            item("Enabled") = (sheet.Cells(row, 7).Value2 = "Yes")
+            item("Write") = CStr(sheet.Cells(row, 8).Value2)
+            item("General") = CStr(sheet.Range("B8").Value2)
+            localYears.Add year, item
+        End If
+    Next
+    Set sheet = book.Worksheets("Comparison")
+    comparisonPath = CStr(sheet.Range("B2").Value2)
+    comparisonSheet = CStr(sheet.Range("B3").Value2)
+    targetPath = book.FullName
+    Set fieldSpecs = localFields
+    Set draftYears = localYears
+    Set originalValues = localValues
+    Set draftChanges = Dictionary()
+    LoadTarget = True
+Finished:
+    If Not book Is Nothing Then book.Close False
+    Exit Function
+Failed:
+    message = "既存設定を読めませんでした。形式・重複・数式エラーを確認してください。"
+    Resume Finished
+End Function
+
+Public Function NewYearItem(ByVal row As Long) As Object
+    Dim item As Object
+    Set item = Dictionary()
+    item.Add "Row", row
+    item.Add "Staff", ""
+    item.Add "General", ""
+    item.Add "Sheet", ""
+    item.Add "Enabled", False
+    item.Add "Write", "No"
+    item.Add "State", ""
+    item.Add "Count", 0
+    item.Add "Unmapped", ""
+    Set NewYearItem = item
+End Function
+
+Public Function NextYearRow() As Long
+    Dim year As Variant
+    NextYearRow = 2
+    For Each year In draftYears.Keys
+        If draftYears(year)("Row") >= NextYearRow Then NextYearRow = draftYears(year)("Row") + 1
+    Next
+    Do While Len(ReadCell("Settings", NextYearRow, 5) & ReadCell("Settings", NextYearRow, 6) & _
+        ReadCell("Settings", NextYearRow, 7) & ReadCell("Settings", NextYearRow, 8) & ReadCell("Settings", NextYearRow, 9)) > 0
+        NextYearRow = NextYearRow + 1
+    Loop
+End Function

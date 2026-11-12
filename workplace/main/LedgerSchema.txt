@@ -1,0 +1,84 @@
+Option Explicit
+
+Public Function LedgerColumnDefinitions() As Variant
+    LedgerColumnDefinitions = Array( _
+        Array("CommonNumber", "共通番号", "Text", "F17", "Yes"), _
+        Array("Office", "署", "Text", "Q20", "No"), _
+        Array("PersonName", "氏名", "Text", "F14", "Yes"), _
+        Array("DocumentName", "申請書種別", "Text", "F29", "No"), _
+        Array("SubmissionFormat", "提出形式", "Text", "F27", "No"), _
+        Array("TaxYear", "年分", "Text", "Q27", "No"), _
+        Array("Status", "状態", "Text", "F36", "No"), _
+        Array("ApplicationDate", "申請日", "Date", "F32", "No"), _
+        Array("DraftDate", "起案日", "Date", "F38", "No"), _
+        Array("ApprovedDate", "決裁日", "Date", "Q38", "No"), _
+        Array("IssuedDate", "施行日", "Date", "F41", "No"), _
+        Array("CompletedDate", "完了日", "Date", "F43", "No"), _
+        Array("Memo1", "メモ1", "Text", "F53", "No"), _
+        Array("Memo2", "メモ2", "Text", "F54", "No"), _
+        Array("Memo3", "メモ3", "Text", "F55", "No"), _
+        Array("Dispatch1", "発送文書1", "Text", "F66", "No"), _
+        Array("Dispatch2", "発送文書2", "Text", "F67", "No"), _
+        Array("Dispatch3", "発送文書3", "Text", "F68", "No"), _
+        Array("ApprovalNumber", "決裁番号", "Text", "Q36", "No"), _
+        Array("InquiryNumber", "お問い合わせ番号", "Text", "Q41", "No"), _
+        Array("Furigana", "フリガナ", "Text", "Q14", "No"), _
+        Array("PostalCode", "郵便番号", "Text", "Q23", "No"), _
+        Array("Address", "住所", "Text", "F20", "No"), _
+        Array("PhoneNumber", "電話番号", "Text", "F23", "No"))
+End Function
+
+Public Function IsAutomaticStatus(ByVal value As String) As Boolean
+    IsAutomaticStatus = value = "起案済" Or value = "決裁済" Or value = "終了【終】"
+End Function
+
+Public Sub InstallLedgerSchema()
+    Dim config As Worksheet
+    Dim page As Worksheet
+    Dim item As Variant
+    Dim row As Long
+    Set config = Sheet("Settings")
+    config.Range("A2:B11").ClearContents
+    config.Range("A2").Value2 = "Transport"
+    config.Range("B2").Value2 = "SharePoint"
+    config.Range("A3").Value2 = "SharePointSite"
+    config.Range("A4").Value2 = "BackupFolder"
+    config.Range("A5").Value2 = "StaffFolder"
+    config.Range("A6").Value2 = "GeneralFolder"
+    config.Range("A7").Value2 = "StaffLedger"
+    config.Range("A8").Value2 = "GeneralLedger"
+    config.Range("D1:I1").Value2 = Array("Year", "（未使用）", "Sheet", "Enabled", "AllowWrite", "（未使用）")
+    config.Range("Q1").Value2 = "提出形式"
+    config.Range("P1").Value2 = "申請書種別"
+    config.Range("O2:O4").Value2 = Application.Transpose(Array("終了【終】", "署へ移行【終】", "他グループへ移行【終】"))
+    config.Range("R2:R6").Value2 = Application.Transpose(Array("未判定", "起案可能", "接触中", "署へ移行【終】", "他グループへ移行【終】"))
+    Set page = Sheet("Fields")
+    page.Range("A2:K60").ClearContents
+    row = 2
+    For Each item In LedgerColumnDefinitions()
+        page.Cells(row, 1).Resize(1, 6).Value2 = Array(item(0), item(1), item(2), "詳細", item(3), item(4))
+        row = row + 1
+    Next
+    Set page = Sheet("詳細")
+    page.Unprotect
+    page.Range("C17").Value2 = "共通番号"
+    page.Range("N17").MergeArea.ClearContents
+    page.Range("Q17").MergeArea.ClearContents
+    page.Range("C27").Value2 = "提出形式"
+    page.Range("C29").Value2 = "申請書種別"
+    page.Range("C32").Value2 = "申請日"
+    page.Range("E9").Value2 = "共通番号"
+    page.Range("C65").Value2 = "発送文書"
+    For row = 66 To 68
+        page.Cells(row, 3).Value2 = "発送文書" & (row - 65)
+        page.Range("F" & row & ":V" & row).Merge
+        page.Range("F" & row).NumberFormat = "@"
+    Next
+    InstallDispatchAreas
+    page.Protect DrawingObjects:=False, UserInterfaceOnly:=True
+    Set page = Sheet("オーナー専用")
+    AddWorkflowButton page, "NewLedgerYear", "年度シート追加", "CreateLedgerYear", page.Range("B13:E14")
+    AddWorkflowButton page, "ArchiveLedgerYear", "年度シート保管", "ArchiveLedgerYear", page.Range("F13:I14")
+    Set page = Sheet("検索")
+    AddWorkflowButton page, "LedgerMove", "移動状態を確認", "MoveLedgerFromCurrentLocation", page.Range("C44:K46")
+End Sub

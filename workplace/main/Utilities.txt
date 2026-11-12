@@ -1,0 +1,135 @@
+Option Explicit
+
+Public Function IsDigits(ByVal value As Variant, ByVal size As Long) As Boolean
+    Dim index As Long
+    Dim text As String
+    If VarType(value) <> vbString Then Exit Function
+    text = CStr(value)
+    If Len(text) <> size Then Exit Function
+    For index = 1 To size
+        If Mid$(text, index, 1) < "0" Or Mid$(text, index, 1) > "9" Then Exit Function
+    Next
+    IsDigits = True
+End Function
+
+Public Function RestoreNumber(ByVal masked As Variant, ByRef number As String) As Boolean
+    Dim text As String
+    Dim body As String
+    Dim index As Long
+    number = ""
+    If VarType(masked) <> vbString Then Exit Function
+    text = CStr(masked)
+    If IsDigits(text, 13) Then
+        number = text
+        RestoreNumber = True
+        Exit Function
+    End If
+    If Len(text) <> 20 Then Exit Function
+    If Left$(text, 4) <> "MN1:" Or Mid$(text, 18, 1) <> ":" Then Exit Function
+    body = Mid$(text, 5, 13)
+    If Not IsDigits(body, 13) Then Exit Function
+    For index = 13 To 1 Step -1
+        number = number & CStr((CLng(Mid$(body, index, 1)) + 3) Mod 10)
+    Next
+    If Right$(text, 2) <> NumberChecksum(number) Then
+        number = ""
+        Exit Function
+    End If
+    RestoreNumber = True
+End Function
+
+Private Function NumberChecksum(ByVal number As String) As String
+    Dim index As Long
+    Dim total As Long
+    For index = 1 To 13
+        total = total + index * CLng(Mid$(number, index, 1))
+    Next
+    NumberChecksum = Format$(total Mod 97, "00")
+End Function
+
+Public Function NormalizeValue(ByVal fieldId As String, ByVal value As Variant, ByRef normalized As Variant) As Boolean
+    Dim text As String
+    normalized = value
+    If IsError(value) Or IsNull(value) Then Exit Function
+    If Len(CStr(value)) = 0 Then
+        normalized = ""
+    ElseIf fields(fieldId)(1) = "Date" Then
+        If VarType(value) = vbString Or VarType(value) = vbBoolean Then Exit Function
+        If Not IsNumeric(value) Then Exit Function
+        If CDbl(value) < 1 Or CDbl(value) > 2958465# Then Exit Function
+        If CDbl(value) <> Fix(CDbl(value)) Then Exit Function
+        normalized = CDbl(value)
+    Else
+        '文字列項目を数値から推測復元しない。失われた先頭0は補完しない。
+        If VarType(value) <> vbString Then Exit Function
+        text = CStr(value)
+        If fieldId = "PostalCode" Or fieldId = "PhoneNumber" Then
+            text = Replace(text, "-", "")
+            If fieldId = "PostalCode" Then
+                If Not IsDigits(text, 7) Then Exit Function
+            Else
+                If Len(text) < 9 Or Len(text) > 11 Then Exit Function
+                If Not IsDigits(text, Len(text)) Then Exit Function
+            End If
+        End If
+        normalized = text
+    End If
+    NormalizeValue = True
+End Function
+
+Public Function DisplayValue(ByVal fieldId As String, ByVal value As Variant) As Variant
+    Dim text As String
+    DisplayValue = value
+    If fieldId = "PostalCode" Then
+        text = CStr(value)
+        If IsDigits(text, 7) Then DisplayValue = Left$(text, 3) & "-" & Right$(text, 4)
+    ElseIf fieldId = "PhoneNumber" Then
+        DisplayValue = FormatPhone(CStr(value))
+    End If
+End Function
+
+Private Function FormatPhone(ByVal text As String) As String
+    Dim prefix As String
+    Dim rowIndex As Long
+    Dim areaLength As Long
+    Dim exchangeLength As Long
+    Dim longest As Long
+    Dim ws As Worksheet
+    FormatPhone = text
+    If Len(text) = 11 Then
+        Select Case Left$(text, 3)
+            Case "070", "080", "090", "050"
+                FormatPhone = Left$(text, 3) & "-" & Mid$(text, 4, 4) & "-" & Right$(text, 4)
+                Exit Function
+        End Select
+    End If
+    If Len(text) <> 10 Then Exit Function
+    Set ws = Sheet("Settings")
+    For rowIndex = 2 To LastRow(ws)
+        prefix = CStr(ws.Cells(rowIndex, 10).Value2)
+        If Len(prefix) > longest And Len(prefix) > 0 Then
+            If Left$(text, Len(prefix)) = prefix Then
+                If IsNumeric(ws.Cells(rowIndex, 11).Value2) And IsNumeric(ws.Cells(rowIndex, 12).Value2) Then
+                    areaLength = CLng(ws.Cells(rowIndex, 11).Value2)
+                    exchangeLength = CLng(ws.Cells(rowIndex, 12).Value2)
+                    If areaLength >= 2 And areaLength <= 5 And exchangeLength >= 1 Then
+                        If areaLength + exchangeLength + 4 = 10 Then
+                            FormatPhone = Left$(text, areaLength) & "-" & Mid$(text, areaLength + 1, exchangeLength) & "-" & Right$(text, 4)
+                            longest = Len(prefix)
+                        End If
+                    End If
+                End If
+            End If
+        End If
+    Next
+End Function
+
+Public Function WriteClipboard(ByVal text As String) As Boolean
+    Dim clipboard As Object
+    On Error GoTo Failed
+    Set clipboard = CreateObject("new:{1C3B4210-F441-11CE-B9EA-00AA006B1A69}")
+    clipboard.SetText text
+    clipboard.PutInClipboard
+    WriteClipboard = True
+Failed:
+End Function

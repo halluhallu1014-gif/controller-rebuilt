@@ -1,0 +1,71 @@
+Option Explicit
+
+Public Sub InstallControllerSettings()
+    BuildControllerSettings True
+End Sub
+
+Public Sub BuildControllerSettings(ByVal showResult As Boolean)
+    Dim book As Workbook
+    Dim page As Worksheet
+    Dim preferences As Worksheet
+    Dim button As Shape
+    Dim phase As String
+    On Error GoTo Failed
+    Set book = ThisWorkbook
+    phase = "空ブックの検証"
+    If book.ReadOnly Or book.Worksheets.Count <> 1 Or book.Sheets.Count <> 1 Then Err.Raise 5
+    Set page = book.Worksheets(1)
+    If page.Shapes.Count <> 0 Or Application.CountA(page.UsedRange) <> 0 Or book.Names.Count <> 0 Then Err.Raise 5
+    If page.Name = "設定" Or page.Name = "Preferences" Then Err.Raise 5
+    phase = "設定シートの構築"
+    page.Name = "設定"
+    page.Range("B2:L4").Merge
+    page.Range("B2").Value2 = "CONTROLLER 設定"
+    page.Range("B2:L4").Interior.Color = &H432C16
+    page.Range("B2:L4").Font.Color = vbWhite
+    page.Range("B2:L12").Font.Name = "Meiryo UI"
+    page.Range("B2").Font.Size = 20
+    page.Range("B6").Value2 = "ファイルを選ぶと、年度・シート・項目を読み取ります。"
+    Set button = page.Shapes.AddShape(msoShapeRoundedRectangle, 65, 117, 170, 35)
+    button.Name = "OpenSetupButton"
+    button.TextFrame2.TextRange.Text = "設定を開く"
+    button.TextFrame2.TextRange.Font.Name = "Meiryo UI"
+    button.TextFrame2.TextRange.Font.Size = 12
+    button.Fill.ForeColor.RGB = &H92642E
+    button.OnAction = "'" & Replace(book.Name, "'", "''") & "'!OpenSetup"
+    Set preferences = book.Worksheets.Add(Before:=page)
+    preferences.Name = "Preferences"
+    preferences.Range("A1").Value2 = "既定の設定対象"
+    preferences.Visible = xlSheetHidden
+    page.Activate
+    book.Windows(1).DisplayGridlines = False
+    phase = "フォームと設定の検証"
+    VerifyInstalledSettings
+    If showResult Then MsgBox "CONTROLLER設定の構築と構成確認が完了しました。", vbInformation
+    Exit Sub
+Failed:
+    Dim message As String
+    message = "導入不合格。工程 " & phase & " " & Err.Description
+    If showResult Then
+        MsgBox message, vbCritical
+    Else
+        Err.Raise 5, , message
+    End If
+End Sub
+
+Private Sub VerifyInstalledSettings()
+    Dim book As Workbook
+    Set book = ThisWorkbook
+    If book.Worksheets.Count <> 2 Then Err.Raise 5, , "sheet count"
+    If Replace(book.Worksheets("設定").Shapes("OpenSetupButton").OnAction, "'", "") <> _
+        Replace(book.Name, "'", "") & "!OpenSetup" Then Err.Raise 5, , "マクロ割当"
+    If book.Worksheets("Preferences").Visible <> xlSheetHidden Then Err.Raise 5, , "visibility"
+    Load SettingsForm
+    Load PickForm
+    Load ChoicesForm
+    If SettingsForm.Controls.Count <> 17 Or PickForm.Controls.Count <> 4 Or ChoicesForm.Controls.Count <> 10 Then Err.Raise 5, , "control counts"
+    Unload ChoicesForm
+    Unload PickForm
+    Unload SettingsForm
+End Sub
+

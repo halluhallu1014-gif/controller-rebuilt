@@ -1,0 +1,158 @@
+Option Explicit
+
+Public Sub InstallImportDefaults(ByVal config As Worksheet)
+    Dim rules As Variant
+    Dim i As Long
+    rules = Array(Array("基本情報", "共通番号", "CommonNumber", "Right", "Auto", "Digits18"), _
+        Array("基本情報", "氏名", "PersonName", "Right", "Auto", "Trim"), _
+        Array("基本情報", "フリガナ", "Furigana", "Right", "Auto", "Trim"), _
+        Array("基本情報", "郵便番号", "PostalCode", "Right", "Auto", "Postal"), _
+        Array("基本情報", "住所", "Address", "Right", "Auto", "Trim"), _
+        Array("基本情報", "電話番号", "PhoneNumber", "Right", "Auto", "Phone"))
+    For i = 0 To UBound(rules)
+        config.Cells(i + 2, 20).Resize(1, 6).Value2 = rules(i)
+    Next
+End Sub
+
+Public Function IsImportRule(ByVal rule As Variant) As Boolean
+    If Len(Trim$(rule(0))) = 0 Or Len(Trim$(rule(1))) = 0 Then Exit Function
+    Select Case rule(3)
+        Case "Right"
+            Select Case rule(4)
+                Case "Auto", "Tab", "Colon":
+                Case Else: Exit Function
+            End Select
+        Case "Next"
+            If rule(4) <> "Line" Then Exit Function
+        Case Else: Exit Function
+    End Select
+    Select Case rule(2)
+        Case "CommonNumber": IsImportRule = (rule(5) = "Digits18")
+        Case "PostalCode": IsImportRule = (rule(5) = "Postal")
+        Case "PhoneNumber": IsImportRule = (rule(5) = "Phone")
+        Case "PersonName", "Furigana", "Address": IsImportRule = (rule(5) = "Trim")
+    End Select
+End Function
+
+Public Function ParseWorkflowImport(ByVal inputText As String, ByVal ruleData As Variant, ByVal profile As String, ByRef issues As String) As Object
+    Dim result As Object
+    Dim seen As Object
+    Dim rule As Variant
+    Dim lines As Variant
+    Dim lineText As String
+    Dim name As String
+    Dim value As String
+    Dim splitAt As Long
+    Dim row As Long
+    Dim i As Long
+    Dim count As Long
+
+    Set result = NewDictionary()
+    Set seen = NewDictionary()
+    issues = ""
+    lines = Split(Replace(Replace(inputText, vbCrLf, vbLf), vbCr, vbLf), vbLf)
+    For row = LBound(ruleData, 1) To UBound(ruleData, 1)
+        If CStr(ruleData(row, 1)) = profile And Len(profile) > 0 Then
+            rule = Array(CStr(ruleData(row, 1)), CStr(ruleData(row, 2)), CStr(ruleData(row, 3)), _
+                CStr(ruleData(row, 4)), CStr(ruleData(row, 5)), CStr(ruleData(row, 6)))
+            If Not IsImportRule(rule) Then
+                issues = issues & "抽出ルールが無効です。行 " & row & vbCrLf
+            Else
+                count = 0
+                value = ""
+                For i = LBound(lines) To UBound(lines)
+                    lineText = CleanImportText(CStr(lines(i)))
+                    If rule(3) = "Next" Then
+                        If lineText = rule(1) Then
+                            count = count + 1
+                            If i < UBound(lines) Then value = CleanImportText(CStr(lines(i + 1)))
+                        End If
+                    Else
+                        splitAt = ImportSeparator(lineText, CStr(rule(4)))
+                        If splitAt > 0 Then
+                            name = CleanImportText(Left$(lineText, splitAt - 1))
+                            If name = rule(1) Then
+                                count = count + 1
+                                value = CleanImportText(Mid$(lineText, splitAt + 1))
+                            End If
+                        End If
+                    End If
+                Next
+                If count > 0 Then
+                    If seen.Exists(rule(2)) Or count > 1 Then
+                        If result.Exists(rule(2)) Then result.Remove rule(2)
+                        issues = issues & rule(1) & "：候補が複数あります。" & vbCrLf
+                    ElseIf ImportValueValid(CStr(rule(5)), value) Then
+                        result.Add rule(2), value
+                    Else
+                        issues = issues & rule(1) & "：空欄または形式不正です。" & vbCrLf
+                    End If
+                    seen(rule(2)) = True
+                End If
+            End If
+        End If
+    Next
+    Set ParseWorkflowImport = result
+End Function
+
+Private Function CleanImportText(ByVal text As String) As String
+    CleanImportText = Trim$(Replace(Replace(Replace(text, ChrW(&HFEFF), ""), ChrW(&H200B), ""), ChrW(&H3000), " "))
+End Function
+
+Private Function ImportSeparator(ByVal lineText As String, ByVal mode As String) As Long
+    If mode <> "Colon" Then ImportSeparator = InStr(lineText, vbTab)
+    If ImportSeparator = 0 And mode <> "Tab" Then ImportSeparator = InStr(Replace(lineText, "：", ":"), ":")
+End Function
+
+Private Function ImportValueValid(ByVal mode As String, ByVal value As String) As Boolean
+    If Len(value) = 0 Then Exit Function
+    Select Case mode
+        Case "Digits18": ImportValueValid = IsDigits(value, 18)
+        Case "Postal"
+            ImportValueValid = IsDigits(Replace(value, "-", ""), 7)
+        Case "Phone"
+            value = Replace(value, "-", "")
+            If Len(value) >= 9 And Len(value) <= 11 Then ImportValueValid = IsDigits(value, Len(value))
+        Case "Trim": ImportValueValid = True
+    End Select
+End Function
+
+Public Function WorkflowImportPreview(ByVal inputText As String, ByVal rules As Variant, ByVal profile As String) As String
+    Dim values As Object
+    Dim id As Variant
+    Dim issues As String
+    Set values = ParseWorkflowImport(inputText, rules, profile, issues)
+    For Each id In values.Keys
+        WorkflowImportPreview = WorkflowImportPreview & id & " = " & values(id) & vbCrLf
+    Next
+    If values.Count = 0 Then WorkflowImportPreview = "抽出できる値がありません。" & vbCrLf
+    WorkflowImportPreview = WorkflowImportPreview & issues
+End Function
+
+Public Function ReadWorkflowClipboard() As String
+    Dim clipboard As Object
+    On Error GoTo Finished
+    Set clipboard = CreateObject("new:{1C3B4210-F441-11CE-B9EA-00AA006B1A69}")
+    clipboard.GetFromClipboard
+    ReadWorkflowClipboard = clipboard.GetText(1)
+Finished:
+End Function
+
+Public Function ReadWorkflowPaste() As String
+    Dim selected As Range
+    Dim row As Long
+    Dim col As Long
+    On Error Resume Next
+    Set selected = Application.InputBox("別の空Excelブックに文字列を貼り付け、貼り付けた範囲を選んでください。", "貼り付け範囲", Type:=8)
+    On Error GoTo 0
+    If selected Is Nothing Then Exit Function
+    If selected.Parent.Parent Is ThisWorkbook Then Exit Function
+    If selected.Areas.Count <> 1 Or selected.CountLarge > 5000 Then Exit Function
+    For row = 1 To selected.Rows.Count
+        If row > 1 Then ReadWorkflowPaste = ReadWorkflowPaste & vbLf
+        For col = 1 To selected.Columns.Count
+            If col > 1 Then ReadWorkflowPaste = ReadWorkflowPaste & vbTab
+            If Not IsError(selected.Cells(row, col).Value2) Then ReadWorkflowPaste = ReadWorkflowPaste & CStr(selected.Cells(row, col).Value2)
+        Next
+    Next
+End Function
