@@ -67,7 +67,7 @@ Public Sub OpenComparison()
             status = "対応先不明"
         ElseIf Not leftIndex.Exists(matchKey) Then
             status = "管理簿に存在しない"
-            If rightIndex(matchKey).Count > 1 Then status = "重複候補"
+            If rightIndex(matchKey).count > 1 Then status = "重複候補"
         End If
         If Len(status) > 0 Then
             WriteReportRow report, row, Nothing, target, "", status, Empty
@@ -79,7 +79,7 @@ Public Sub OpenComparison()
     report.Activate
     Exit Sub
 Failed:
-    message = SafeFailure("照合", Err.Number)
+    message = SafeFailure("照合", Err.number)
 Finished:
     If Len(message) > 0 Then Notify message
 End Sub
@@ -101,7 +101,7 @@ Private Sub WriteReportRow(ByVal report As Worksheet, ByVal row As Long, ByVal s
     If Not source Is Nothing Then
         output(1, 1) = source.sourceYear
         output(1, 2) = source.values("PersonName")
-        output(1, 3) = source.PersonKey
+        output(1, 3) = source.personKey
         output(1, 9) = source.sourceSheet & " / 行 " & source.sourceRow
         If Len(source.comparisonNumber) > 0 Then
             output(1, 9) = output(1, 9) & " / 照合済み " & source.comparisonNumber
@@ -183,7 +183,7 @@ Public Function ReadComparison(ByVal rules As Object, ByRef message As String) A
     Set ReadComparison = records
     Exit Function
 Failed:
-    message = SafeFailure("比較先の読込", Err.Number)
+    message = SafeFailure("比較先の読込", Err.number)
     On Error Resume Next
     If Not book Is Nothing Then book.Close False
 End Function
@@ -198,11 +198,11 @@ Public Function ComparisonRows(ByVal ws As Worksheet, ByVal rules As Object, ByR
     Dim heading As String
     Dim row As Long
     Dim column As Long
-    If LastColumn(ws) < 2 Then
-        message = ws.Name & "：比較先の見出しを確認してください。"
+    If lastColumn(ws) < 2 Then
+        message = ws.name & "：比較先の見出しを確認してください。"
         Exit Function
     End If
-    data = ws.Range(ws.Cells(1, 1), ws.Cells(LastRow(ws), LastColumn(ws))).Value2
+    data = ws.Range(ws.Cells(1, 1), ws.Cells(LastRow(ws), lastColumn(ws))).Value2
     Set headers = NewDictionary()
     Set columns = NewDictionary()
     For column = 1 To UBound(data, 2)
@@ -222,7 +222,7 @@ Public Function ComparisonRows(ByVal ws As Worksheet, ByVal rules As Object, ByR
     For row = 2 To UBound(data, 1)
         Set record = New CaseRecord
         record.sourceAddress = ws.Parent.FullName
-        record.sourceSheet = ws.Name
+        record.sourceSheet = ws.name
         record.sourceRow = row
         Set record.sourceColumns = columns
         For Each fieldId In columns.Keys
@@ -233,7 +233,7 @@ Public Function ComparisonRows(ByVal ws As Worksheet, ByVal rules As Object, ByR
     Set ComparisonRows = result
     Exit Function
 InvalidHeader:
-    message = ws.Parent.Name & " / " & ws.Name & "：見出し不足または重複。「" & heading & "」"
+    message = ws.Parent.name & " / " & ws.name & "：見出し不足または重複。「" & heading & "」"
 End Function
 
 Public Function ComparisonIndex(ByVal records As Variant, ByVal rules As Object, ByVal isLedger As Boolean) As Object
@@ -267,7 +267,7 @@ Public Function ComparisonKey(ByVal record As CaseRecord, ByVal rules As Object,
             value = record.values(fieldId)
             If isLedger Then
                 If fieldId = "SourceYear" Then value = record.sourceYear
-                If fieldId = "CommonNumber" Then value = record.PersonKey
+                If fieldId = "CommonNumber" Then value = record.personKey
             End If
             If IsError(value) Or IsNull(value) Then Exit Function
             If Len(CStr(value)) = 0 Then Exit Function
@@ -281,11 +281,11 @@ End Function
 Public Function MatchStatus(ByVal key As String, ByVal leftIndex As Object, ByVal rightIndex As Object) As String
     If Len(key) = 0 Then
         MatchStatus = "対応先不明"
-    ElseIf leftIndex(key).Count <> 1 Then
+    ElseIf leftIndex(key).count <> 1 Then
         MatchStatus = "重複候補"
     ElseIf Not rightIndex.Exists(key) Then
         MatchStatus = "比較先に存在しない"
-    ElseIf rightIndex(key).Count <> 1 Then
+    ElseIf rightIndex(key).count <> 1 Then
         MatchStatus = "重複候補"
     Else
         MatchStatus = "照合可能"
@@ -311,7 +311,7 @@ Public Sub TransferSelectedComparisonField()
     Dim message As String
     Set report = Sheet("CompareResults")
     If Not ActiveSheet Is report Or reportLinks Is Nothing Then Exit Sub
-    row = CStr(ActiveCell.Row)
+    row = CStr(ActiveCell.row)
     If Not reportLinks.Exists(row) Then Exit Sub
     link = reportLinks(row)
     fieldId = CStr(link(1))
@@ -388,8 +388,8 @@ Public Function TransferComparisonField(ByVal source As CaseRecord, ByVal target
     If Len(source.invalidReason) > 0 Then GoTo Rejected
     Set currentLedger = ReadYear(source.sourceYear, message)
     If currentLedger Is Nothing Then Exit Function
-    If Not currentLedger.Exists(source.Key) Then GoTo Rejected
-    Set currentSource = currentLedger(source.Key)
+    If Not currentLedger.Exists(source.key) Then GoTo Rejected
+    Set currentSource = currentLedger(source.key)
     If Len(currentSource.invalidReason) > 0 Or Not currentSource.sourceColumns.Exists(fieldId) Then GoTo Rejected
     If StrComp(currentSource.sourceAddress, source.sourceAddress, vbTextCompare) <> 0 Then GoTo Rejected
     If StrComp(currentSource.sourceSheet, source.sourceSheet, vbTextCompare) <> 0 Then GoTo Rejected
@@ -397,7 +397,7 @@ Public Function TransferComparisonField(ByVal source As CaseRecord, ByVal target
     key = ComparisonKey(currentSource, rules, True)
     If Len(key) = 0 Or key <> ComparisonKey(target, rules, False) Then GoTo Rejected
     Set index = ComparisonIndex(currentLedger.Items, rules, True)
-    If index(key).Count <> 1 Then GoTo Rejected
+    If index(key).count <> 1 Then GoTo Rejected
     Set book = OpenLedger(address, False, message)
     If book Is Nothing Then Exit Function
     If StrComp(book.FullName, target.sourceAddress, vbTextCompare) <> 0 Then GoTo Rejected
@@ -408,7 +408,7 @@ Public Function TransferComparisonField(ByVal source As CaseRecord, ByVal target
     Set index = ComparisonIndex(currentRows, rules, False)
     If Not index.Exists(key) Then GoTo Rejected
     Set group = index(key)
-    If group.Count <> 1 Then GoTo Rejected
+    If group.count <> 1 Then GoTo Rejected
     Set currentTarget = group(1)
     If Not SameValue(currentTarget.values(fieldId), target.values(fieldId)) Then GoTo Rejected
     Set destination = ws.Cells(currentTarget.sourceRow, currentTarget.sourceColumns(fieldId))
@@ -428,12 +428,12 @@ Public Function TransferComparisonField(ByVal source As CaseRecord, ByVal target
     Set index = ComparisonIndex(currentRows, rules, False)
     If Not index.Exists(key) Then GoTo Failed
     Set group = index(key)
-    If group.Count <> 1 Then GoTo Failed
+    If group.count <> 1 Then GoTo Failed
     Set currentTarget = group(1)
     If Not SameValue(currentTarget.values(fieldId), currentSource.values(fieldId)) Then GoTo Failed
     TransferComparisonField = True
     On Error GoTo HistoryFailed
-    AppendHistory address, currentSource.Key, "手動転記", fieldId, target.values(fieldId), currentSource.values(fieldId), NewTransactionId()
+    AppendHistory address, currentSource.key, "手動転記", fieldId, target.values(fieldId), currentSource.values(fieldId), NewTransactionId()
     CloseComparison
     ThisWorkbook.Save
     Exit Function
@@ -451,7 +451,7 @@ Failed:
     If isWriteStarted Then
         message = "転記結果を確認できません。再実行の前に比較先を開いて値とチェックアウトを確認してください。"
     Else
-        message = SafeFailure("転記準備", Err.Number)
+        message = SafeFailure("転記準備", Err.number)
     End If
     On Error Resume Next
     If Not book Is Nothing Then book.Close False

@@ -32,7 +32,7 @@ Public Sub ReloadCases(ByRef message As String)
             Next
         End If
     Next
-    message = "読込件数 " & Cases.Count & "。正常年度の検索を利用できます。" & vbCrLf & message
+    message = "読込件数 " & Cases.count & "。正常年度の検索を利用できます。" & vbCrLf & message
     If invalidCount > 0 Then message = message & vbCrLf & "番号・型・重複などの要確認事案 " & invalidCount & "件は更新できません。詳細画面で理由を確認してください。"
 End Sub
 
@@ -68,7 +68,7 @@ Private Function SearchText(ByVal text As String) As String
     normalized = Replace(Replace(Trim$(text), "　", ""), " ", "")
     On Error Resume Next
     SearchText = StrConv(StrConv(normalized, vbWide, 1041), vbKatakana, 1041)
-    If Err.Number <> 0 Then SearchText = normalized
+    If Err.number <> 0 Then SearchText = normalized
     On Error GoTo 0
 End Function
 

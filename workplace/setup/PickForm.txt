@@ -6,7 +6,7 @@ Public Function Choose(ByVal message As String, ByVal options As Collection, ByV
     Dim value As Variant
     Dim index As Long
     StyleControls Me
-    Prompt.Caption = message
+    prompt.Caption = message
     Choices.Clear
     For Each value In options
         Choices.AddItem CStr(value)

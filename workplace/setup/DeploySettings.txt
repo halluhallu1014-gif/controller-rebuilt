@@ -68,4 +68,3 @@ Private Sub VerifyInstalledSettings()
     Unload PickForm
     Unload SettingsForm
 End Sub
-

@@ -20,7 +20,7 @@ End Function
 
 Public Function LastRow(ByVal ws As Worksheet) As Long
     Dim found As Range
-    Set found = ws.cells.Find(What:="*", LookIn:=xlFormulas, LookAt:=xlPart, _
+    Set found = ws.Cells.Find(What:="*", LookIn:=xlFormulas, LookAt:=xlPart, _
         SearchOrder:=xlByRows, SearchDirection:=xlPrevious, MatchCase:=False, SearchFormat:=False)
     LastRow = 1
     If Not found Is Nothing Then LastRow = found.row
@@ -28,7 +28,7 @@ End Function
 
 Public Function lastColumn(ByVal ws As Worksheet) As Long
     Dim found As Range
-    Set found = ws.cells.Find(What:="*", LookIn:=xlFormulas, LookAt:=xlPart, _
+    Set found = ws.Cells.Find(What:="*", LookIn:=xlFormulas, LookAt:=xlPart, _
         SearchOrder:=xlByColumns, SearchDirection:=xlPrevious, MatchCase:=False, SearchFormat:=False)
     lastColumn = 1
     If Not found Is Nothing Then lastColumn = found.column

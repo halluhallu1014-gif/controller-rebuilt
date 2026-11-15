@@ -30,7 +30,7 @@ Public Function IsLocalDevelopment() As Boolean
     Dim files As Object
     Dim path As String
     Dim folder As Variant
-    path = ThisWorkbook.Path
+    path = ThisWorkbook.path
     If Mid$(path, 2, 2) <> ":\" Then Exit Function
     Set files = CreateObject("Scripting.FileSystemObject")
     If Not files.FolderExists(path & "\src") Then Exit Function
@@ -65,7 +65,7 @@ End Function
 Private Function LedgerInFolder(ByVal folder As String) As String
     Dim separator As String
     separator = IIf(IsHttpsAddress(folder), "/", "\")
-    If Right$(folder, 1) <> separator Then folder = folder & separator
+    If right$(folder, 1) <> separator Then folder = folder & separator
     LedgerInFolder = folder & "管理簿.xlsm"
 End Function
 
@@ -171,7 +171,7 @@ End Function
 Private Function SharePointEndpointBase() As String
     Dim url As String
     url = EffectiveSite()
-    If Right$(url, 1) = "/" Then url = Left$(url, Len(url) - 1)
+    If right$(url, 1) = "/" Then url = left$(url, Len(url) - 1)
     SharePointEndpointBase = ExcelOpenAddress(url)
 End Function
 
@@ -187,7 +187,7 @@ Private Function EffectiveSite() As String
     For Each name In Array("StaffFolder", "GeneralFolder", "BackupFolder")
         address = CanonicalAddress(Setting(CStr(name)))
         If Len(address) > 0 Then
-            If StrComp(Left$(address, Len(explicitSite) + 1), explicitSite & "/", vbTextCompare) <> 0 Then explicitSite = ""
+            If StrComp(left$(address, Len(explicitSite) + 1), explicitSite & "/", vbTextCompare) <> 0 Then explicitSite = ""
             If StrComp(AddressSite(address), common, vbTextCompare) <> 0 Then common = ""
         End If
     Next
@@ -217,10 +217,10 @@ Private Function ApiFile(ByVal address As String, Optional ByVal deriveSite As B
 
     file = CanonicalAddress(address)
     If deriveSite And IsHttpsAddress(file) Then
-        If Len(site) = 0 Or StrComp(Left$(file, Len(site) + 1), site & "/", vbTextCompare) <> 0 Then site = AddressSite(file)
+        If Len(site) = 0 Or StrComp(left$(file, Len(site) + 1), site & "/", vbTextCompare) <> 0 Then site = AddressSite(file)
     End If
     If Not IsHttpsAddress(site) Or Not IsHttpsAddress(file) Then Exit Function
-    If StrComp(Left$(file, Len(site) + 1), site & "/", vbTextCompare) <> 0 Then Exit Function
+    If StrComp(left$(file, Len(site) + 1), site & "/", vbTextCompare) <> 0 Then Exit Function
     slash = InStr(9, file, "/")
     ApiFile = ExcelOpenAddress(site) & "/_api/web/GetFileByServerRelativePath(decodedUrl='" & _
         Application.WorksheetFunction.EncodeURL(Replace(Mid$(file, slash), "'", "''")) & "')"
@@ -250,7 +250,7 @@ Private Function SharePointRequest(ByVal method As String, ByVal url As String, 
     Set SharePointRequest = request
     Exit Function
 Failed:
-    message = "SharePoint通信に失敗しました。エラー " & Err.Number & "。変更要求は再送せず結果を照合してください。"
+    message = "SharePoint通信に失敗しました。エラー " & Err.number & "。変更要求は再送せず結果を照合してください。"
 End Function
 
 Private Function ResponseXmlValue(ByVal request As Object, ByVal name As String) As String
@@ -262,7 +262,7 @@ Private Function ResponseXmlValue(ByVal request As Object, ByVal name As String)
     xml.SetProperty "ProhibitDTD", True
     If Not xml.LoadXML(request.ResponseText) Then Exit Function
     Set node = xml.SelectSingleNode("//*[local-name()='" & name & "']")
-    If Not node Is Nothing Then ResponseXmlValue = node.Text
+    If Not node Is Nothing Then ResponseXmlValue = node.text
 End Function
 
 Public Function FileState(ByVal address As String, ByRef message As String, Optional ByVal deriveSite As Boolean = False) As Object
@@ -283,7 +283,7 @@ Public Function FileState(ByVal address As String, ByRef message As String, Opti
         endpoint = ApiFile(address, deriveSite)
         Set request = SharePointRequest("GET", endpoint, "", message)
         If request Is Nothing Then Exit Function
-        Select Case request.Status
+        Select Case request.status
             Case 200
                 result("Id") = ResponseXmlValue(request, "UniqueId")
                 result("ETag") = ResponseXmlValue(request, "ETag")
@@ -294,19 +294,19 @@ Public Function FileState(ByVal address As String, ByRef message As String, Opti
             Case 404
                 If InStr(ResponseXmlValue(request, "code"), "System.IO.FileNotFoundException") = 0 Then GoTo InvalidResponse
             Case Else
-                message = "SharePointの所在を確定できません。HTTP " & request.Status & "。認証とアクセス権を確認してください。"
+                message = "SharePointの所在を確定できません。HTTP " & request.status & "。認証とアクセス権を確認してください。"
                 Exit Function
         End Select
     Else
         If Len(CanonicalAddress(address)) = 0 Then Exit Function
         On Error Resume Next
         Set file = CreateObject("Scripting.FileSystemObject").GetFile(address)
-        status = Err.Number
+        status = Err.number
         Err.Clear
         On Error GoTo Failed
         If status = 0 Then
             result("Exists") = True
-            result("Size") = CStr(file.Size)
+            result("Size") = CStr(file.size)
             result("ETag") = CStr(CDbl(file.DateLastModified)) & "|" & result("Size")
         ElseIf status <> 53 And status <> 76 Then
             message = "ファイルの所在を確認できません。エラー " & status
@@ -319,7 +319,7 @@ InvalidResponse:
     message = "SharePointの応答から所在と識別情報を確定できません。"
     Exit Function
 Failed:
-    message = "所在確認に失敗しました。エラー " & Err.Number
+    message = "所在確認に失敗しました。エラー " & Err.number
 End Function
 
 Private Function JsonString(ByVal value As String) As String
@@ -329,7 +329,7 @@ Private Function JsonString(ByVal value As String) As String
     For i = 1 To Len(value)
         code = AscW(Mid$(value, i, 1)) And &HFFFF&
         If code < 32 Or code > 126 Or code = 34 Or code = 92 Then
-            JsonString = JsonString & "\u" & Right$("0000" & Hex$(code), 4)
+            JsonString = JsonString & "\u" & right$("0000" & Hex$(code), 4)
         Else
             JsonString = JsonString & Chr$(code)
         End If
@@ -356,8 +356,8 @@ Private Function ServerCopyOrMove(ByVal source As String, ByVal destination As S
         site = SharePointEndpointBase()
         Set request = SharePointRequest("POST", site & "/_api/contextinfo", "", message)
         If request Is Nothing Then Exit Function
-        If request.Status <> 200 Then
-            message = "変更要求の認証を確立できません。HTTP " & request.Status
+        If request.status <> 200 Then
+            message = "変更要求の認証を確立できません。HTTP " & request.status
             Exit Function
         End If
         digest = ResponseXmlValue(request, "FormDigestValue")
@@ -370,8 +370,8 @@ Private Function ServerCopyOrMove(ByVal source As String, ByVal destination As S
             ",""options"":{""__metadata"":{""type"":""SP.MoveCopyOptions""},""KeepBoth"":false,""ShouldBypassSharedLocks"":false}}"
         Set request = SharePointRequest("POST", endpoint, body, message, digest)
         If request Is Nothing Then Exit Function
-        If request.Status < 200 Or request.Status >= 300 Then
-            message = "変更結果を確認してください。HTTP " & request.Status & "。要求は再送しません。"
+        If request.status < 200 Or request.status >= 300 Then
+            message = "変更結果を確認してください。HTTP " & request.status & "。要求は再送しません。"
             Exit Function
         End If
     ElseIf isMove Then
@@ -383,10 +383,10 @@ Private Function ServerCopyOrMove(ByVal source As String, ByVal destination As S
     Exit Function
 Failed:
 
-    If Err.Number = 70 Or Err.Number = 75 Then
+    If Err.number = 70 Or Err.number = 75 Then
         message = "ファイルを使用中か、保存先への書込権限がありません。権限とファイルの使用状況を確認してください。"
     Else
-        message = "コピーまたは移動に失敗しました。再送せず結果を照合してください。エラー " & Err.Number
+        message = "コピーまたは移動に失敗しました。再送せず結果を照合してください。エラー " & Err.number
     End If
 End Function
 
@@ -399,8 +399,8 @@ Private Function FileContent(ByVal address As String, ByRef message As String) A
         If Len(ApiFile(address)) = 0 Then Exit Function
         Set request = SharePointRequest("GET", ApiFile(address) & "/$value", "", message)
         If request Is Nothing Then Exit Function
-        If request.Status <> 200 Then
-            message = "ファイル内容を確認できません。HTTP " & request.Status
+        If request.status <> 200 Then
+            message = "ファイル内容を確認できません。HTTP " & request.status
             Exit Function
         End If
         FileContent = request.ResponseBody
@@ -417,7 +417,7 @@ Private Function FileContent(ByVal address As String, ByRef message As String) A
     Exit Function
 Failed:
     If handle > 0 Then Close #handle
-    message = "ファイル内容を読み取れません。エラー " & Err.Number
+    message = "ファイル内容を読み取れません。エラー " & Err.number
 End Function
 
 Private Function IsEqualFileContent(ByVal first As String, ByVal second As String, ByRef message As String) As Boolean
@@ -481,7 +481,7 @@ Public Sub RefreshLedgerMoveButton()
     Set button = Sheet("検索").Shapes("LedgerMove")
     On Error GoTo 0
     If button Is Nothing Then Exit Sub
-    button.TextFrame.Characters.Text = MoveCaption(MoveDirection(message))
+    button.TextFrame.Characters.text = MoveCaption(MoveDirection(message))
     button.AlternativeText = message
 End Sub
 
@@ -490,7 +490,7 @@ Public Sub MoveLedgerFromCurrentLocation()
     Dim direction As Long
     Dim displayed As String
     Dim prompt As String
-    displayed = Sheet("検索").Shapes("LedgerMove").TextFrame.Characters.Text
+    displayed = Sheet("検索").Shapes("LedgerMove").TextFrame.Characters.text
     direction = MoveDirection(message)
     If direction = 0 Then
         RefreshLedgerMoveButton
@@ -577,7 +577,7 @@ Public Function ExecuteBusiness(ByVal isStart As Boolean, ByRef message As Strin
         GoTo Finished
     End If
     separator = IIf(IsHttpsAddress(folder), "/", "\")
-    If Right$(folder, 1) <> separator Then folder = folder & separator
+    If right$(folder, 1) <> separator Then folder = folder & separator
     backup = folder & "管理簿_" & NewTransactionId() & ".xlsm"
     PutValue ws.Range("B1"), "バックアップ確認待ち"
     PutValue ws.Range("B2"), source
@@ -615,7 +615,7 @@ Finished:
     isBusy = False
     Exit Function
 Failed:
-    message = "朝夕の処理が中断されました。記録と両方の候補を照合し、確認なしで再送しないでください。エラー " & Err.Number
+    message = "朝夕の処理が中断されました。記録と両方の候補を照合し、確認なしで再送しないでください。エラー " & Err.number
     Resume Finished
 End Function
 
@@ -676,7 +676,7 @@ Public Sub RestoreBackup()
     If VarType(target) = vbBoolean Then Exit Sub
     If Not IsSameWorkbookAddress(AddressFolder(CStr(address)), Setting("BackupFolder")) Or _
         Not IsSameWorkbookAddress(AddressFolder(CStr(target)), Setting("BackupFolder")) Or _
-        Left$(AddressFileName(CStr(target)), 5) <> "復旧確認_" Or _
+        left$(AddressFileName(CStr(target)), 5) <> "復旧確認_" Or _
         Not IsDirectWorkbookAddress(CStr(target)) Then
         Notify "元・先の退避フォルダと新しい復旧確認ファイル名を確認してください。"
         Exit Sub

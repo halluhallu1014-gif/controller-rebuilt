@@ -1,14 +1,49 @@
 Option Explicit
 
+Private canEdit As Boolean
+
 Private Sub UserForm_Initialize()
     Dim address As String
     Dim message As String
     StyleControls Me
-    AddFiles.Caption = "例外の管理簿指定"
+    Me.Caption = "CONTROLLER 設定"
+    Me.Height = 487
+    Me.BackColor = RGB(242, 246, 251)
+    Banner.Caption = "  CONTROLLER  設定"
+    Banner.BackColor = RGB(19, 42, 72)
+    Banner.ForeColor = vbWhite
+    ChooseTarget.Caption = "本体を選択"
+    HeadYear.Caption = "設定する内容"
+    HeadState.Caption = "確認状況"
+    HeadFile.Caption = "現在の設定"
+    Entries.Height = 146
+    Status.Move 19, 80, 582, 57
+    Status.BackColor = RGB(217, 232, 248)
+    Status.ForeColor = RGB(19, 42, 72)
+    Status.Font.Bold = True
+    HeadYear.Top = 148
+    HeadState.Top = 148
+    HeadFile.Top = 148
+    Entries.Top = 168
+    AddFiles.Move 19, 324, 110, 27
+    ChangeFile.Move 137, 324, 105, 27
+    RefreshFile.Move 250, 324, 112, 27
+    MatchFields.Move 370, 324, 109, 27
+    DisableYear.Move 487, 324, 113, 27
+    Operations.Top = 368
+    PresentationSettings.Top = 368
+    CloseWindow.Move 372, 410, 102, 28
+    SaveChanges.Move 483, 410, 117, 28
+    SaveChanges.BackColor = RGB(19, 42, 72)
+    SaveChanges.ForeColor = vbWhite
+    SaveChanges.Caption = "変更を保存"
+    CloseWindow.Caption = "閉じる"
+    DisableYear.Caption = "読込対象から外す"
+    AddFiles.Caption = "年度を確認"
 
-    ChangeFile.Caption = "選択・変更"
-    RefreshFile.Caption = "再確認"
-    Operations.Caption = "追加の運用設定"
+    ChangeFile.Caption = "場所を選択"
+    RefreshFile.Caption = "状態を確認"
+    Operations.Caption = "権限・運用設定"
     Banner.Font.Size = 17
     Banner.Font.Bold = True
     TargetName.Font.Bold = True
@@ -16,11 +51,12 @@ Private Sub UserForm_Initialize()
     StartUpPosition = 2
     If Len(targetPath) = 0 Then
         address = CStr(ThisWorkbook.Worksheets("Preferences").Range("B1").Value2)
-        If Len(address) = 0 And Not IsWeb(ThisWorkbook.FullName) Then address = ThisWorkbook.Path & "\CONTROLLER.xlsm"
+        If Len(address) = 0 And Not IsWeb(ThisWorkbook.FullName) Then address = ThisWorkbook.path & "\CONTROLLER.xlsm"
         If Len(address) > 0 Then
             LoadTarget address, message
         End If
     End If
+    If Len(targetPath) > 0 Then canEdit = CanEditSetup(message)
     DrawEntries
     If Len(message) > 0 Then Status.Caption = message
 End Sub
@@ -32,31 +68,40 @@ Private Sub DrawEntries(Optional ByVal selected As String = "")
     Dim address As String
     Dim state As String
     Dim index As Long
+    Dim ledgerLocation As String, locationMessage As String, incomplete As Boolean
+    Dim folderPrefix As String
     Entries.Clear
     If Len(targetPath) = 0 Then
         TargetName.Caption = "設定対象を選んでください"
-        Status.Caption = "最初に「対象を選択」で CONTROLLER.xlsm を開きます。"
+        Status.Caption = "このツールで管理簿の保存先・年度・取込を設定します。最初に「本体を選択」を押してください。"
     Else
         TargetName.Caption = "設定対象   " & FileLabel(targetPath) & "   ・   " & FileLabel(AddressFolder(targetPath))
         TargetName.ControlTipText = targetPath
 
+        ledgerLocation = SetupLedgerLocation(locationMessage, incomplete)
+        folderPrefix = "必須  "
+        If IsSingleLedgerSetup() Then folderPrefix = "移動時  "
         For Each folder In Array("StaffFolder", "GeneralFolder", "BackupFolder")
-            AddEntry FolderLabel(CStr(folder)), AddressState(FolderAddress(CStr(folder))), FolderAddress(CStr(folder)), CStr(folder)
+            address = FolderAddress(CStr(folder))
+            state = SetupFolderState(address)
+            If Len(address) = 0 Then address = FolderPurpose(CStr(folder))
+            AddEntry folderPrefix & SetupFolderLabel(CStr(folder)), state, address, CStr(folder)
         Next
-        AddEntry "例外の管理簿指定", IIf(Len(LedgerAddress()) > 0, "保存済み", "自動検出"), LedgerAddress(), "Ledger"
+        AddEntry "任意  管理簿の個別指定", LedgerFileState(), LedgerAddress(), "Ledger"
         For Each year In draftYears.Keys
             Set item = draftYears(year)
-            If Len(item("Staff") & item("General")) > 0 Then
+            If Len(CStr(item("Sheet"))) > 0 Or Len(item("Staff") & item("General")) > 0 Then
                 address = item("Staff")
+                If Len(ledgerLocation) > 0 Then address = ledgerLocation
                 If Len(address) = 0 Then address = item("General")
                 state = CStr(item("State"))
                 If Len(state) = 0 Then
                     If Not item("Enabled") Then
                         state = "対象外"
-                    ElseIf Len(item("Staff")) = 0 Or Len(item("Sheet")) = 0 Then
+                    ElseIf Len(address) = 0 Or Len(item("Sheet")) = 0 Then
                         state = "要確認"
                     Else
-                        state = CurrentState(item)
+                        state = "シート指定あり"
                     End If
                 End If
                 AddEntry CStr(year) & "年度 管理簿", state, FileLabel(address) & " / " & item("Sheet"), CStr(year)
@@ -65,10 +110,18 @@ Private Sub DrawEntries(Optional ByVal selected As String = "")
         If Len(comparisonPath) > 0 Then
             AddEntry "追加：一般事務整理簿", IIf(Len(comparisonSheet) > 0 And Len(ReadCell("Comparison", 8, 1)) > 0, "設定あり", "見出し確認待ち"), comparisonPath & " / " & comparisonSheet, "Comparison"
         Else
-            AddEntry "追加：一般事務整理簿", "未設定（任意）", "必要な場合に選んで「選択・変更」", "Comparison"
+            AddEntry "追加：一般事務整理簿", "未設定（任意）", "照合を使う場合にファイルを選択", "Comparison"
         End If
 
         Status.Caption = InitialStatus()
+        If Len(selected) = 0 And Not IsSingleLedgerSetup() Then
+            For index = 0 To 2
+                If Entries.List(index, 1) = "未設定" Then
+                    selected = CStr(Entries.List(index, 3))
+                    Exit For
+                End If
+            Next
+        End If
     End If
     For index = 0 To Entries.ListCount - 1
         If Entries.List(index, 3) = selected Then Entries.ListIndex = index
@@ -78,54 +131,40 @@ End Sub
 
 
 Private Function InitialStatus() As String
-    Dim names As Variant
-    Dim name As Variant
-    Dim address As String
-    Dim staff As String
-    Dim general As String
-    Dim files As Object
-    Dim missing As String
+    Dim message As String
+    Dim incomplete As Boolean
+    Dim ready As Boolean
+    ready = SetupReadiness(message, incomplete)
     If IsDirty() Then
-        InitialStatus = "「設定を保存」を押してください。初期設定は途中でも保存できます。"
-        Exit Function
+        InitialStatus = "未保存の変更があります。" & vbCrLf & message
+    ElseIf ready Then
+        InitialStatus = "使用開始できます。" & vbCrLf & message
+    Else
+        InitialStatus = "確認が必要です。" & vbCrLf & message
     End If
-    names = Array("StaffFolder", "GeneralFolder", "BackupFolder")
-    For Each name In names
-        address = FolderAddress(CStr(name))
-        If Len(CanonicalAddress(address)) = 0 Then
-            If Len(missing) > 0 Then missing = missing & "、"
-            missing = missing & FolderLabel(CStr(name))
-        End If
-    Next
-    If Len(missing) > 0 Then
-        InitialStatus = "初期設定：" & missing & "を選び「選択・変更」を押してください。"
-        Exit Function
+    If Not canEdit Then InitialStatus = "閲覧のみ。変更は設定担当者に依頼してください。" & vbCrLf & message
+End Function
+
+Private Function FolderPurpose(ByVal key As String) As String
+    Select Case key
+        Case "StaffFolder": FolderPurpose = "常勤職員が管理簿を使う場所"
+        Case "GeneralFolder": FolderPurpose = "非常勤職員が管理簿を使う場所"
+        Case "BackupFolder": FolderPurpose = "管理簿を退避する場所"
+    End Select
+End Function
+
+Private Function LedgerFileState() As String
+    Dim address As String
+    address = LedgerAddress()
+    If Len(address) = 0 Then
+        LedgerFileState = "フォルダから確認"
+    ElseIf IsWeb(address) Then
+        LedgerFileState = "接続未確認"
+    ElseIf Filesystem().FileExists(address) Then
+        LedgerFileState = "ファイルあり"
+    Else
+        LedgerFileState = "ファイルなし"
     End If
-    staff = FolderAddress("StaffFolder")
-    general = FolderAddress("GeneralFolder")
-    If IsSameAddress(staff, general) Or IsSameAddress(staff, FolderAddress("BackupFolder")) Or _
-        IsSameAddress(general, FolderAddress("BackupFolder")) Then
-        InitialStatus = "初期設定：3つの役割にそれぞれ別のフォルダを指定してください。"
-        Exit Function
-    End If
-    If IsWeb(staff) <> IsWeb(general) Or IsWeb(staff) <> IsWeb(FolderAddress("BackupFolder")) Then
-        InitialStatus = "初期設定：3フォルダの指定方法をローカルパスまたは直接URLにそろえてください。"
-        Exit Function
-    End If
-    If Not IsWeb(staff) Then
-        Set files = Filesystem()
-        For Each name In names
-            If Not files.FolderExists(FolderAddress(CStr(name))) Then
-                InitialStatus = "初期設定：" & FolderLabel(CStr(name)) & "を開けません。場所を確認してください。"
-                Exit Function
-            End If
-        Next
-        If files.FileExists(files.BuildPath(staff, "管理簿.xlsm")) = files.FileExists(files.BuildPath(general, "管理簿.xlsm")) Then
-            InitialStatus = "初期設定：Staff・Generalのどちらか一方に管理簿.xlsmを配置してください。"
-            Exit Function
-        End If
-    End If
-    InitialStatus = "3フォルダ保存済み。本体を開くと管理簿の所在・年度・見出しを確認します。追加設定は必要なときに利用できます。"
 End Function
 
 Private Function CurrentState(ByVal item As Object) As String
@@ -156,21 +195,29 @@ End Function
 Private Sub UpdateButtons()
     Dim selected As String
     selected = SelectedKey()
-    AddFiles.Enabled = Len(targetPath) > 0
+    AddFiles.Enabled = canEdit
     Operations.Enabled = AddFiles.Enabled
-    SaveChanges.Enabled = IsDirty()
-    ChangeFile.Enabled = Len(selected) > 0
-    RefreshFile.Enabled = Len(selected) > 0
+    SaveChanges.Enabled = canEdit And IsDirty()
+    CloseWindow.Caption = IIf(IsDirty(), "変更を破棄して閉じる", "閉じる")
+    PresentationSettings.Enabled = canEdit
+    ChangeFile.Caption = "ファイルを選択"
+    If IsFolderEntry(selected) Then ChangeFile.Caption = "フォルダを選択"
+    ChangeFile.Enabled = canEdit And Len(selected) > 0
+    If Not canEdit Then
+        RefreshFile.Enabled = Len(targetPath) > 0
+        MatchFields.Enabled = False
+        DisableYear.Enabled = False
+        Exit Sub
+    End If
+    RefreshFile.Enabled = Len(targetPath) > 0
     MatchFields.Enabled = Len(selected) > 0
     DisableYear.Enabled = Len(selected) > 0
     If selected = "Comparison" Then
-        RefreshFile.Enabled = Len(comparisonPath) > 0
-        MatchFields.Enabled = RefreshFile.Enabled
-        DisableYear.Enabled = RefreshFile.Enabled
+        MatchFields.Enabled = Len(comparisonPath) > 0
+        DisableYear.Enabled = MatchFields.Enabled
 
     ElseIf selected = "Ledger" Or IsFolderEntry(selected) Then
-        RefreshFile.Enabled = selected = "Ledger" And Len(LedgerAddress()) > 0
-        MatchFields.Enabled = RefreshFile.Enabled
+        MatchFields.Enabled = selected = "Ledger" And Len(LedgerAddress()) > 0
         DisableYear.Enabled = False
     ElseIf Len(selected) > 0 Then
         DisableYear.Enabled = draftYears(selected)("Enabled")
@@ -200,8 +247,10 @@ Private Sub ChooseTarget_Click()
     address = ChooseAddress("設定対象のCONTROLLERを選択", targetPath, False, True)
     If VarType(address) = vbBoolean Then Exit Sub
     If LoadTarget(Trim$(CStr(address)), message) Then
+        canEdit = CanEditSetup(message)
         RememberTarget
         DrawEntries
+        If Len(message) > 0 Then Status.Caption = message
     Else
         Status.Caption = message
     End If
@@ -209,7 +258,7 @@ End Sub
 
 Private Sub RememberTarget()
     Dim events As Boolean
-    If ThisWorkbook.ReadOnly Then Exit Sub
+    If ThisWorkbook.ReadOnly Or Not canEdit Then Exit Sub
     events = Application.EnableEvents
     On Error GoTo Finished
     Application.EnableEvents = False
@@ -221,17 +270,15 @@ End Sub
 
 
 Private Sub AddFiles_Click()
-    If Len(LedgerAddress()) = 0 Then
-        PickLedger ""
-    Else
-        RecheckLedgerForNewYear
+    Dim address As String, message As String, incomplete As Boolean
+    address = SetupLedgerLocation(message, incomplete)
+    If Len(address) = 0 Then address = LedgerAddress()
+    If Len(address) = 0 Then
+        If Len(message) > 0 Then Status.Caption = message
+        Exit Sub
     End If
-End Sub
-
-Private Sub RecheckLedgerForNewYear()
-    Dim message As String
-    CheckLedger LedgerAddress(), "", False, message, True
-    DrawEntries "Ledger"
+    CheckLedger address, "", False, message, True
+    DrawEntries
     If Len(message) > 0 Then Status.Caption = message
 End Sub
 
@@ -244,8 +291,12 @@ Private Sub ChangeFile_Click()
         Case ""
             Exit Sub
         Case "StaffFolder", "GeneralFolder", "BackupFolder"
-            address = ChooseAddress(FolderLabel(selected), FolderAddress(selected), True)
+            address = ChooseAddress(SetupFolderLabel(selected), FolderAddress(selected), True)
             If VarType(address) = vbBoolean Then Exit Sub
+            If SetupFolderState(CStr(address)) = "開けません" Or SetupFolderState(CStr(address)) = "場所が無効" Then
+                Status.Caption = "選んだフォルダを開けません。場所とアクセス権を確認してください。"
+                Exit Sub
+            End If
             StageCell "Settings", ConfigRow(selected), 2, CStr(address)
         Case "Comparison"
             address = ChooseAddress("一般事務整理簿を選択", comparisonPath, False)
@@ -293,7 +344,14 @@ Private Sub PickLedger(ByVal year As String)
 End Sub
 
 Private Sub RefreshFile_Click()
-    Recheck False
+    Dim selected As String, message As String, table As Object
+    selected = SelectedKey()
+    DrawEntries selected
+    If selected = "Comparison" And Len(comparisonPath) > 0 Then
+        Set table = ReadTable(comparisonPath, comparisonSheet, False, message, False)
+        If Not table Is Nothing Then message = "整理簿のシート「" & table("Sheet") & "」を確認しました。"
+        Status.Caption = message
+    End If
 End Sub
 
 Private Sub MatchFields_Click()
@@ -304,12 +362,15 @@ Private Sub Recheck(ByVal review As Boolean)
     Dim selected As String
     Dim message As String
     selected = SelectedKey()
+    Dim address As String, incomplete As Boolean
     Select Case selected
         Case "Comparison": PrepareComparison comparisonPath, message, review
         Case "Ledger": CheckLedger LedgerAddress(), "", review, message
         Case Else
             If Not draftYears.Exists(selected) Then Exit Sub
-            CheckLedger LedgerAddress(), selected, review, message
+            address = SetupLedgerLocation(message, incomplete)
+            If Len(address) = 0 Then address = LedgerAddress()
+            CheckLedger address, selected, review, message
     End Select
     DrawEntries selected
     If Len(message) > 0 Then Status.Caption = message
@@ -324,7 +385,8 @@ Private Sub CheckLedger(ByVal address As String, ByVal year As String, ByVal rev
     Dim alternate As String
     If Len(address) = 0 Then Exit Sub
     If draftYears.Exists(year) Then preferred = CStr(draftYears(year)("Sheet"))
-    Set table = ReadTable(address, preferred, True, message)
+    If review Then preferred = ""
+    Set table = ReadTable(address, preferred, True, message, True, review)
     alternate = ReadCell("Settings", ConfigRow("GeneralLedger"), 2)
     If table Is Nothing And Len(alternate) > 0 Then Set table = ReadTable(alternate, preferred, True, message)
     If table Is Nothing Then
@@ -333,9 +395,13 @@ Private Sub CheckLedger(ByVal address As String, ByVal year As String, ByVal rev
     End If
     If Len(year) = 0 Then year = CStr(table("Year"))
     If Len(year) = 0 Then
-        answer = AskText("シート「" & table("Sheet") & "」の受付年度を西暦4桁で入力してください。")
-        If VarType(answer) = vbBoolean Then Exit Sub
-        year = Trim$(CStr(answer))
+        Dim years As New Collection, candidate As Long
+        For candidate = year(Date) + 1 To 1900 Step -1
+            years.Add CStr(candidate) & "年度"
+        Next
+        answer = PickValue("シート「" & table("Sheet") & "」の受付年度を選択してください。", years, CStr(year(Date)) & "年度")
+        If Len(CStr(answer)) = 0 Then Exit Sub
+        year = Left$(CStr(answer), 4)
     End If
     If Not IsYear(year) Then
         message = "西暦4桁の年度を指定してください。"
@@ -373,20 +439,8 @@ Private Function FolderAddress(ByVal key As String) As String
     FolderAddress = ReadCell("Settings", ConfigRow(key), 2)
 End Function
 
-Private Function FolderLabel(ByVal key As String) As String
-    Select Case key
-        Case "StaffFolder": FolderLabel = "Staff（常勤）フォルダ"
-        Case "GeneralFolder": FolderLabel = "General（非常勤）フォルダ"
-        Case "BackupFolder": FolderLabel = "Backup（退避）フォルダ"
-    End Select
-End Function
-
-Private Function AddressState(ByVal address As String) As String
-    AddressState = IIf(Len(address) > 0, "指定あり", "未指定")
-End Function
-
 Private Function IsFolderEntry(ByVal key As String) As Boolean
-    IsFolderEntry = Len(FolderLabel(key)) > 0
+    IsFolderEntry = Len(SetupFolderLabel(key)) > 0
 End Function
 
 Private Sub DisableYear_Click()
@@ -412,6 +466,7 @@ Private Sub Operations_Click()
     Dim picked As String
     Dim answer As Variant
     Dim selected As String
+    Dim id As Variant, labels As Object, dates As New Collection, current As String
     selected = SelectedKey()
     choice = PickValue("運用設定", Choices("選択年度の更新権限", "署の一覧", _
         "終了状態の一覧", "照合の優先度", "申請日項目", "オーナーWindowsアカウント"))
@@ -426,14 +481,22 @@ Private Sub Operations_Click()
         Case "終了状態の一覧": EditList 15, "終了状態を「、」で区切って入力してください。"
         Case "照合の優先度": EditWorkflowPriority
         Case "申請日項目"
-            answer = AskText("抽出の追加日付項目IDを入力してください。空欄で無効。", ReadCell("Settings", 3, 19))
-            If VarType(answer) = vbBoolean Then Exit Sub
-            picked = Trim$(CStr(answer))
-            If Len(picked) > 0 Then
-                If Not fieldSpecs.Exists(picked) Then Exit Sub
-                If fieldSpecs(picked)(2) <> "Date" Or picked = "ApplicationDate" Then Exit Sub
-            End If
-            StageCell "Settings", 3, 19, picked
+            Set labels = Dictionary()
+            dates.Add "追加の日付を使わない"
+            labels.Add "追加の日付を使わない", ""
+            current = "追加の日付を使わない"
+            For Each id In fieldSpecs.Keys
+                If fieldSpecs(id)(2) = "Date" And id <> "ApplicationDate" Then
+                    picked = FieldLabel(CStr(id))
+                    If Not labels.Exists(picked) Then
+                        labels.Add picked, CStr(id)
+                        dates.Add picked
+                        If ReadCell("Settings", 3, 19) = CStr(id) Then current = picked
+                    End If
+                End If
+            Next
+            picked = PickValue("抽出に使う追加の日付", dates, current)
+            If Len(picked) > 0 Then StageCell "Settings", 3, 19, CStr(labels(picked))
         Case "オーナーWindowsアカウント"
             answer = AskText("DOMAIN\ユーザー名。複数は半角セミコロンで区切ります。", ReadCell("Settings", 2, 19))
             If VarType(answer) = vbBoolean Then Exit Sub
@@ -509,10 +572,22 @@ Private Sub SaveChanges_Click()
     Dim backup As String
     Dim selected As String
     selected = SelectedKey()
+    Dim impact As String
+    impact = "本体の設定に反映します。管理簿ファイルは変更されません。"
+    If Len(Trim$(ReadCell("Settings", 2, 19))) = 0 Then
+        impact = impact & vbCrLf & "初回保存では、現在のWindowsアカウントを設定担当者に登録します。"
+    End If
+    If MsgBox(impact & vbCrLf & "保存しますか？", vbOKCancel Or vbQuestion Or vbDefaultButton2) <> vbOK Then Exit Sub
     Status.Caption = "入力済みの設定を保存しています。"
     Repaint
-    If SaveSetup(message, backup) Then DrawEntries selected
-    If IsDirty() Then Status.Caption = message
+    If SaveSetup(message, backup) Then
+        Dim accessMessage As String
+        canEdit = CanEditSetup(accessMessage)
+        DrawEntries selected
+        Status.Caption = "変更を保存しました。" & vbCrLf & Status.Caption
+    Else
+        Status.Caption = message
+    End If
     If Len(backup) > 0 Then Status.ControlTipText = backup
     UpdateButtons
 End Sub
@@ -601,7 +676,7 @@ Private Sub TestWorkflowRule()
     Next
     Set book = SafeOpen(targetPath, True, message)
     If book Is Nothing Then GoTo Finished
-    message = Application.Run("'" & Replace(book.Name, "'", "''") & "'!WorkflowImportPreview", content, ruleData, Trim$(CStr(profile)))
+    message = Application.Run("'" & Replace(book.name, "'", "''") & "'!WorkflowImportPreview", content, ruleData, Trim$(CStr(profile)))
 Finished:
     If Not book Is Nothing Then book.Close False
     If Len(message) > 0 Then MsgBox Left$(message, 950), vbInformation, "抽出テスト"

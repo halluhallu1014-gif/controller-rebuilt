@@ -70,7 +70,7 @@ Public Function ParseWorkflowImport(ByVal inputText As String, ByVal ruleData As
                     Else
                         splitAt = ImportSeparator(lineText, CStr(rule(4)))
                         If splitAt > 0 Then
-                            name = CleanImportText(Left$(lineText, splitAt - 1))
+                            name = CleanImportText(left$(lineText, splitAt - 1))
                             If name = rule(1) Then
                                 count = count + 1
                                 value = CleanImportText(Mid$(lineText, splitAt + 1))
@@ -125,7 +125,7 @@ Public Function WorkflowImportPreview(ByVal inputText As String, ByVal rules As 
     For Each id In values.Keys
         WorkflowImportPreview = WorkflowImportPreview & id & " = " & values(id) & vbCrLf
     Next
-    If values.Count = 0 Then WorkflowImportPreview = "抽出できる値がありません。" & vbCrLf
+    If values.count = 0 Then WorkflowImportPreview = "抽出できる値がありません。" & vbCrLf
     WorkflowImportPreview = WorkflowImportPreview & issues
 End Function
 
@@ -147,10 +147,10 @@ Public Function ReadWorkflowPaste() As String
     On Error GoTo 0
     If selected Is Nothing Then Exit Function
     If selected.Parent.Parent Is ThisWorkbook Then Exit Function
-    If selected.Areas.Count <> 1 Or selected.CountLarge > 5000 Then Exit Function
-    For row = 1 To selected.Rows.Count
+    If selected.Areas.count <> 1 Or selected.CountLarge > 5000 Then Exit Function
+    For row = 1 To selected.Rows.count
         If row > 1 Then ReadWorkflowPaste = ReadWorkflowPaste & vbLf
-        For col = 1 To selected.Columns.Count
+        For col = 1 To selected.columns.count
             If col > 1 Then ReadWorkflowPaste = ReadWorkflowPaste & vbTab
             If Not IsError(selected.Cells(row, col).Value2) Then ReadWorkflowPaste = ReadWorkflowPaste & CStr(selected.Cells(row, col).Value2)
         Next

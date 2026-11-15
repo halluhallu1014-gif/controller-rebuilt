@@ -51,7 +51,7 @@ Public Sub OpenPendingReport()
         Case 4
             limit = Application.InputBox("例 2026/11/10", "指定日以前", Type:=2)
             If VarType(limit) = vbBoolean Then Exit Sub
-            If Not IsDate(limit) Then
+            If Not isDate(limit) Then
                 Notify "日付を入力してください。"
                 Exit Sub
             End If
@@ -105,13 +105,13 @@ Public Sub BuildPendingReport(ByVal criteria As Variant)
 
     On Error GoTo Failed
     If Cases Is Nothing Then Exit Sub
-    If Cases.Count = 0 Then
+    If Cases.count = 0 Then
         Notify "対象の事案がありません。"
         Exit Sub
     End If
     fieldId = CStr(criteria(0))
     Set closed = ConfiguredList(15)
-    ReDim output(1 To Cases.Count, 1 To 8)
+    ReDim output(1 To Cases.count, 1 To 8)
     For Each key In Cases.Keys
         Set entry = Cases(key)
         If Not IsCaseClosed(entry.values, closed) And Len(entry.invalidReason) = 0 Then
@@ -124,7 +124,7 @@ Public Sub BuildPendingReport(ByVal criteria As Variant)
                         count = count + 1
                         output(count, 1) = entry.sourceYear
                         output(count, 2) = entry.values("Office")
-                        output(count, 3) = entry.PersonKey
+                        output(count, 3) = entry.personKey
                         output(count, 4) = entry.values("InquiryNumber")
                         output(count, 5) = entry.values("PersonName")
                         output(count, 6) = entry.values("DocumentName")
@@ -138,7 +138,7 @@ Public Sub BuildPendingReport(ByVal criteria As Variant)
     Set book = Workbooks.Add(xlWBATWorksheet)
     Set ws = book.Worksheets(1)
     Set pendingPage = ws
-    ws.Name = "未処理リスト"
+    ws.name = "未処理リスト"
     label = IIf(fieldId = "ApplicationDate", "申請日", fieldId)
     ws.Range("A1").Value2 = "未処理リスト"
     ws.Range("A2").Value2 = label & " / " & criteria(7) & " / 年度 " & ReportFilter(criteria(3)) & _
@@ -146,8 +146,8 @@ Public Sub BuildPendingReport(ByVal criteria As Variant)
     ws.Range("A3").Value2 = Format$(Date, "yyyy/mm/dd") & " 出力  " & count & "件"
     ws.Range("A6:H6").Value2 = Array("年度", "署", "共通番号", "お問い合わせ番号", "氏名", "文書名", "処理状態", label)
     FormatWorkflowReport ws, "H"
-    ws.Columns("C").ColumnWidth = 23
-    ws.Columns("F").ColumnWidth = 30
+    ws.columns("C").ColumnWidth = 23
+    ws.columns("F").ColumnWidth = 30
     If count > 0 Then
         ws.Range("A7:G" & (count + 6)).NumberFormat = "@"
         ws.Range("H7:H" & (count + 6)).NumberFormat = "yyyy/mm/dd"
@@ -159,14 +159,14 @@ Public Sub BuildPendingReport(ByVal criteria As Variant)
             Case 4: sortColumn = 2
             Case 5: sortColumn = 1
         End Select
-        ws.Range("A6:H" & (count + 6)).Sort Key1:=ws.Cells(7, sortColumn), Order1:=sortOrder, Header:=xlYes
+        ws.Range("A6:H" & (count + 6)).Sort Key1:=ws.Cells(7, sortColumn), Order1:=sortOrder, header:=xlYes
     End If
     AddWorkflowButton ws, "PendingPreview", "印刷プレビュー", "PreviewPendingReport", ws.Range("K2:L3")
     AddWorkflowButton ws, "PendingPrint", "印刷", "PrintPendingReport", ws.Range("K5:L6")
     ApplyPendingPrint ws, count + 6
     Exit Sub
 Failed:
-    Notify SafeFailure("未処理リスト", Err.Number)
+    Notify SafeFailure("未処理リスト", Err.number)
 End Sub
 
 Private Function ReportFilter(ByVal value As String) As String
@@ -175,8 +175,8 @@ Private Function ReportFilter(ByVal value As String) As String
 End Function
 
 Public Sub FormatWorkflowReport(ByVal ws As Worksheet, ByVal lastColumn As String)
-    ws.Columns("A:" & lastColumn).ColumnWidth = 15
-    ws.Range("A1").Font.Size = 18
+    ws.columns("A:" & lastColumn).ColumnWidth = 15
+    ws.Range("A1").Font.size = 18
     With ws.Range("A6:" & lastColumn & "6")
         .Interior.Color = RGB(22, 44, 67)
         .Font.Color = vbWhite

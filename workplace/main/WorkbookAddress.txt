@@ -1,7 +1,7 @@
 Option Explicit
 
 Public Function IsHttpsAddress(ByVal address As String) As Boolean
-    IsHttpsAddress = (StrComp(Left$(address, 8), "https://", vbTextCompare) = 0)
+    IsHttpsAddress = (StrComp(left$(address, 8), "https://", vbTextCompare) = 0)
 End Function
 
 Public Function CanonicalAddress(ByVal address As String) As String
@@ -10,7 +10,7 @@ Public Function CanonicalAddress(ByVal address As String) As String
     Dim path As String
     Dim segment As Variant
     If Not IsHttpsAddress(address) Then
-        If Mid$(address, 2, 2) = ":\" Or Left$(address, 2) = "\\" Then CanonicalAddress = Replace(address, "/", "\")
+        If Mid$(address, 2, 2) = ":\" Or left$(address, 2) = "\\" Then CanonicalAddress = Replace(address, "/", "\")
         Exit Function
     End If
     slash = InStr(9, address, "/")
@@ -32,7 +32,7 @@ Public Function CanonicalAddress(ByVal address As String) As String
     For Each segment In Split(path, "/")
         If segment = "." Or segment = ".." Then Exit Function
     Next
-    If Right$(path, 1) = "/" Then path = Left$(path, Len(path) - 1)
+    If right$(path, 1) = "/" Then path = left$(path, Len(path) - 1)
     CanonicalAddress = "https://" & LCase$(host) & path
 End Function
 
@@ -118,7 +118,7 @@ End Function
 Public Function AddressFolder(ByVal address As String) As String
     Dim slash As Long
     slash = InStrRev(address, IIf(IsHttpsAddress(address), "/", "\"))
-    If slash > 0 Then AddressFolder = Left$(address, slash - 1)
+    If slash > 0 Then AddressFolder = left$(address, slash - 1)
 End Function
 
 Public Function OpenAddressWorkbook(ByVal address As String, ByVal isReadOnly As Boolean, _
@@ -135,7 +135,7 @@ Public Function OpenAddressWorkbook(ByVal address As String, ByVal isReadOnly As
     End If
     For Each candidate In Application.Workbooks
         If IsSameWorkbookAddress(candidate.FullName, address) Or _
-            StrComp(candidate.Name, AddressFileName(address), vbTextCompare) = 0 Then
+            StrComp(candidate.name, AddressFileName(address), vbTextCompare) = 0 Then
             message = "対象または同名のブックを閉じてから操作してください。"
             Exit Function
         End If
@@ -145,11 +145,11 @@ Public Function OpenAddressWorkbook(ByVal address As String, ByVal isReadOnly As
     On Error GoTo Failed
     Application.EnableEvents = False
     If Not allowTrustedMacros Then Application.AutomationSecurity = msoAutomationSecurityForceDisable
-    Set book = Application.Workbooks.Open(Filename:=ExcelOpenAddress(address), UpdateLinks:=0, ReadOnly:=isReadOnly, _
+    Set book = Application.Workbooks.Open(filename:=ExcelOpenAddress(address), UpdateLinks:=0, readOnly:=isReadOnly, _
         Notify:=False, AddToMru:=False, IgnoreReadOnlyRecommended:=True)
     If Not IsSameWorkbookAddress(book.FullName, address) Then
         message = "Excelが開いたブックのアドレスが設定と一致しません。直接URLを確認してください。"
-    ElseIf Not isReadOnly And book.ReadOnly Then
+    ElseIf Not isReadOnly And book.readOnly Then
         message = "読み取り専用です。編集権限と他の利用者の使用状況を確認してください。"
     ElseIf book.Date1904 Then
         message = "1904年日付システムのブックは対象外です。"
@@ -170,7 +170,7 @@ Finished:
     On Error GoTo 0
     Exit Function
 Failed:
-    message = "Excelで開けません。直接URL、Officeのサインイン、権限、使用状況を確認してください。エラー番号 " & Err.Number
+    message = "Excelで開けません。直接URL、Officeのサインイン、権限、使用状況を確認してください。エラー番号 " & Err.number
     Resume Finished
 End Function
 

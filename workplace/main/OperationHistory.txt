@@ -11,9 +11,9 @@ Public Sub WriteHistory(ByVal recovery As Worksheet)
     identity = CStr(recovery.Range("B2").Value2) & "|" & CStr(recovery.Range("D4").Value2)
     transactionId = CStr(recovery.Range("D5").Value2)
     For row = 6 To LastRow(recovery)
-        If recovery.cells(row, 4).Value2 = "Yes" Then
-            AppendHistory CStr(recovery.Range("B3").Value2), identity, operation, CStr(recovery.cells(row, 1).Value2), _
-                recovery.cells(row, 3).Value2, recovery.cells(row, 2).Value2, transactionId
+        If recovery.Cells(row, 4).Value2 = "Yes" Then
+            AppendHistory CStr(recovery.Range("B3").Value2), identity, operation, CStr(recovery.Cells(row, 1).Value2), _
+                recovery.Cells(row, 3).Value2, recovery.Cells(row, 2).Value2, transactionId
         End If
     Next
 End Sub
@@ -25,8 +25,8 @@ Public Sub AppendHistory(ByVal address As String, ByVal identity As String, ByVa
     Dim row As Long
     Set history = Sheet("History")
     For row = LastRow(history) To 2 Step -1
-        If history.cells(row, 10).Value2 <> transactionId Then Exit For
-        If history.cells(row, 6).Value2 = fieldId Then Exit Sub
+        If history.Cells(row, 10).Value2 <> transactionId Then Exit For
+        If history.Cells(row, 6).Value2 = fieldId Then Exit Sub
     Next
     output(1, 1) = Format$(Now, "yyyy/mm/dd hh:nn:ss")
     output(1, 2) = Application.UserName
@@ -38,7 +38,7 @@ Public Sub AppendHistory(ByVal address As String, ByVal identity As String, ByVa
     output(1, 8) = newValue
     output(1, 9) = "保存確認済み"
     output(1, 10) = transactionId
-    With history.cells(LastRow(history) + 1, 1).Resize(1, 10)
+    With history.Cells(LastRow(history) + 1, 1).Resize(1, 10)
         .NumberFormat = "@"
         .Value2 = output
     End With

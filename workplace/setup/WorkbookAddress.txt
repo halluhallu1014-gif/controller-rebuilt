@@ -135,7 +135,7 @@ Public Function OpenAddressWorkbook(ByVal address As String, ByVal isReadOnly As
     End If
     For Each candidate In Application.Workbooks
         If IsSameWorkbookAddress(candidate.FullName, address) Or _
-            StrComp(candidate.Name, AddressFileName(address), vbTextCompare) = 0 Then
+            StrComp(candidate.name, AddressFileName(address), vbTextCompare) = 0 Then
             message = "対象または同名のブックを閉じてから操作してください。"
             Exit Function
         End If
@@ -145,7 +145,7 @@ Public Function OpenAddressWorkbook(ByVal address As String, ByVal isReadOnly As
     On Error GoTo Failed
     Application.EnableEvents = False
     If Not allowTrustedMacros Then Application.AutomationSecurity = msoAutomationSecurityForceDisable
-    Set book = Application.Workbooks.Open(Filename:=ExcelOpenAddress(address), UpdateLinks:=0, ReadOnly:=isReadOnly, _
+    Set book = Application.Workbooks.Open(filename:=ExcelOpenAddress(address), UpdateLinks:=0, ReadOnly:=isReadOnly, _
         Notify:=False, AddToMru:=False, IgnoreReadOnlyRecommended:=True)
     If Not IsSameWorkbookAddress(book.FullName, address) Then
         message = "Excelが開いたブックのアドレスが設定と一致しません。直接URLを確認してください。"

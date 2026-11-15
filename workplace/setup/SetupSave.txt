@@ -52,10 +52,10 @@ Private Function CreateBackup(ByVal book As Workbook) As String
         Exit Function
     End If
     Set files = Filesystem()
-    folder = files.BuildPath(book.Path, "設定バックアップ")
+    folder = files.BuildPath(book.path, "設定バックアップ")
     If Not files.FolderExists(folder) Then files.CreateFolder folder
     Do
-        path = files.BuildPath(folder, files.GetBaseName(book.Name) & "_" & Format$(Now, "yyyymmdd_hhnnss") & "_" & suffix & ".xlsm")
+        path = files.BuildPath(folder, files.GetBaseName(book.name) & "_" & Format$(Now, "yyyymmdd_hhnnss") & "_" & suffix & ".xlsm")
         suffix = suffix + 1
     Loop While files.FileExists(path)
     book.SaveCopyAs path
@@ -79,6 +79,8 @@ Public Function SaveSetup(ByRef message As String, ByRef backup As String) As Bo
     Dim previousScreen As Boolean
     Dim saveStarted As Boolean
     Dim address As String
+    Dim readiness As String, incomplete As Boolean, ready As Boolean
+    Dim owner As String, account As Variant, hasOwner As Boolean
     previousEvents = Application.EnableEvents
     previousAlerts = Application.DisplayAlerts
     previousScreen = Application.ScreenUpdating
@@ -99,6 +101,35 @@ Public Function SaveSetup(ByRef message As String, ByRef backup As String) As Bo
     Set current = Snapshot(book)
     If Not IsSameSnapshot(originalValues, current) Then
         message = "本体の設定が先に変更されています。変更を控え、本体を選び直してください。"
+        GoTo Finished
+    End If
+    If Not SetupOwnerAllowed(CStr(book.Worksheets("Settings").Range("S2").Value2)) Then
+        message = "設定担当者のアカウントで開いてください。"
+        GoTo Finished
+    End If
+    ' Run file inspection before writing any settings. An unfinished draft can be saved.
+    ready = SetupReadiness(readiness, incomplete)
+    If Not ready And Not incomplete Then
+        message = readiness
+        GoTo Finished
+    End If
+    owner = Trim$(ReadCell("Settings", 2, 19))
+    If Len(owner) = 0 Then
+        owner = SetupAccount()
+        StageCell "Settings", 2, 19, owner
+    End If
+    For Each account In Split(owner, ";")
+        account = Trim$(CStr(account))
+        If Len(account) > 0 Then
+            If InStr(CStr(account), "\") < 2 Or Right$(CStr(account), 1) = "\" Then
+                message = "設定担当者は DOMAIN\ユーザー名 の形式で指定してください。"
+                GoTo Finished
+            End If
+            hasOwner = True
+        End If
+    Next
+    If Not hasOwner Then
+        message = "設定担当者のアカウントを指定してください。"
         GoTo Finished
     End If
     Set expected = ExpectedSnapshot()

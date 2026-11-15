@@ -69,14 +69,14 @@ End Function
 
 Public Function StageDisplayFormat(ByVal id As String, ByVal preset As String) As Boolean
     Dim row As Long
-    Dim choices As Object
+    Dim Choices As Object
     Dim label As Variant
     If Not SupportsPresentation() Or id = "HistoryMemo" Or Len(id) = 0 Then Exit Function
     For row = 2 To 500
         If ReadCell("Fields", row, 1) = id Then
-            Set choices = FormatChoices(id, ReadCell("Fields", row, 3))
-            For Each label In choices.Keys
-                If choices(label) = preset Then
+            Set Choices = FormatChoices(id, ReadCell("Fields", row, 3))
+            For Each label In Choices.Keys
+                If Choices(label) = preset Then
                     StageCell "Fields", row, 11, preset
                     StageDisplayFormat = True
                     Exit Function
@@ -87,10 +87,10 @@ Public Function StageDisplayFormat(ByVal id As String, ByVal preset As String) A
     Next
 End Function
 
-Private Function DictionaryLabels(ByVal dictionary As Object) As Collection
+Private Function DictionaryLabels(ByVal Dictionary As Object) As Collection
     Dim result As New Collection
     Dim label As Variant
-    For Each label In dictionary.Keys
+    For Each label In Dictionary.Keys
         result.Add CStr(label)
     Next
     Set DictionaryLabels = result
@@ -98,7 +98,7 @@ End Function
 
 Public Sub EditDisplayFormat()
     Dim ids As Object
-    Dim choices As Object
+    Dim Choices As Object
     Dim row As Long
     Dim id As String
     Dim label As String
@@ -113,12 +113,12 @@ Public Sub EditDisplayFormat()
     If Len(selected) = 0 Then Exit Sub
     row = ids(selected)
     id = ReadCell("Fields", row, 1)
-    Set choices = FormatChoices(id, ReadCell("Fields", row, 3))
+    Set Choices = FormatChoices(id, ReadCell("Fields", row, 3))
     current = "標準（自動）"
     Dim key As Variant
-    For Each key In choices.Keys
-        If choices(key) = ReadCell("Fields", row, 11) Then current = CStr(key)
+    For Each key In Choices.Keys
+        If Choices(key) = ReadCell("Fields", row, 11) Then current = CStr(key)
     Next
-    label = PickValue(selected & " ／ 現在 " & current & vbCrLf & "管理簿の保存型は変わりません。", DictionaryLabels(choices), current)
-    If Len(label) > 0 Then StageDisplayFormat id, CStr(choices(label))
+    label = PickValue(selected & " ／ 現在 " & current & vbCrLf & "管理簿の保存型は変わりません。", DictionaryLabels(Choices), current)
+    If Len(label) > 0 Then StageDisplayFormat id, CStr(Choices(label))
 End Sub

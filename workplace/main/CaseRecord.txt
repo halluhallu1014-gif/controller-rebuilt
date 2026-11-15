@@ -14,22 +14,22 @@ Private Sub Class_Initialize()
     Set values = CreateObject("Scripting.Dictionary")
 End Sub
 
-Public Property Get PersonKey() As String
+Public Property Get personKey() As String
     If values.Exists("CommonNumber") Then
-        If IsDigits(values("CommonNumber"), 18) Then PersonKey = CStr(values("CommonNumber"))
+        If IsDigits(values("CommonNumber"), 18) Then personKey = CStr(values("CommonNumber"))
     End If
 End Property
 
-Public Property Get CaseIdentity() As String
-    CaseIdentity = PersonKey
+Public Property Get caseIdentity() As String
+    caseIdentity = personKey
 End Property
 
-Public Property Get Key() As String
+Public Property Get key() As String
     Dim identity As String
-    identity = CaseIdentity
+    identity = caseIdentity
     If Len(identity) = 0 Then
-        Key = sourceYear & "|InvalidRow|" & CStr(sourceRow)
+        key = sourceYear & "|InvalidRow|" & CStr(sourceRow)
     Else
-        Key = sourceYear & "|" & identity
+        key = sourceYear & "|" & identity
     End If
 End Property

@@ -20,7 +20,7 @@ Private isSelectingRelated As Boolean
 Private Const RELATED_LIST As String = "RelatedCasesList"
 
 Public Function IsReservedUiCell(ByVal target As Range) As Boolean
-    IsReservedUiCell = target.Parent.Name <> "詳細"
+    IsReservedUiCell = target.Parent.name <> "詳細"
     If Not IsReservedUiCell Then
         IsReservedUiCell = Not Intersect(target, target.Parent.Range("B2:W12,Q32,C60:V64")) Is Nothing
     End If
@@ -47,7 +47,7 @@ Finished:
     If Len(message) > 0 Then Notify message
     Exit Sub
 Failed:
-    message = SafeFailure("読込", Err.Number)
+    message = SafeFailure("読込", Err.number)
     Resume Finished
 End Sub
 
@@ -68,7 +68,7 @@ End Sub
 
 Public Sub NextPage()
     If matches Is Nothing Then Exit Sub
-    If (pageIndex + 1) * PAGE_SIZE >= matches.Count Then Exit Sub
+    If (pageIndex + 1) * PAGE_SIZE >= matches.count Then Exit Sub
     pageIndex = pageIndex + 1
     DrawPage
 End Sub
@@ -77,15 +77,15 @@ Public Sub ResultSelection(ByVal target As Range)
     If matches Is Nothing Then Exit Sub
     If target.CountLarge > 24 Then Exit Sub
     If Intersect(target, Sheet("検索").Range("C20:U33")) Is Nothing Then Exit Sub
-    If target.Row = selectedRow Then Exit Sub
-    HighlightResult target.Row
+    If target.row = selectedRow Then Exit Sub
+    HighlightResult target.row
 End Sub
 
 Public Sub OpenSelected()
     Dim index As Long
     If matches Is Nothing Or selectedRow < FIRST_RESULT_ROW Then Exit Sub
     index = pageIndex * PAGE_SIZE + selectedRow - FIRST_RESULT_ROW + 1
-    If index > matches.Count Then Exit Sub
+    If index > matches.count Then Exit Sub
     If Not UiCanLeaveDetail() Then Exit Sub
     ShowRecord CStr(matches(index))
 End Sub
@@ -143,9 +143,9 @@ End Sub
 Private Function SelectedSearchOffice() As String
     Dim button As OptionButton
     For Each button In Sheet("検索").OptionButtons
-        If Left$(button.Name, Len(CONTROL_PREFIX & "Office")) = CONTROL_PREFIX & "Office" Then
-            If button.Value = xlOn And button.Name <> CONTROL_PREFIX & "Office0" Then
-                SelectedSearchOffice = button.Caption
+        If left$(button.name, Len(CONTROL_PREFIX & "Office")) = CONTROL_PREFIX & "Office" Then
+            If button.value = xlOn And button.name <> CONTROL_PREFIX & "Office0" Then
+                SelectedSearchOffice = button.caption
                 Exit Function
             End If
         End If
@@ -236,7 +236,7 @@ Public Function CommitDetail(ByVal showConfirmation As Boolean, ByRef message As
     If isNew Then
         identity = year & "|" & inputValues("CommonNumber")
     Else
-        identity = record.Key
+        identity = record.key
     End If
     If showConfirmation Then
         If MsgBox(DetailSavePrompt(year, inputValues, record, isNew), _
@@ -259,7 +259,7 @@ Failed:
     If CommitDetail Then
         message = message & vbCrLf & "管理簿への保存は確認済みです。詳細の再表示に失敗したため、最新を再読込してください。"
     Else
-        message = SafeFailure("保存", Err.Number)
+        message = SafeFailure("保存", Err.number)
     End If
     Resume Finished
 End Function
@@ -303,7 +303,7 @@ Private Function SavePreviewValue(ByVal fieldId As String, ByVal value As Varian
         SavePreviewValue = Format$(CDate(value), "yyyy/mm/dd")
     Else
         text = Replace(Replace(CStr(value), vbCr, " "), vbLf, " ")
-        SavePreviewValue = Left$(text, 48)
+        SavePreviewValue = left$(text, 48)
         If Len(text) > 48 Then SavePreviewValue = SavePreviewValue & "…"
     End If
 End Function
@@ -343,7 +343,7 @@ Private Function SelectedField() As String
     If Not hasDetail Then Exit Function
     If Not ActiveSheet Is Sheet("詳細") Then Exit Function
     For Each id In fields.Keys
-        If ActiveCell.Address = FieldCell(CStr(id)).Address Then
+        If ActiveCell.address = FieldCell(CStr(id)).address Then
             SelectedField = CStr(id)
             Exit Function
         End If
@@ -383,14 +383,14 @@ Private Sub BuildSearchFilters()
         Next
     End If
     If SearchFiltersMatch(ws, offices, statuses) Then Exit Sub
-    For index = ws.Shapes.Count To 1 Step -1
-        If Left$(ws.Shapes(index).Name, Len(CONTROL_PREFIX)) = CONTROL_PREFIX Then ws.Shapes(index).Delete
+    For index = ws.Shapes.count To 1 Step -1
+        If left$(ws.Shapes(index).name, Len(CONTROL_PREFIX)) = CONTROL_PREFIX Then ws.Shapes(index).Delete
     Next
     groupHeight = ws.Rows("12:13").Height + 2
 
-    Set frame = ws.GroupBoxes.Add(ws.Range("F12").Left, ws.Range("F12").Top - 1, ws.Range("F12:U13").Width * (1 + offices.Count \ 8), groupHeight)
-    frame.Name = CONTROL_PREFIX & "Group"
-    frame.Caption = ""
+    Set frame = ws.GroupBoxes.Add(ws.Range("F12").left, ws.Range("F12").Top - 1, ws.Range("F12:U13").width * (1 + offices.count \ 8), groupHeight)
+    frame.name = CONTROL_PREFIX & "Group"
+    frame.caption = ""
     frame.Visible = False
     AddOfficeOption ws, 0, "すべて"
     index = 1
@@ -398,16 +398,16 @@ Private Sub BuildSearchFilters()
         AddOfficeOption ws, index, CStr(office)
         index = index + 1
     Next
-    ws.OptionButtons(CONTROL_PREFIX & "Office0").Value = xlOn
+    ws.OptionButtons(CONTROL_PREFIX & "Office0").value = xlOn
     Set anchor = ws.Range("C14")
-    Set check = ws.CheckBoxes.Add(anchor.Left + 3, anchor.Top + (anchor.Height - 18) / 2, 120, 18)
-    check.Name = CONTROL_PREFIX & "Closed"
-    check.Caption = "終了分を除く"
-    check.Value = xlOff
+    Set check = ws.CheckBoxes.Add(anchor.left + 3, anchor.Top + (anchor.Height - 18) / 2, 120, 18)
+    check.name = CONTROL_PREFIX & "Closed"
+    check.caption = "終了分を除く"
+    check.value = xlOff
     check.OnAction = MacroAddress("FindRecords")
     Set anchor = ws.Range("H14:O14")
-    Set statusList = ws.DropDowns.Add(anchor.Left, anchor.Top, anchor.Width, anchor.Height)
-    statusList.Name = CONTROL_PREFIX & "Status"
+    Set statusList = ws.DropDowns.Add(anchor.left, anchor.Top, anchor.width, anchor.Height)
+    statusList.name = CONTROL_PREFIX & "Status"
     statusList.AddItem "状態：すべて"
     For Each item In statuses.Keys
         statusList.AddItem CStr(item)
@@ -421,17 +421,17 @@ Private Function SearchFiltersMatch(ByVal ws As Worksheet, ByVal offices As Obje
     Dim office As Variant
     Dim statusList As DropDown
     On Error GoTo MissingControl
-    If ws.OptionButtons.Count <> offices.Count + 1 Or ws.CheckBoxes.Count <> 1 Then Exit Function
-    If ws.GroupBoxes(CONTROL_PREFIX & "Group").Name <> CONTROL_PREFIX & "Group" Then Exit Function
-    If ws.CheckBoxes(CONTROL_PREFIX & "Closed").Caption <> "終了分を除く" Then Exit Function
-    If ws.OptionButtons(CONTROL_PREFIX & "Office0").Caption <> "すべて" Then Exit Function
+    If ws.OptionButtons.count <> offices.count + 1 Or ws.CheckBoxes.count <> 1 Then Exit Function
+    If ws.GroupBoxes(CONTROL_PREFIX & "Group").name <> CONTROL_PREFIX & "Group" Then Exit Function
+    If ws.CheckBoxes(CONTROL_PREFIX & "Closed").caption <> "終了分を除く" Then Exit Function
+    If ws.OptionButtons(CONTROL_PREFIX & "Office0").caption <> "すべて" Then Exit Function
     index = 1
     For Each office In offices.Keys
-        If ws.OptionButtons(CONTROL_PREFIX & "Office" & index).Caption <> CStr(office) Then Exit Function
+        If ws.OptionButtons(CONTROL_PREFIX & "Office" & index).caption <> CStr(office) Then Exit Function
         index = index + 1
     Next
     Set statusList = ws.DropDowns(CONTROL_PREFIX & "Status")
-    If statusList.ListCount <> statuses.Count + 1 Then Exit Function
+    If statusList.ListCount <> statuses.count + 1 Then Exit Function
     index = 2
     For Each office In statuses.Keys
         If statusList.List(index) <> CStr(office) Then Exit Function
@@ -447,14 +447,14 @@ Private Sub AddOfficeOption(ByVal ws As Worksheet, ByVal index As Long, ByVal ca
     Dim rowIndex As Long
     rowIndex = 12 + (index Mod 8) \ 4
     Set anchor = ws.Cells(rowIndex, 6 + 4 * (index Mod 4) + 16 * (index \ 8))
-    Set button = ws.OptionButtons.Add(anchor.Left + 5, anchor.Top + (anchor.Height - 18) / 2, anchor.Resize(1, 4).Width - 10, 18)
-    button.Name = CONTROL_PREFIX & "Office" & index
-    button.Caption = caption
+    Set button = ws.OptionButtons.Add(anchor.left + 5, anchor.Top + (anchor.Height - 18) / 2, anchor.Resize(1, 4).width - 10, 18)
+    button.name = CONTROL_PREFIX & "Office" & index
+    button.caption = caption
     button.OnAction = MacroAddress("FindRecords")
 End Sub
 
 Public Function MacroAddress(ByVal name As String) As String
-    MacroAddress = "'" & Replace(ThisWorkbook.Name, "'", "''") & "'!" & name
+    MacroAddress = "'" & Replace(ThisWorkbook.name, "'", "''") & "'!" & name
 End Function
 
 Private Sub RenderSearch()
@@ -465,7 +465,7 @@ Private Sub RenderSearch()
     Dim statusList As DropDown
     Set ws = Sheet("検索")
     office = SelectedSearchOffice()
-    If ws.CheckBoxes.Count > 0 Then excludeClosed = (ws.CheckBoxes(CONTROL_PREFIX & "Closed").Value = xlOn)
+    If ws.CheckBoxes.count > 0 Then excludeClosed = (ws.CheckBoxes(CONTROL_PREFIX & "Closed").value = xlOn)
     Set statusList = ws.DropDowns(CONTROL_PREFIX & "Status")
     If statusList.ListIndex > 1 Then status = CStr(statusList.List(statusList.ListIndex))
     Set matches = SearchRecords(CStr(ws.Range("E9").Value2), office, excludeClosed, status)
@@ -486,7 +486,7 @@ Private Sub DrawPage()
     End If
     For rowIndex = FIRST_RESULT_ROW To FIRST_RESULT_ROW + PAGE_SIZE - 1
         index = pageIndex * PAGE_SIZE + rowIndex - FIRST_RESULT_ROW + 1
-        If index > matches.Count Then Exit For
+        If index > matches.count Then Exit For
         Set record = Cases(CStr(matches(index)))
         ws.Cells(rowIndex, 3).Value2 = record.values("Office")
         ws.Cells(rowIndex, 6).Value2 = record.values("PersonName")
@@ -494,8 +494,8 @@ Private Sub DrawPage()
         ws.Cells(rowIndex, 16).Value2 = record.values("DocumentName")
         ws.Cells(rowIndex, 20).Value2 = record.values("Status")
     Next
-    ws.Range("C17").Value2 = "検索結果 " & matches.Count & "件　" & (pageIndex + 1) & " / " & _
-        Application.Max(1, (matches.Count + PAGE_SIZE - 1) \ PAGE_SIZE) & "ページ"
+    ws.Range("C17").Value2 = "検索結果 " & matches.count & "件　" & (pageIndex + 1) & " / " & _
+        Application.Max(1, (matches.count + PAGE_SIZE - 1) \ PAGE_SIZE) & "ページ"
     ws.Range("C35").Value2 = "一覧の行を選択すると、詳細を開けます。"
 End Sub
 
@@ -507,7 +507,7 @@ Private Sub HighlightResult(ByVal rowIndex As Long)
     RestoreRowColor ws
     selectedRow = 0
     index = pageIndex * PAGE_SIZE + rowIndex - FIRST_RESULT_ROW + 1
-    If index > matches.Count Then Exit Sub
+    If index > matches.count Then Exit Sub
     Set record = Cases(CStr(matches(index)))
     selectedRow = rowIndex
     ws.Range(ws.Cells(rowIndex, 3), ws.Cells(rowIndex, 21)).Interior.Color = ws.Range("X19").Interior.Color
@@ -581,7 +581,7 @@ Private Sub ShowDetail(ByVal year As String)
     With ws.Shapes("Calendar_CompletedDate")
         .Height = ws.Range("L43").Height
         .Top = ws.Range("L43").Top
-        .Left = ws.Range("L43").Left + ws.Range("L43").Width - .Width
+        .left = ws.Range("L43").left + ws.Range("L43").width - .width
     End With
     Set field = ws.Range("C58")
     For Each id In Array("ControllerCopyNumber", "UI_選択項目をコピー", "UI_コピー取込", "UI_選択項目へ取込")
@@ -594,17 +594,13 @@ Private Sub ShowDetail(ByVal year As String)
     With ActiveWindow
         .ScrollColumn = 1
         .ScrollRow = 1
-        Do While .VisibleRange.Rows(.VisibleRange.Rows.Count).Row >= DISPATCH_FIRST
-            If .Zoom >= 400 Then Exit Do
-            .Zoom = Application.Min(400, .Zoom + 5)
-        Loop
     End With
     isRenderingDetail = False
     Exit Sub
 Failed:
-    failureNumber = Err.Number
-    failureSource = Err.Source
-    failureDescription = Err.Description
+    failureNumber = Err.number
+    failureSource = Err.source
+    failureDescription = Err.description
     isRenderingDetail = False
     On Error Resume Next
     If Not ws Is Nothing Then ws.Protect DrawingObjects:=False, UserInterfaceOnly:=True
@@ -626,7 +622,7 @@ Public Sub InitializeControllerUi()
     Dim action As String
     For Each sheetName In Array("検索", "詳細", "CompareResults")
         For Each button In Sheet(CStr(sheetName)).Shapes
-            If button.Name <> CONTROL_PREFIX & "Group" Then
+            If button.name <> CONTROL_PREFIX & "Group" Then
                 action = button.OnAction
                 If Len(action) > 0 Then
                     If action <> MacroAddress(Mid$(action, InStrRev(action, "!") + 1)) Then
@@ -689,12 +685,12 @@ Private Sub ShowRelatedCases(ByVal ws As Worksheet)
     Dim orderedKeys As Collection
     Set orderedKeys = New Collection
     If Not currentCase Is Nothing Then
-        number = Left$(currentCase.PersonKey, 13)
+        number = left$(currentCase.personKey, 13)
         If Len(number) > 0 And Not Cases Is Nothing Then
             Set members = NewDictionary()
             For Each key In Cases.Keys
                 Set record = Cases(key)
-                If Left$(record.PersonKey, 13) = number Then members.Add key, True
+                If left$(record.personKey, 13) = number Then members.Add key, True
             Next
             If Not relatedKeys Is Nothing Then
                 For Each key In relatedKeys
@@ -726,7 +722,7 @@ Private Sub DrawRelatedList(ByVal ws As Worksheet)
     isSelectingRelated = True
     On Error GoTo Failed
     Set control = ws.Shapes(RELATED_LIST).ControlFormat
-    needsRebuild = (control.ListCount <> relatedKeys.Count)
+    needsRebuild = (control.ListCount <> relatedKeys.count)
     Dim captions As New Collection
     relatedCurrentIndex = 0
     For Each key In relatedKeys
@@ -742,9 +738,9 @@ Private Sub DrawRelatedList(ByVal ws As Worksheet)
         If relatedCurrentIndex > 3 Then
             caption = captions(relatedCurrentIndex)
             captions.Remove relatedCurrentIndex
-            captions.Add caption, Before:=1
+            captions.Add caption, before:=1
             relatedKeys.Remove relatedCurrentIndex
-            relatedKeys.Add currentCaseKey, Before:=1
+            relatedKeys.Add currentCaseKey, before:=1
             relatedCurrentIndex = 1
         End If
         control.RemoveAllItems
@@ -753,13 +749,13 @@ Private Sub DrawRelatedList(ByVal ws As Worksheet)
         Next
     End If
     If control.ListIndex <> relatedCurrentIndex Then control.ListIndex = relatedCurrentIndex
-    ws.Range("C8").Value2 = "関連事案　全" & relatedKeys.Count & "件"
+    ws.Range("C8").Value2 = "関連事案　全" & relatedKeys.count & "件"
     UpdateDetailSummary ws
     isSelectingRelated = wasSelecting
     Exit Sub
 Failed:
     Dim failure As Long
-    failure = Err.Number
+    failure = Err.number
     isSelectingRelated = wasSelecting
     Err.Raise failure
 End Sub
@@ -782,13 +778,13 @@ Private Sub UpdateDetailSummary(ByVal ws As Worksheet)
         Else
             With currentCase
                 ws.Range("C6").Value2 = .values("PersonName")
-                ws.Range("J6").Value2 = "共通番号  " & .PersonKey
+                ws.Range("J6").Value2 = "共通番号  " & .personKey
                 ws.Range("P6").Value2 = "署  " & .values("Office")
                 status = CStr(.values("Status"))
                 If Len(.invalidReason) > 0 Then status = "要確認"
                 document = Replace(Replace(CStr(.values("DocumentName")), vbCr, " "), vbLf, " ")
                 If Len(document) > 31 Or Len(.invalidReason) > 0 Then captionSize = 9
-                If Len(document) > 42 Then document = Left$(document, 41) & "…"
+                If Len(document) > 42 Then document = left$(document, 41) & "…"
                 caption = .sourceYear & "年度" & vbLf & _
                     document & " ／ " & .values("Status")
                 If Len(.invalidReason) > 0 Then
@@ -801,8 +797,8 @@ Private Sub UpdateDetailSummary(ByVal ws As Worksheet)
             End With
         End If
     End If
-    ws.Shapes("DetailStatusBadge").TextFrame2.TextRange.Text = status
-    ws.Range("Q9").Font.Size = captionSize
+    ws.Shapes("DetailStatusBadge").TextFrame2.TextRange.text = status
+    ws.Range("Q9").Font.size = captionSize
     ws.Range("Q9").Value2 = caption
 End Sub
 
@@ -841,7 +837,7 @@ Public Sub RelatedListChanged(Optional ByVal confirmedDecision As VbMsgBoxResult
     Set control = Sheet("詳細").Shapes(RELATED_LIST).ControlFormat
     index = control.ListIndex
     If index = relatedCurrentIndex Then GoTo Finished
-    If index < 1 Or index > relatedKeys.Count Then GoTo Finished
+    If index < 1 Or index > relatedKeys.count Then GoTo Finished
     key = CStr(relatedKeys(index))
     decision = vbNo
     If RelatedHasDraft() Then
@@ -860,7 +856,7 @@ Finished:
     If Len(message) > 0 Then Notify message
     Exit Sub
 Failed:
-    message = SafeFailure("関連事案の切替", Err.Number)
+    message = SafeFailure("関連事案の切替", Err.number)
     Resume Finished
 End Sub
 
@@ -874,7 +870,7 @@ Public Function SwitchRelatedCase(ByVal key As String, ByVal decision As VbMsgBo
     If Not hasDetail Or currentCase Is Nothing Or Cases Is Nothing Then Exit Function
     If Not Cases.Exists(key) Or key = currentCaseKey Then Exit Function
     Set record = Cases(key)
-    If Len(currentCase.PersonKey) = 0 Or Left$(record.PersonKey, 13) <> Left$(currentCase.PersonKey, 13) Then Exit Function
+    If Len(currentCase.personKey) = 0 Or left$(record.personKey, 13) <> left$(currentCase.personKey, 13) Then Exit Function
     If decision = vbCancel Then Exit Function
     If RelatedHasDraft() Then
         Select Case decision
@@ -886,7 +882,7 @@ Public Function SwitchRelatedCase(ByVal key As String, ByVal decision As VbMsgBo
                 End If
                 Set record = Cases(key)
                 If currentCase Is Nothing Then Exit Function
-                If Left$(record.PersonKey, 13) <> Left$(currentCase.PersonKey, 13) Then Exit Function
+                If left$(record.personKey, 13) <> left$(currentCase.personKey, 13) Then Exit Function
             Case vbNo
             Case Else
                 Exit Function
@@ -958,20 +954,20 @@ Private Sub ImportDetailFields(ByVal onlyId As String)
             End If
         End If
     Next
-    If changes.Count = 0 Then
-        Notify "入力できる新しい値がありません。" & vbCrLf & Left$(issues, 500)
+    If changes.count = 0 Then
+        Notify "入力できる新しい値がありません。" & vbCrLf & left$(issues, 500)
         Exit Sub
     End If
     If MsgBox("次の項目を入力欄へ反映しますか？ 既存値の置換 " & overwrite & "件" & vbCrLf & _
-        summary & Left$(issues, 350), vbYesNo Or vbQuestion Or vbDefaultButton2) <> vbYes Then Exit Sub
+        summary & left$(issues, 350), vbYesNo Or vbQuestion Or vbDefaultButton2) <> vbYes Then Exit Sub
     For Each id In changes.Keys
         PutValue FieldCell(CStr(id)), changes(id)
     Next
-    Notify changes.Count & "項目を入力欄に反映しました。保存前に内容を確認してください。"
+    Notify changes.count & "項目を入力欄に反映しました。保存前に内容を確認してください。"
     Exit Sub
 Failed:
     If restoreDetail Then Sheet("詳細").Activate
-    Notify SafeFailure("データ取込", Err.Number)
+    Notify SafeFailure("データ取込", Err.number)
 End Sub
 
 

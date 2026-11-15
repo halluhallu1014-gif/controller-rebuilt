@@ -53,28 +53,28 @@ Private Function HeaderList(ByVal sheet As Worksheet, ByRef message As String) A
     Dim index As Long
     Dim value As Variant
     Set result = Dictionary()
-    Set last = sheet.Rows(1).Find(What:="*", After:=sheet.Cells(1, 1), LookIn:=xlFormulas, LookAt:=xlPart, _
+    Set last = sheet.rows(1).Find(What:="*", after:=sheet.Cells(1, 1), LookIn:=xlFormulas, LookAt:=xlPart, _
         SearchOrder:=xlByColumns, SearchDirection:=xlPrevious, MatchCase:=False, SearchFormat:=False)
     If last Is Nothing Then
-        message = sheet.Name & " の1行目に見出しがありません。"
+        message = sheet.name & " の1行目に見出しがありません。"
         Exit Function
     End If
-    For index = 1 To last.Column
+    For index = 1 To last.column
         value = sheet.Cells(1, index).Value2
         If IsError(value) Then
-            message = sheet.Name & " の1行目にExcelエラーがあります。"
+            message = sheet.name & " の1行目にExcelエラーがあります。"
             Exit Function
         End If
         If Len(CStr(value)) > 0 Then
             If result.Exists(CStr(value)) Then
-                message = sheet.Name & " の見出し「" & CStr(value) & "」が重複しています。"
+                message = sheet.name & " の見出し「" & CStr(value) & "」が重複しています。"
                 Exit Function
             End If
             result.Add CStr(value), index
         End If
     Next
     If result.Count < 2 Then
-        message = sheet.Name & " の1行目に複数の見出しが必要です。"
+        message = sheet.name & " の1行目に複数の見出しが必要です。"
         Exit Function
     End If
     Set HeaderList = result
@@ -90,7 +90,8 @@ Private Function LooksLikeLedger(ByVal headers As Object) As Boolean
     LooksLikeLedger = True
 End Function
 
-Public Function ReadTable(ByVal address As String, ByVal preferredSheet As String, ByVal isLedger As Boolean, ByRef message As String) As Object
+Public Function ReadTable(ByVal address As String, ByVal preferredSheet As String, ByVal isLedger As Boolean, ByRef message As String, _
+    Optional ByVal allowPick As Boolean = True, Optional ByVal chooseSheet As Boolean = False) As Object
     Dim book As Workbook
     Dim sheet As Worksheet
     Dim selected As Worksheet
@@ -117,14 +118,19 @@ Public Function ReadTable(ByVal address As String, ByVal preferredSheet As Strin
         GoTo Finished
     End If
     For Each sheet In book.Worksheets
-        names.Add sheet.Name
-        If sheet.Name = preferredSheet Then Set selected = sheet
+        names.Add sheet.name
+        If sheet.name = preferredSheet Then Set selected = sheet
         ignore = ""
         Set headerMap = HeaderList(sheet, ignore)
         If Not headerMap Is Nothing Then
-            If Not isLedger Or LooksLikeLedger(headerMap) Then plausible.Add sheet.Name
+            If Not isLedger Or LooksLikeLedger(headerMap) Then plausible.Add sheet.name
         End If
     Next
+    If chooseSheet And names.Count > 1 Then
+        name = PickValue("読み込むシートを選択してください。", names, preferredSheet)
+        If Len(CStr(name)) = 0 Then GoTo Finished
+        Set selected = book.Worksheets(CStr(name))
+    End If
     If selected Is Nothing Then
         If names.Count = 1 Then
             Set selected = book.Worksheets(CStr(names(1)))
@@ -132,6 +138,10 @@ Public Function ReadTable(ByVal address As String, ByVal preferredSheet As Strin
             Set selected = book.Worksheets(CStr(plausible(1)))
         Else
             If plausible.Count > 1 Then Set names = plausible
+            If Not allowPick Then
+                message = "シートを特定できません。「年度を確認」で使用するシートを選択してください。"
+                GoTo Finished
+            End If
             name = PickValue("読み込むシートを選択してください。", names)
             If Len(CStr(name)) = 0 Then GoTo Finished
             Set selected = book.Worksheets(CStr(name))
@@ -142,9 +152,9 @@ Public Function ReadTable(ByVal address As String, ByVal preferredSheet As Strin
     Set result = Dictionary()
 
     result.Add "Address", book.FullName
-    result.Add "Year", DetectLedgerYear(selected.Name, book.Name)
-    result.Add "Columns", selected.Cells(1, selected.Columns.Count).End(xlToLeft).Column
-    result.Add "Sheet", selected.Name
+    result.Add "Year", DetectLedgerYear(selected.name, book.name)
+    result.Add "Columns", selected.Cells(1, selected.columns.Count).End(xlToLeft).column
+    result.Add "Sheet", selected.name
     result.Add "Headers", headerMap
     result.Add "Count", SheetLastRow(selected, "A:XFD") - 1
     Set ReadTable = result
@@ -289,4 +299,24 @@ Private Function DetectLedgerYear(ByVal sheetName As String, ByVal filename As S
         Next
     Next
     If years.Count = 1 Then DetectLedgerYear = CStr(years.Keys()(0))
+End Function
+
+Public Function RequiredLedgerHeadings(ByVal year As String, ByVal headers As Object, ByRef message As String) As Boolean
+    Dim id As Variant, row As Long, heading As String, matched As String
+    Dim used As Object
+    Set used = Dictionary()
+    For Each id In fieldSpecs.Keys
+        If fieldSpecs(id)(1) Then
+            row = LedgerHeadingRow(year, CStr(id))
+            heading = CStr(fieldSpecs(id)(0))
+            If row > 0 Then heading = ReadCell("Fields", row, 10)
+            matched = UniqueHeading(headers, heading)
+            If Len(matched) = 0 Or used.Exists(matched) Then
+                message = year & "年度の必須見出し「" & FieldLabel(CStr(id)) & "」を「見出しと対応」で指定してください。"
+                Exit Function
+            End If
+            used.Add matched, True
+        End If
+    Next
+    RequiredLedgerHeadings = True
 End Function

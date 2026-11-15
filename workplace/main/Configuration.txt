@@ -48,7 +48,7 @@ Public Function LoadConfiguration(ByRef message As String) As Boolean
             Set target = Sheet(definition(2)).Range(definition(3))
             If target.CountLarge <> 1 Then Exit Function
             If target.MergeCells Then
-                If target.Address <> target.MergeArea.Cells(1, 1).Address Then Exit Function
+                If target.address <> target.MergeArea.Cells(1, 1).address Then Exit Function
             End If
             If target.HasFormula Then Exit Function
             If definition(2) = "Settings" Or definition(2) = "Fields" Or definition(2) = "Recovery" Or definition(2) = "MoveRecovery" Or definition(2) = "Calendar" Then Exit Function
@@ -56,8 +56,8 @@ Public Function LoadConfiguration(ByRef message As String) As Boolean
                 message = "Fields 行" & rowIndex & "：" & fieldId & "の入力セルが検索・関連事案一覧・操作欄と重複しています。別のセルを設定してください。"
                 Exit Function
             End If
-            If usedCells.Exists(target.Parent.Name & "!" & target.Address) Then Exit Function
-            usedCells.Add target.Parent.Name & "!" & target.Address, True
+            If usedCells.Exists(target.Parent.name & "!" & target.address) Then Exit Function
+            usedCells.Add target.Parent.name & "!" & target.address, True
             fieldDefinitions.Add fieldId, definition
         End If
     Next
@@ -94,7 +94,7 @@ Public Function LoadConfiguration(ByRef message As String) As Boolean
     If Not hasYearSettings Then
         If Not DiscoverYears(yearDefinitions, message) Then Exit Function
     End If
-    If yearDefinitions.Count = 0 Then
+    If yearDefinitions.count = 0 Then
         message = "有効な管理簿の年度がありません。設定ツールで対象年度を確認してください。"
         Exit Function
     End If
@@ -122,7 +122,7 @@ Private Function DiscoverYears(ByVal definitions As Object, ByRef message As Str
     Set book = OpenLedger(address, True, message)
     If book Is Nothing Then Exit Function
     For Each ws In book.Worksheets
-        year = YearFromSheet(ws.Name)
+        year = YearFromSheet(ws.name)
         If Len(year) > 0 Then
             Set columns = ColumnMap(ws, year, issue)
             If Not columns Is Nothing Then
@@ -130,13 +130,13 @@ Private Function DiscoverYears(ByVal definitions As Object, ByRef message As Str
                     message = year & "年度の管理簿シートが複数あります。設定ツールで使用するシートを指定してください。"
                     GoTo Finished
                 End If
-                definitions.Add year, Array(address, ws.Name, "Yes", address, "", "")
+                definitions.Add year, Array(address, ws.name, "Yes", address, "", "")
             ElseIf Len(message) = 0 Then
-                message = ws.Name & "：" & issue
+                message = ws.name & "：" & issue
             End If
         End If
     Next
-    DiscoverYears = definitions.Count > 0
+    DiscoverYears = definitions.count > 0
     If DiscoverYears Then
         message = ""
     ElseIf Len(message) = 0 Then
@@ -153,7 +153,7 @@ End Function
 Private Function YearFromSheet(ByVal name As String) As String
     Dim value As Long
     name = Trim$(name)
-    If Right$(name, 2) = "年度" Then name = Left$(name, Len(name) - 2)
+    If right$(name, 2) = "年度" Then name = left$(name, Len(name) - 2)
     If IsDigits(name, 4) Then
         value = CLng(name)
     ElseIf name Like "令和#" Or name Like "令和##" Then
@@ -198,7 +198,7 @@ Public Function ColumnMap(ByVal ws As Worksheet, ByVal year As String, ByRef mes
     Set result = NewDictionary()
     Set used = NewDictionary()
     message = ""
-    last = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+    last = ws.Cells(1, ws.columns.count).End(xlToLeft).column
     For position = 1 To last
         value = ws.Cells(1, position).Value2
         If IsError(value) Then
@@ -334,7 +334,7 @@ Public Function ConfiguredList(ByVal column As Long) As Object
     Set result = NewDictionary()
     result.CompareMode = vbTextCompare
     Set ws = Sheet("Settings")
-    For rowIndex = 2 To ws.Cells(ws.Rows.Count, column).End(xlUp).Row
+    For rowIndex = 2 To ws.Cells(ws.Rows.count, column).End(xlUp).row
         If Not IsError(ws.Cells(rowIndex, column).Value2) Then
             value = Trim$(CStr(ws.Cells(rowIndex, column).Value2))
             If Len(value) > 0 Then result(value) = True

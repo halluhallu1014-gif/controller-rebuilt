@@ -18,10 +18,10 @@ End Function
 
 Public Function SheetLastRow(ByVal sheet As Worksheet, ByVal columns As String) As Long
     Dim found As Range
-    Set found = sheet.Range(columns).Find(What:="*", After:=sheet.Range(columns).Cells(1, 1), LookIn:=xlFormulas, _
+    Set found = sheet.Range(columns).Find(What:="*", after:=sheet.Range(columns).Cells(1, 1), LookIn:=xlFormulas, _
         LookAt:=xlPart, SearchOrder:=xlByRows, SearchDirection:=xlPrevious, MatchCase:=False, SearchFormat:=False)
     SheetLastRow = 1
-    If Not found Is Nothing Then SheetLastRow = found.Row
+    If Not found Is Nothing Then SheetLastRow = found.row
 End Function
 
 Public Function FileLabel(ByVal address As String) As String
@@ -109,7 +109,7 @@ Public Function Snapshot(ByVal book As Workbook) As Object
             Case "Comparison": columnCount = 6
         End Select
         Set area = sheet.Range(sheet.Cells(1, 1), sheet.Cells(Application.Max(7, SheetLastRow(sheet, "A:" & _
-            Split(sheet.Cells(1, columnCount).Address, "$")(1))), columnCount))
+            Split(sheet.Cells(1, columnCount).address, "$")(1))), columnCount))
         'Formulaは数値定数を文字列で返すことがある。定数の型はValue2で保持する。
         formulas = area.Formula
         values = area.Value2
@@ -261,4 +261,189 @@ Public Function NextYearRow() As Long
         ReadCell("Settings", NextYearRow, 7) & ReadCell("Settings", NextYearRow, 8) & ReadCell("Settings", NextYearRow, 9)) > 0
         NextYearRow = NextYearRow + 1
     Loop
+End Function
+
+Public Function SetupAccount() As String
+    If Len(Environ$("USERDOMAIN")) > 0 And Len(Environ$("USERNAME")) > 0 Then
+        SetupAccount = Environ$("USERDOMAIN") & "\" & Environ$("USERNAME")
+    End If
+End Function
+
+Public Function SetupOwnerAllowed(ByVal accounts As String) As Boolean
+    Dim account As Variant
+    If Len(SetupAccount()) = 0 Then Exit Function
+    If Len(Trim$(accounts)) = 0 Then
+        ' Initial setup also requires write access to the selected workbook.
+        SetupOwnerAllowed = True
+        Exit Function
+    End If
+    For Each account In Split(accounts, ";")
+        If StrComp(Trim$(CStr(account)), SetupAccount(), vbTextCompare) = 0 Then
+            SetupOwnerAllowed = True
+            Exit Function
+        End If
+    Next
+End Function
+
+Public Function CanEditSetup(ByRef message As String) As Boolean
+    Dim book As Workbook
+    If Len(targetPath) = 0 Then Exit Function
+    If Not SetupOwnerAllowed(ReadOriginalOwner()) Then
+        message = "設定担当者のアカウントで開いてください。"
+        Exit Function
+    End If
+    Set book = SafeOpen(targetPath, True, message)
+    If book Is Nothing Then Exit Function
+    CanEditSetup = SetupOwnerAllowed(CStr(book.Worksheets("Settings").Range("S2").Value2))
+    book.Close False
+    If Not CanEditSetup Then message = "設定担当者のアカウントで開いてください。"
+End Function
+
+Private Function ReadOriginalOwner() As String
+    If originalValues.Exists("Settings|2|19") Then ReadOriginalOwner = CStr(originalValues("Settings|2|19"))
+End Function
+
+Public Function SetupFolderState(ByVal address As String) As String
+    If Len(address) = 0 Then
+        SetupFolderState = "未設定"
+    ElseIf Len(CanonicalAddress(address)) = 0 Then
+        SetupFolderState = "場所が無効"
+    ElseIf IsWeb(address) Then
+        SetupFolderState = "接続未確認"
+    ElseIf Filesystem().FolderExists(address) Then
+        SetupFolderState = "確認済み"
+    Else
+        SetupFolderState = "開けません"
+    End If
+End Function
+
+Public Function SetupLedgerLocation(ByRef message As String, ByRef incomplete As Boolean) As String
+    Dim staff As String, general As String, backup As String, fixed As String, alternate As String
+    Dim first As String, second As String, files As Object
+    Dim name As Variant, address As String, state As String
+    Set files = Filesystem()
+    staff = ReadCell("Settings", ConfigRow("StaffFolder"), 2)
+    general = ReadCell("Settings", ConfigRow("GeneralFolder"), 2)
+    backup = ReadCell("Settings", ConfigRow("BackupFolder"), 2)
+    fixed = ReadCell("Settings", ConfigRow("StaffLedger"), 2)
+    alternate = ReadCell("Settings", ConfigRow("GeneralLedger"), 2)
+    If IsSingleLedgerSetup() Then
+        SetupLedgerLocation = fixed
+        Exit Function
+    End If
+    For Each name In Array("StaffFolder", "GeneralFolder", "BackupFolder")
+        address = ReadCell("Settings", ConfigRow(CStr(name)), 2)
+        state = SetupFolderState(address)
+        Select Case state
+            Case "未設定": incomplete = True
+            Case "確認済み", "接続未確認"
+            Case Else
+                message = SetupFolderLabel(CStr(name)) & "を開けません。フォルダを選び直してください。"
+                Exit Function
+        End Select
+    Next
+    If incomplete Then
+        message = "未設定の必須フォルダを選択してください。途中保存もできます。"
+        Exit Function
+    End If
+    If IsSameWorkbookAddress(staff, general) Or IsSameWorkbookAddress(staff, backup) Or _
+        IsSameWorkbookAddress(general, backup) Then
+        message = "常勤・非常勤・退避には、それぞれ別のフォルダを選択してください。"
+        Exit Function
+    End If
+    If IsWeb(staff) <> IsWeb(general) Or IsWeb(staff) <> IsWeb(backup) Then
+        message = "3フォルダの指定をローカルパスかSharePoint直接URLにそろえてください。"
+        Exit Function
+    End If
+    If IsWeb(staff) Then
+        incomplete = True
+        message = "SharePointへの接続は未確認です。保存後、本体の「最新を再読込」で確認してください。"
+        Exit Function
+    End If
+    first = files.BuildPath(staff, "管理簿.xlsm")
+    second = files.BuildPath(general, "管理簿.xlsm")
+    If files.FileExists(first) And files.FileExists(second) Then
+        message = "常勤と非常勤の両方に管理簿があります。正式な管理簿の所在を確認してください。"
+    ElseIf files.FileExists(first) Then
+        SetupLedgerLocation = first
+    ElseIf files.FileExists(second) Then
+        SetupLedgerLocation = second
+    ElseIf Len(fixed) > 0 And Not IsWeb(fixed) And files.FileExists(fixed) Then
+        SetupLedgerLocation = fixed
+    Else
+        incomplete = True
+        message = "常勤・非常勤のどちらか一方に管理簿.xlsmを配置してください。"
+    End If
+End Function
+
+Public Function IsSingleLedgerSetup() As Boolean
+    Dim staff As String, general As String, fixed As String
+    staff = ReadCell("Settings", ConfigRow("StaffFolder"), 2)
+    general = ReadCell("Settings", ConfigRow("GeneralFolder"), 2)
+    fixed = ReadCell("Settings", ConfigRow("StaffLedger"), 2)
+    If Len(CanonicalAddress(staff)) > 0 And Len(CanonicalAddress(general)) > 0 Then
+        If IsWeb(staff) = IsWeb(general) And Not IsSameWorkbookAddress(staff, general) Then Exit Function
+    End If
+    IsSingleLedgerSetup = IsDirectWorkbookAddress(fixed) And Not IsWeb(fixed) And _
+        Len(ReadCell("Settings", ConfigRow("GeneralLedger"), 2)) = 0
+End Function
+
+Public Function SetupFolderLabel(ByVal key As String) As String
+    Select Case key
+        Case "StaffFolder": SetupFolderLabel = "常勤フォルダ（Staff）"
+        Case "GeneralFolder": SetupFolderLabel = "非常勤フォルダ（General）"
+        Case "BackupFolder": SetupFolderLabel = "退避フォルダ（Backup）"
+    End Select
+End Function
+
+Public Function SetupReadiness(ByRef message As String, ByRef incomplete As Boolean) As Boolean
+    Dim address As String, year As Variant, id As Variant, configured As String, detected As String
+    Dim item As Object, table As Object
+    Dim found As Boolean
+    message = ""
+    incomplete = False
+    address = SetupLedgerLocation(message, incomplete)
+    If Len(address) = 0 Then Exit Function
+    If IsWeb(address) Then
+        incomplete = True
+        message = "SharePointへの接続は未確認です。保存後、本体で管理簿を確認してください。"
+        Exit Function
+    End If
+    If draftYears.Count = 0 Then
+        Set table = ReadTable(address, "", True, message, False)
+        If table Is Nothing Then Exit Function
+        detected = CStr(table("Year"))
+        If Not IsYear(detected) Then
+            incomplete = True
+            message = "管理簿の年度を特定できません。「年度を確認」でシートと年度を選択してください。"
+            Exit Function
+        End If
+        If Not RequiredLedgerHeadings(detected, table("Headers"), message) Then Exit Function
+    Else
+        For Each year In draftYears.Keys
+            Set item = draftYears(year)
+            If item("Enabled") Then
+                found = True
+                configured = CStr(item("Sheet"))
+                If Len(configured) = 0 Then
+                    message = year & "年度のシートを「見出しと対応」で選び直してください。"
+                    Exit Function
+                End If
+                Set table = ReadTable(address, configured, True, message, False)
+                If table Is Nothing Then Exit Function
+                If CStr(table("Sheet")) <> configured Then
+                    message = year & "年度のシートが見つかりません。「見出しと対応」で選び直してください。"
+                    Exit Function
+                End If
+                If Not RequiredLedgerHeadings(CStr(year), table("Headers"), message) Then Exit Function
+            End If
+        Next
+        If Not found Then
+            incomplete = True
+            message = "使用する年度を「年度を確認」で追加してください。"
+            Exit Function
+        End If
+    End If
+    message = "管理簿の年度・シート・必須見出しを確認しました。本体の「最新を再読込」で使用を開始できます。"
+    SetupReadiness = True
 End Function

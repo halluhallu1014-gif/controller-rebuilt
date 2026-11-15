@@ -2,8 +2,7 @@ Option Explicit
 
 
 
-Public Const DISPATCH_FIRST As Long = 69
-Private Const DISPATCH_ROWS As Long = 2
+Private Const DISPATCH_FIRST As Long = 53
 Private shownDay(1 To 3) As Variant
 Private shownTitle(1 To 3) As String
 Private shownNote(1 To 3) As String
@@ -21,93 +20,339 @@ Public Sub InstallDispatchAreas()
     Dim template As Shape
     Dim anchor As Range
     Dim wasProtected As Boolean
+    Dim navy As Long
+    Dim blue As Long
+
     Set ws = Sheet("詳細")
     wasProtected = ws.ProtectContents
     If wasProtected Then ws.Unprotect
-    ws.Rows("65:68").Hidden = True
-    ws.Columns("AZ").Hidden = True
+    AlignDetailGrid ws
+    navy = RGB(24, 48, 80)
+    blue = RGB(214, 229, 246)
+    ws.Range("C49:V59").UnMerge
+    ws.Range("C49:V59").Clear
     ws.Range("C69:V85").UnMerge
     ws.Range("C69:V85").Clear
-    ws.Rows("69:75").Hidden = False
-    ws.Rows("76:85").Hidden = True
-    ws.Rows(69).RowHeight = 18
-    DispatchBand ws.Range("C69:V69"), "発送文書", RGB(214, 229, 246), RGB(24, 48, 80)
-    ws.Range("C69:V75").Font.Name = "Meiryo UI"
-    ws.Range("C69:V75").Font.Size = 11
+    ws.Rows("49:59").Hidden = False
+    ws.Rows("60:85").Hidden = True
+    ws.columns("AZ").Hidden = True
+    ws.Range("C49:V59").Font.name = "Meiryo UI"
+    ws.Range("C49:V59").Font.size = 11
+    ws.Range("C49:V55").Interior.Color = RGB(239, 245, 251)
+    ws.Range("C49:L55").BorderAround Color:=RGB(155, 183, 213)
+    ws.Range("N49:V55").BorderAround Color:=RGB(155, 183, 213)
+    ws.Rows("53:55").RowHeight = 30
+    ws.Rows(56).RowHeight = 8
+    ws.Rows(57).RowHeight = 18
+    ws.Rows(58).RowHeight = 33
+    ws.Rows(59).RowHeight = 5
     Set template = ws.Shapes("Calendar_ReceivedDate")
     For block = 1 To 3
         row = DispatchRow(block)
-        ws.Rows(row + 1).RowHeight = ws.Rows(32).RowHeight
-        ws.Rows(row + 2).RowHeight = 16
-
-        DispatchBand ws.Range("C" & row + 1 & ":D" & row + 1), "文書" & block, RGB(214, 229, 246), RGB(24, 48, 80)
-        DispatchBand ws.Cells(row + 1, 5), "発送日", RGB(214, 229, 246), RGB(24, 48, 80)
-        ws.Cells(row + 1, 5).HorizontalAlignment = xlCenter
-        DispatchBand ws.Range("M" & row + 1 & ":O" & row + 1), "文書名", RGB(214, 229, 246), RGB(24, 48, 80)
-        DispatchBand ws.Range("C" & row + 2 & ":E" & row + 2), "備考", RGB(214, 229, 246), RGB(24, 48, 80)
-        DispatchBox ws.Range("F" & row + 1 & ":K" & row + 1)
-        DispatchBox ws.Range("P" & row + 1 & ":V" & row + 1)
-        DispatchBox ws.Range("F" & row + 2 & ":V" & row + 2)
-        ws.Cells(row + 1, 6).NumberFormat = ws.Range("F32").NumberFormat
-        Set anchor = ws.Cells(row + 1, 12)
-        Set button = Nothing
-        On Error Resume Next
-        Set button = ws.Shapes("Calendar_Dispatch" & block)
-        On Error GoTo 0
+        DispatchBand ws.Cells(row, 14), CStr(block), blue, navy
+        ws.Cells(row, 14).HorizontalAlignment = xlRight
+        DispatchBox ws.Range("O" & row & ":P" & row)
+        DispatchBox ws.Range("R" & row & ":T" & row)
+        DispatchBox ws.Range("U" & row & ":V" & row)
+        ws.Cells(row, 15).NumberFormat = ws.Range("F32").NumberFormat
+        ws.Cells(row, 21).WrapText = True
+        Set anchor = ws.Cells(row, 17)
+        Set button = LayoutShape(ws, "Calendar_Dispatch" & block)
         If button Is Nothing Then Set button = template.Duplicate
-        button.Name = "Calendar_Dispatch" & block
-        button.Left = anchor.Left + (anchor.Width - template.Width) / 2
-        button.Top = anchor.Top + (anchor.Height - template.Height) / 2
-        button.Width = template.Width
+        button.name = "Calendar_Dispatch" & block
+        button.width = template.width
         button.Height = template.Height
+        button.left = anchor.left + (anchor.width - button.width) / 2
+        button.Top = anchor.Top + (anchor.Height - button.Height) / 2
         button.Placement = xlMove
         button.OnAction = template.OnAction
     Next
-    Set button = Nothing
-    On Error Resume Next
-    Set button = ws.Shapes("DispatchCalendar")
-    On Error GoTo 0
-    If Not button Is Nothing Then button.Delete
-    Set button = Nothing
-    On Error Resume Next
-    Set button = ws.Shapes("DispatchSave")
-    On Error GoTo 0
 
-    ws.Rows(59).Hidden = False
-    ws.Rows(59).RowHeight = 36
-    Set anchor = ws.Range("R59:V59")
-    If button Is Nothing Then
-        AddWorkflowButton ws, "DispatchSave", "登録・更新", "SaveDetail", anchor
-        Set button = ws.Shapes("DispatchSave")
-    End If
-    button.Width = anchor.Width - 4
-    button.Height = 26
-    button.Left = anchor.Left + 2
-    button.Top = anchor.Top + (anchor.Height - button.Height) / 2
-    button.TextFrame2.TextRange.ParagraphFormat.Alignment = msoAlignCenter
-    button.TextFrame2.VerticalAnchor = msoAnchorMiddle
-    AlignCopyButtons ws
+    Set button = LayoutShape(ws, "DispatchCalendar")
+    If Not button Is Nothing Then button.Delete
+    Set button = LayoutShape(ws, "UI_登録更新")
+    If Not button Is Nothing Then button.Visible = msoFalse
+    InstallMemoLayout
+    InstallDetailActions
     If wasProtected Then ws.Protect DrawingObjects:=False, UserInterfaceOnly:=True
 End Sub
 
+Public Sub InstallMemoLayout()
+    Dim ws As Worksheet
+    Dim row As Long
+    Dim block As Long
+    Dim ink As Long
+    Dim blue As Long
+    Dim wasProtected As Boolean
+    Dim fieldRow As Long
+    Dim fieldId As String
 
-Private Sub AlignCopyButtons(ByVal ws As Worksheet)
-    Dim names As Variant
-    Dim button As Shape
+    Set ws = Sheet("詳細")
+    wasProtected = ws.ProtectContents
+    If wasProtected Then ws.Unprotect
+    ink = RGB(24, 48, 80)
+    blue = RGB(214, 229, 246)
+    ws.Range("C49:L52").UnMerge
+    ws.Range("N49:V52").UnMerge
+    ws.Range("C49:V52").ClearContents
+    ws.Rows("50:52").Hidden = True
+    ws.Rows(49).RowHeight = 22
+    DispatchBand ws.Range("C49:L49"), "メモ", blue, ink
+    DispatchBand ws.Range("N49"), "No.", blue, ink
+    DispatchBand ws.Range("O49:Q49"), "発送文書・発送日", blue, ink
+    DispatchBand ws.Range("R49:T49"), "文書名", blue, ink
+    DispatchBand ws.Range("U49:V49"), "備考", blue, ink
+    ws.Range("N49:V49").HorizontalAlignment = xlCenter
+    ws.Range("O49").HorizontalAlignment = xlLeft
+    ws.Range("O49").IndentLevel = 0
+    ws.Range("O49").Font.size = 10
+    ws.Range("C49:V49").VerticalAlignment = xlCenter
+    For block = 1 To 3
+        row = DispatchRow(block)
+        fieldId = "Memo" & block
+        With Sheet("Fields")
+            For fieldRow = 2 To LastRow(Sheet("Fields"))
+                If CStr(.Cells(fieldRow, 1).Value2) = fieldId Then Exit For
+            Next
+            If CStr(.Cells(fieldRow, 5).Value2) = "F" & row Then MoveDetailField fieldId, "F" & row, "D" & row
+            If CStr(.Cells(fieldRow, 5).Value2) = "E" & row Then MoveDetailField fieldId, "E" & row, "D" & row
+        End With
+        Dim draft As Variant
+        draft = FirstMemoValue(ws, row)
+        ws.Range("C" & row & ":L" & row).UnMerge
+        ws.Range("C" & row & ":L" & row).ClearContents
+        DispatchBand ws.Cells(row, 3), CStr(block), blue, ink
+        ws.Cells(row, 3).HorizontalAlignment = xlRight
+        DispatchBox ws.Range("D" & row & ":L" & row)
+        ws.Cells(row, 4).Font.Bold = False
+        ws.Cells(row, 4).WrapText = True
+        PutValue ws.Cells(row, 4), draft
+    Next
+    ws.Range("C49:L55").BorderAround Color:=RGB(155, 183, 213)
+    ws.Range("N49:V55").BorderAround Color:=RGB(155, 183, 213)
+    If wasProtected Then ws.Protect DrawingObjects:=False, UserInterfaceOnly:=True
+End Sub
+
+Private Function FirstMemoValue(ByVal ws As Worksheet, ByVal row As Long) As Variant
+    Dim column As Long
+    For column = 4 To 6
+        If Not IsEmpty(ws.Cells(row, column).Value2) Then
+            FirstMemoValue = ws.Cells(row, column).Value2
+            Exit Function
+        End If
+    Next
+End Function
+
+Public Sub InstallDetailActions()
+    Const GAP As Double = 5
+    Const BUTTON_HEIGHT As Double = 26
+    Dim ws As Worksheet
     Dim area As Range
-    Dim width As Double
+    Dim buttonRow As Range
+    Dim button As Shape
+    Dim heading As Shape
+    Dim names As Variant
+    Dim headings As Variant
     Dim index As Long
-    Const GAP As Double = 4
+    Dim width As Double
+    Dim wasProtected As Boolean
+
+    Set ws = Sheet("詳細")
+    wasProtected = ws.ProtectContents
+    If wasProtected Then ws.Unprotect
+    Set area = ws.Range("C57:V59")
+    Set buttonRow = ws.Range("C58:V58")
+    area.UnMerge
+    area.Clear
+    area.Interior.Color = RGB(249, 251, 253)
+    area.BorderAround Color:=RGB(155, 183, 213)
+    names = Array("DispatchSave", "UI_登録更新", "DetailCopyHeading", "DetailImportHeading")
+    For index = 0 To UBound(names)
+        Set button = LayoutShape(ws, CStr(names(index)))
+        If Not button Is Nothing Then button.Delete
+    Next
+
+    headings = Array("コピー", "取込")
+    names = Array("DetailCopyHeading", "DetailImportHeading")
+    width = (area.width - 3 * GAP) / 2
+    For index = 0 To UBound(names)
+        Set heading = ws.Shapes.AddShape(msoShapeRectangle, area.left + GAP + index * (width + GAP), _
+            area.Top, width, ws.Rows(57).Height)
+        heading.name = CStr(names(index))
+        heading.Fill.ForeColor.RGB = RGB(214, 229, 246)
+        heading.line.Visible = msoFalse
+        With heading.TextFrame2
+            .VerticalAnchor = msoAnchorMiddle
+            .MarginLeft = GAP
+            .MarginRight = GAP
+            .TextRange.text = CStr(headings(index))
+            .TextRange.Font.name = "Meiryo UI"
+            .TextRange.Font.size = 11
+            .TextRange.Font.Bold = msoTrue
+            .TextRange.Font.Fill.ForeColor.RGB = RGB(24, 48, 80)
+        End With
+    Next
+
     names = Array("ControllerCopyNumber", "UI_選択項目をコピー", "UI_コピー取込", "UI_選択項目へ取込")
-    Set area = ws.Range("C58:V58")
-    width = (area.Width - GAP * 5) / 4
+    width = (area.width - 5 * GAP) / 4
     For index = 0 To UBound(names)
         Set button = ws.Shapes(CStr(names(index)))
-        button.Width = width
-        button.Left = area.Left + GAP + index * (width + GAP)
-        button.Top = area.Top + (area.Height - button.Height) / 2
+        button.Placement = xlFreeFloating
+        button.width = width
+        button.Height = BUTTON_HEIGHT
+        button.left = area.left + GAP + index * (width + GAP)
+        button.Top = buttonRow.Top + (buttonRow.Height - BUTTON_HEIGHT) / 2
+        With button.TextFrame2
+            .TextRange.ParagraphFormat.Alignment = msoAlignCenter
+            .VerticalAnchor = msoAnchorMiddle
+            .TextRange.Font.name = "Meiryo UI"
+            .TextRange.Font.size = 11
+            .TextRange.Font.Bold = msoTrue
+        End With
+    Next
+    If wasProtected Then ws.Protect DrawingObjects:=False, UserInterfaceOnly:=True
+End Sub
+
+Private Sub AlignDetailGrid(ByVal ws As Worksheet)
+    Dim leftWidth As Double
+    Dim blue As Long
+    Dim ink As Long
+    Dim button As Shape
+    Dim anchor As Range
+    Dim names As Variant
+    Dim columns As Variant
+    Dim index As Long
+    blue = RGB(214, 229, 246)
+    ink = RGB(24, 48, 80)
+
+    ' Keep the existing field anchors for sections 01 and 02.
+    ' Make the right input span match the complete left input span.
+    leftWidth = ws.Range("F12:L12").width
+    SetLayoutWidth ws.columns("V"), leftWidth - ws.Range("Q12:U12").width
+
+    ws.Range("N38:V39").UnMerge
+    ws.Range("N38:V39").Clear
+    ws.Range("N41:V41").UnMerge
+    ws.Range("N41:V41").Clear
+    ws.Range("N41:V41").Interior.Color = ws.Range("M41").Interior.Color
+    ws.Range("C44:V47").UnMerge
+    ws.Range("C44:V47").Clear
+    ws.Rows("44:45").Hidden = False
+    ws.Rows(44).RowHeight = ws.Rows(40).RowHeight
+    ws.Rows(45).RowHeight = ws.Rows(43).RowHeight
+    ws.Rows("46:47").Hidden = True
+    ws.Range("M45:V45").Interior.Color = ws.Range("M41").Interior.Color
+    DispatchBand ws.Range("C45:E45"), "決裁日", blue, ink
+    DispatchBox ws.Range("F45:K45")
+    DispatchBand ws.Range("N38:P39"), "問い合わせ番号", blue, ink
+    DispatchBox ws.Range("Q38:V39")
+    AlignDetailLabelsCore ws
+    MoveDetailField "ApprovedDate", "Q38", "F45"
+    MoveDetailField "InquiryNumber", "Q41", "Q38"
+
+    Set button = ws.Shapes("Calendar_ApprovedDate")
+    Set anchor = ws.Range("L45")
+    button.left = anchor.left + anchor.width - button.width
+    button.Top = anchor.Top + (anchor.Height - button.Height) / 2
+    button.Placement = xlMove
+
+    names = Array("UI_検索へ戻る", "UI_新規登録", "UI_更新保存")
+    columns = Array("N11:P11", "Q11:S11", "T11:W11")
+    For index = 0 To UBound(names)
+        Set button = ws.Shapes(CStr(names(index)))
+        Set anchor = ws.Range(CStr(columns(index)))
+        button.width = anchor.width - 6
+        button.Height = ws.Range("C11").Height - 6
+        button.left = anchor.left + 3
+        button.Top = anchor.Top + 3
+        If index > 0 Then button.Fill.ForeColor.RGB = ink
     Next
 End Sub
+
+Public Sub AlignDetailLabels()
+    Dim ws As Worksheet
+    Dim wasProtected As Boolean
+    Set ws = Sheet("詳細")
+    wasProtected = ws.ProtectContents
+    If wasProtected Then ws.Unprotect
+    AlignDetailLabelsCore ws
+    If wasProtected Then ws.Protect DrawingObjects:=False, UserInterfaceOnly:=True
+End Sub
+
+Private Sub AlignDetailLabelsCore(ByVal ws As Worksheet)
+    AlignBasicInformation ws
+    MatchDetailText ws.Range("N38").MergeArea, ws.Range("N36")
+    MatchDetailText ws.Range("Q38").MergeArea, ws.Range("Q36")
+    ws.Range("C44:V44").Interior.Color = ws.Range("C42").Interior.Color
+    MatchDetailText ws.Range("C45").MergeArea, ws.Range("C43")
+    MatchDetailText ws.Range("F45").MergeArea, ws.Range("F43")
+    ws.Range("F45").MergeArea.NumberFormat = ws.Range("F43").NumberFormat
+    ws.Range("L45").Interior.Color = ws.Range("L43").Interior.Color
+End Sub
+
+Private Sub AlignBasicInformation(ByVal ws As Worksheet)
+    Dim postalValue As Variant
+    If CStr(ws.Range("N17").Value2) <> "郵便番号" Then
+        postalValue = ws.Range("Q23").Value2
+        ws.Range("N20:V21").Copy destination:=ws.Range("N17:V18")
+        ws.Range("N17").Value2 = "郵便番号"
+        ws.Range("Q17").MergeArea.NumberFormat = "@"
+        ws.Range("Q17").MergeArea.Locked = ws.Range("Q23").Locked
+        ws.Range("Q17").Value2 = postalValue
+        With ws.Range("N23:V23")
+            .ClearContents
+            .Interior.Color = ws.Range("M23").Interior.Color
+            .Borders.LineStyle = xlNone
+            .Locked = True
+        End With
+    End If
+    MoveDetailField "PostalCode", "Q23", "Q17"
+End Sub
+
+Private Sub MatchDetailText(ByVal target As Range, ByVal example As Range)
+    target.Font.name = example.Font.name
+    target.Font.size = example.Font.size
+    target.Font.Color = example.Font.Color
+    target.Font.Bold = example.Font.Bold
+    target.Interior.Color = example.Interior.Color
+    target.HorizontalAlignment = example.HorizontalAlignment
+    target.IndentLevel = example.IndentLevel
+    target.VerticalAlignment = example.VerticalAlignment
+End Sub
+
+Private Sub SetLayoutWidth(ByVal column As Range, ByVal target As Double)
+    Dim minimum As Double
+    Dim maximum As Double
+    Dim index As Long
+    maximum = 60
+    For index = 1 To 16
+        column.ColumnWidth = (minimum + maximum) / 2
+        If column.width < target Then
+            minimum = column.ColumnWidth
+        Else
+            maximum = column.ColumnWidth
+        End If
+    Next
+End Sub
+
+Private Sub MoveDetailField(ByVal id As String, ByVal oldAddress As String, ByVal newAddress As String)
+    Dim ws As Worksheet
+    Dim row As Long
+    Set ws = Sheet("Fields")
+    For row = 2 To LastRow(ws)
+        If CStr(ws.Cells(row, 1).Value2) = id Then
+            If CStr(ws.Cells(row, 5).Value2) = oldAddress Then ws.Cells(row, 5).Value2 = newAddress
+            If CStr(ws.Cells(row, 5).Value2) <> newAddress Then Err.Raise 5, , "画面位置を変更済みの項目です：" & id
+            Exit Sub
+        End If
+    Next
+End Sub
+
+Private Function LayoutShape(ByVal ws As Worksheet, ByVal name As String) As Shape
+    On Error Resume Next
+    Set LayoutShape = ws.Shapes(name)
+    On Error GoTo 0
+End Function
 
 Private Sub DispatchBand(ByVal area As Range, ByVal caption As String, ByVal background As Long, ByVal ink As Long)
     area.Merge
@@ -128,7 +373,7 @@ Private Sub DispatchBox(ByVal area As Range)
 End Sub
 
 Private Function DispatchRow(ByVal block As Long) As Long
-    DispatchRow = DISPATCH_FIRST + (block - 1) * DISPATCH_ROWS
+    DispatchRow = DISPATCH_FIRST + block - 1
 End Function
 
 Public Sub LoadDispatchAreas()
@@ -145,7 +390,7 @@ Public Sub LoadDispatchAreas()
     Set ws = Sheet("詳細")
     Set configured = ConfiguredList(16)
     Set candidates = configured
-    If configured.Count = 0 Then
+    If configured.count = 0 Then
         Set candidates = NewDictionary()
         If Not Cases Is Nothing Then
             For Each key In Cases.Keys
@@ -168,7 +413,7 @@ Public Sub LoadDispatchAreas()
     For block = 1 To 3
         LoadDispatchArea block
         row = DispatchRow(block)
-        With ws.Cells(row + 1, 16).Validation
+        With ws.Cells(row, 18).Validation
             .Delete
             If count > 0 Then
                 .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, Formula1:="=$AZ$100:$AZ$" & 99 + count
@@ -195,19 +440,19 @@ Public Sub LoadDispatchArea(ByVal block As Long)
     If Not original.Locked Then
         recognized = ParseDispatch(CStr(original.Value2), day, title, note)
     End If
-    ws.Cells(row + 2, 3).Value2 = "備考"
+    ws.Cells(row, 14).Value2 = CStr(block)
     If original.Locked Then
-        ws.Cells(row + 2, 3).Value2 = "保存先未設定"
+        ws.Cells(row, 14).Value2 = CStr(block) & " ※"
     ElseIf Not recognized Then
-        ws.Cells(row + 2, 3).Value2 = "備考（原文）"
+        ws.Cells(row, 14).Value2 = CStr(block) & " ※"
     End If
-    PutValue ws.Cells(row + 1, 6), day, True
-    ws.Cells(row + 1, 6).NumberFormat = ws.Range("F32").NumberFormat
-    PutValue ws.Cells(row + 1, 16), title
-    PutValue ws.Cells(row + 2, 6), note
-    ws.Cells(row + 1, 6).MergeArea.Locked = original.Locked
-    ws.Cells(row + 1, 16).MergeArea.Locked = original.Locked
-    ws.Cells(row + 2, 6).MergeArea.Locked = original.Locked
+    PutValue ws.Cells(row, 15), day, True
+    ws.Cells(row, 15).NumberFormat = ws.Range("F32").NumberFormat
+    PutValue ws.Cells(row, 18), title
+    PutValue ws.Cells(row, 21), note
+    ws.Cells(row, 15).MergeArea.Locked = original.Locked
+    ws.Cells(row, 18).MergeArea.Locked = original.Locked
+    ws.Cells(row, 21).MergeArea.Locked = original.Locked
     shownDay(block) = day
     shownTitle(block) = title
     shownNote(block) = note
@@ -239,7 +484,7 @@ Private Function ParseDispatch(ByVal raw As String, ByRef day As Variant, ByRef 
     position = InStr(text, vbLf)
     header = text
     If position > 0 Then
-        header = Left$(text, position - 1)
+        header = left$(text, position - 1)
         tail = Mid$(text, position + 1)
     End If
     If Len(header) = 0 Then
@@ -247,7 +492,7 @@ Private Function ParseDispatch(ByVal raw As String, ByRef day As Variant, ByRef 
         ParseDispatch = True
         Exit Function
     End If
-    If TryDispatchDate(Left$(header, 10), day) Then
+    If TryDispatchDate(left$(header, 10), day) Then
         Select Case Mid$(header, 11)
             Case ""
                 note = tail
@@ -290,7 +535,7 @@ Private Function TryDispatchDate(ByVal text As String, ByRef serial As Variant) 
     Dim value As Date
     On Error GoTo Invalid
     If Not text Like "####/##/##" Then Exit Function
-    value = DateSerial(CLng(Left$(text, 4)), CLng(Mid$(text, 6, 2)), CLng(Right$(text, 2)))
+    value = DateSerial(CLng(left$(text, 4)), CLng(Mid$(text, 6, 2)), CLng(right$(text, 2)))
     If Format$(value, "yyyy/mm/dd") <> text Or CDbl(value) < 1 Then Exit Function
     serial = CDbl(value)
     TryDispatchDate = True
@@ -302,12 +547,12 @@ Public Function DispatchAreaChanged(ByVal id As String) As Boolean
     Dim row As Long
     Dim ws As Worksheet
     If Not IsDispatchField(id) Then Exit Function
-    block = CLng(Right$(id, 1))
+    block = CLng(right$(id, 1))
     row = DispatchRow(block)
     Set ws = Sheet("詳細")
-    DispatchAreaChanged = Not SameValue(ws.Cells(row + 1, 6).Value2, shownDay(block)) Or _
-        Not SameValue(ws.Cells(row + 1, 16).Value2, shownTitle(block)) Or _
-        Not SameValue(ws.Cells(row + 2, 6).Value2, shownNote(block))
+    DispatchAreaChanged = Not SameValue(ws.Cells(row, 15).Value2, shownDay(block)) Or _
+        Not SameValue(ws.Cells(row, 18).Value2, shownTitle(block)) Or _
+        Not SameValue(ws.Cells(row, 21).Value2, shownNote(block))
 End Function
 
 Public Function ReadDispatchArea(ByVal id As String, ByRef value As Variant, ByRef message As String) As Boolean
@@ -324,11 +569,11 @@ Public Function ReadDispatchArea(ByVal id As String, ByRef value As Variant, ByR
         ReadDispatchArea = True
         Exit Function
     End If
-    row = DispatchRow(CLng(Right$(id, 1)))
-    day = ws.Cells(row + 1, 6).Value2
-    title = ws.Cells(row + 1, 16).Value2
-    note = ws.Cells(row + 2, 6).Value2
-    message = "発送文書" & Right$(id, 1)
+    row = DispatchRow(CLng(right$(id, 1)))
+    day = ws.Cells(row, 15).Value2
+    title = ws.Cells(row, 18).Value2
+    note = ws.Cells(row, 21).Value2
+    message = "発送文書" & right$(id, 1)
     If Not NormalizeValue("ApplicationDate", day, normalized) Then
         message = message & "の発送日を日付で入力してください。"
         Exit Function
@@ -383,17 +628,17 @@ Public Sub CreateLedgerYear()
     Set book = OpenLedger(address, False, message)
     If book Is Nothing Then GoTo Finished
     For Each ws In book.Worksheets
-        If StrComp(ws.Name, CStr(entry), vbTextCompare) = 0 Then
+        If StrComp(ws.name, CStr(entry), vbTextCompare) = 0 Then
             message = "同名の年度シートがあります。"
             GoTo Finished
         End If
     Next
-    Set page = book.Worksheets.Add(After:=book.Worksheets(book.Worksheets.Count))
-    page.Name = CStr(entry)
+    Set page = book.Worksheets.Add(after:=book.Worksheets(book.Worksheets.count))
+    page.name = CStr(entry)
     For Each item In LedgerColumnDefinitions()
         col = col + 1
         page.Cells(1, col).Value2 = item(1)
-        page.Columns(col).NumberFormat = IIf(item(2) = "Date", "yyyy/mm/dd", "@")
+        page.columns(col).NumberFormat = IIf(item(2) = "Date", "yyyy/mm/dd", "@")
     Next
     book.Save
     If Not book.Saved Then GoTo Failed
@@ -434,7 +679,7 @@ Public Sub ArchiveLedgerYear()
     filename = Application.InputBox("保管先の未使用の直接URLを入力してください。ファイル名は「保管_」で始め、.xlsxにしてください。", "年度の保管", Type:=2)
     If VarType(filename) = vbBoolean Then Exit Sub
     If Not IsDirectWorkbookAddress(CStr(filename)) Or Not IsHttpsAddress(CStr(filename)) Then Exit Sub
-    If Left$(AddressFileName(CStr(filename)), 3) <> "保管_" Or LCase$(Right$(CStr(filename), 5)) <> ".xlsx" Then Exit Sub
+    If left$(AddressFileName(CStr(filename)), 3) <> "保管_" Or LCase$(right$(CStr(filename), 5)) <> ".xlsx" Then Exit Sub
     Dim target As Object
     Set target = FileState(CStr(filename), message)
     If target Is Nothing Then GoTo Finished
@@ -448,7 +693,7 @@ Public Sub ArchiveLedgerYear()
     If source Is Nothing Then GoTo Finished
     Dim book As Workbook
     Set archive = Workbooks.Add(xlWBATWorksheet)
-    source.Worksheets(years(CStr(year))(1)).Copy Before:=archive.Worksheets(1)
+    source.Worksheets(years(CStr(year))(1)).Copy before:=archive.Worksheets(1)
     archive.SaveAs CStr(filename), xlOpenXMLWorkbook
     message = "年度シートを保管しました。正式な更新先は変わりません。"
 Finished:

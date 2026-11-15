@@ -14,26 +14,26 @@ Public Sub EditChoices(ByVal column As Long)
 End Sub
 
 Private Sub Entries_Click()
-    If Entries.ListIndex >= 0 Then Candidate.value = Entries.List(Entries.ListIndex)
+    If Entries.ListIndex >= 0 Then candidate.value = Entries.List(Entries.ListIndex)
 End Sub
 
 Private Sub AddChoice_Click()
-    If Len(Trim$(Candidate.value)) = 0 Then Exit Sub
-    Entries.AddItem Trim$(Candidate.value)
+    If Len(Trim$(candidate.value)) = 0 Then Exit Sub
+    Entries.AddItem Trim$(candidate.value)
     Entries.ListIndex = Entries.ListCount - 1
-    Candidate.value = ""
-    Candidate.SetFocus
+    candidate.value = ""
+    candidate.SetFocus
 End Sub
 
 Private Sub RenameChoice_Click()
-    If Entries.ListIndex < 0 Or Len(Trim$(Candidate.value)) = 0 Then Exit Sub
-    Entries.List(Entries.ListIndex) = Trim$(Candidate.value)
+    If Entries.ListIndex < 0 Or Len(Trim$(candidate.value)) = 0 Then Exit Sub
+    Entries.List(Entries.ListIndex) = Trim$(candidate.value)
 End Sub
 
 Private Sub RemoveChoice_Click()
     If Entries.ListIndex < 0 Then Exit Sub
     Entries.RemoveItem Entries.ListIndex
-    Candidate.value = ""
+    candidate.value = ""
 End Sub
 
 Private Sub MoveUp_Click()

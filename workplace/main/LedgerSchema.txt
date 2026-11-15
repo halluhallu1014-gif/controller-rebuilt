@@ -11,19 +11,19 @@ Public Function LedgerColumnDefinitions() As Variant
         Array("Status", "状態", "Text", "F36", "No"), _
         Array("ApplicationDate", "申請日", "Date", "F32", "No"), _
         Array("DraftDate", "起案日", "Date", "F38", "No"), _
-        Array("ApprovedDate", "決裁日", "Date", "Q38", "No"), _
+        Array("ApprovedDate", "決裁日", "Date", "F45", "No"), _
         Array("IssuedDate", "施行日", "Date", "F41", "No"), _
         Array("CompletedDate", "完了日", "Date", "F43", "No"), _
-        Array("Memo1", "メモ1", "Text", "F53", "No"), _
-        Array("Memo2", "メモ2", "Text", "F54", "No"), _
-        Array("Memo3", "メモ3", "Text", "F55", "No"), _
+        Array("Memo1", "メモ1", "Text", "D53", "No"), _
+        Array("Memo2", "メモ2", "Text", "D54", "No"), _
+        Array("Memo3", "メモ3", "Text", "D55", "No"), _
         Array("Dispatch1", "発送文書1", "Text", "F66", "No"), _
         Array("Dispatch2", "発送文書2", "Text", "F67", "No"), _
         Array("Dispatch3", "発送文書3", "Text", "F68", "No"), _
         Array("ApprovalNumber", "決裁番号", "Text", "Q36", "No"), _
-        Array("InquiryNumber", "お問い合わせ番号", "Text", "Q41", "No"), _
+        Array("InquiryNumber", "お問い合わせ番号", "Text", "Q38", "No"), _
         Array("Furigana", "フリガナ", "Text", "Q14", "No"), _
-        Array("PostalCode", "郵便番号", "Text", "Q23", "No"), _
+        Array("PostalCode", "郵便番号", "Text", "Q17", "No"), _
         Array("Address", "住所", "Text", "F20", "No"), _
         Array("PhoneNumber", "電話番号", "Text", "F23", "No"))
 End Function
@@ -62,8 +62,6 @@ Public Sub InstallLedgerSchema()
     Set page = Sheet("詳細")
     page.Unprotect
     page.Range("C17").Value2 = "共通番号"
-    page.Range("N17").MergeArea.ClearContents
-    page.Range("Q17").MergeArea.ClearContents
     page.Range("C27").Value2 = "提出形式"
     page.Range("C29").Value2 = "申請書種別"
     page.Range("C32").Value2 = "申請日"

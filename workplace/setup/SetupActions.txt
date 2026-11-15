@@ -7,7 +7,7 @@ End Sub
 Public Sub StyleControls(ByVal form As Object)
     Dim control As Object
     For Each control In form.Controls
-        control.Font.Name = "Meiryo UI"
+        control.Font.name = "Meiryo UI"
         control.Font.Size = 10
     Next
 End Sub
@@ -34,13 +34,13 @@ Public Function SelectFiles(ByVal title As String, ByVal controllerOnly As Boole
     On Error GoTo Finished
     Set dialog = Application.FileDialog(3)
     With dialog
-        .Title = title
+        .title = title
         .AllowMultiSelect = multiple
 
         If Len(targetPath) > 0 And Not IsWeb(targetPath) Then
             .InitialFileName = AddressFolder(targetPath) & "\"
         ElseIf Not IsWeb(ThisWorkbook.FullName) Then
-            .InitialFileName = ThisWorkbook.Path & "\"
+            .InitialFileName = ThisWorkbook.path & "\"
         End If
         .Filters.Clear
         If controllerOnly Then
@@ -62,7 +62,7 @@ Public Function SelectFolder(ByVal title As String) As String
     Dim dialog As Object
     On Error GoTo Finished
     Set dialog = Application.FileDialog(4)
-    dialog.Title = title
+    dialog.title = title
     dialog.AllowMultiSelect = False
     If dialog.Show = -1 Then SelectFolder = CStr(dialog.SelectedItems(1))
 Finished:

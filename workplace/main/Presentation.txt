@@ -31,8 +31,8 @@ Public Function ValidatePresentation(ByRef message As String) As Boolean
         seen.CompareMode = vbTextCompare
         blankSeen = False
         message = CStr(ws.Cells(1, column).Value2) & "の選択肢に重複、空き行、または上限超過があります。"
-        If ws.Cells(ws.Rows.Count, column).End(xlUp).Row > CHOICE_MAX_ROW Then Exit Function
-        For row = 2 To ws.Cells(ws.Rows.Count, column).End(xlUp).Row
+        If ws.Cells(ws.Rows.count, column).End(xlUp).row > CHOICE_MAX_ROW Then Exit Function
+        For row = 2 To ws.Cells(ws.Rows.count, column).End(xlUp).row
             If IsError(ws.Cells(row, column).Value2) Or ws.Cells(row, column).HasFormula Then Exit Function
             value = Trim$(CStr(ws.Cells(row, column).Value2))
             If Len(value) = 0 Then
@@ -84,7 +84,7 @@ Public Function DetailValue(ByVal id As String, ByVal raw As Variant) As Variant
             If Len(value) > 0 And Len(value) <= 4 Then
                 If IsDigits(value, Len(value)) Then
                     If preset = "year4" Then
-                        DetailValue = Right$("0000" & value, 4)
+                        DetailValue = right$("0000" & value, 4)
                     Else
                         DetailValue = CStr(CLng(value))
                     End If
@@ -105,7 +105,7 @@ Public Sub ApplyDetailFormat(ByVal id As String, ByVal target As Range, ByVal en
             .Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, Formula1:="=ControllerChoice" & id
             .InCellDropdown = True
             .IgnoreBlank = False
-            .ShowError = (ChoiceList(id).Count > 0)
+            .ShowError = (ChoiceList(id).count > 0)
             .ErrorTitle = "選択肢を確認"
             .ErrorMessage = "設定された候補から選んでください。既存の値はそのまま保存できます。"
         End If
@@ -124,7 +124,7 @@ Public Function ValidateDetailChoices(ByVal values As Object, ByVal record As Ca
             If Not record Is Nothing Then wasChanged = Not SameValue(value, record.values(id))
             If wasChanged And Len(value) > 0 Then
                 Set choices = ChoiceList(CStr(id))
-                If choices.Count > 0 And Not choices.Exists(value) And Not (id = "Status" And IsAutomaticStatus(value)) Then
+                If choices.count > 0 And Not choices.Exists(value) And Not (id = "Status" And IsAutomaticStatus(value)) Then
                     message = CStr(Sheet("Settings").Cells(1, ChoiceColumn(CStr(id))).Value2) & "は選択肢から選んでください。"
                     Exit Function
                 End If
