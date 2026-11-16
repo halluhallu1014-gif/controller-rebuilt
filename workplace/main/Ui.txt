@@ -234,7 +234,7 @@ Public Function CommitDetail(ByVal showConfirmation As Boolean, ByRef message As
     If Not ValidateValues(inputValues, message) Then GoTo Finished
     If Not ValidateDetailChoices(inputValues, currentCase, message) Then GoTo Finished
     If isNew Then
-        identity = year & "|" & inputValues("CommonNumber")
+        identity = year & "|" & CommonNumberDigits(inputValues("CommonNumber"))
     Else
         identity = record.key
     End If
@@ -324,9 +324,9 @@ Public Sub CopyNumber()
     Dim number As Variant
     If Not hasDetail Then Exit Sub
     number = FieldCell("CommonNumber").Value2
-    If Not IsDigits(number, 18) Then
-        Notify "共通番号は18桁の文字列で入力してください。"
-    ElseIf Not WriteClipboard(CStr(number)) Then
+    If Len(CommonNumberDigits(number)) <> 18 Then
+        Notify "共通番号は13桁-5桁、またはハイフンなし18桁で入力してください。"
+    ElseIf Not WriteClipboard(CommonNumberDisplay(number)) Then
         Notify "共通番号をコピーできません。"
     End If
 End Sub
