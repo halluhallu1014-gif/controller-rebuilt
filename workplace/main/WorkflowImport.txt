@@ -107,7 +107,7 @@ End Function
 Private Function ImportValueValid(ByVal mode As String, ByVal value As String) As Boolean
     If Len(value) = 0 Then Exit Function
     Select Case mode
-        Case "Digits18": ImportValueValid = IsDigits(value, 18)
+        Case "Digits18": ImportValueValid = (Len(CommonNumberDigits(value)) = 18)
         Case "Postal"
             ImportValueValid = IsDigits(Replace(value, "-", ""), 7)
         Case "Phone"
