@@ -119,8 +119,10 @@ Private Function ConfirmLedgerLocation(ByVal first As String, ByVal second As St
     Dim legacy As String
     Dim firstState As Long
     Dim secondState As Long
-    firstState = ProbeExcelAddress(first, firstResult, deriveSite)
-    secondState = ProbeExcelAddress(second, secondResult, deriveSite)
+    Dim firstFailure As String
+    Dim secondFailure As String
+    firstState = ProbeExcelAddress(first, firstResult, deriveSite, firstFailure)
+    secondState = ProbeExcelAddress(second, secondResult, deriveSite, secondFailure)
     If firstState = 1 And secondState = 1 Then
         message = "両方の候補に管理簿があります。正式データを確定してください。"
 
@@ -145,21 +147,29 @@ Private Function ConfirmLedgerLocation(ByVal first As String, ByVal second As St
         ConfirmLedgerLocation = secondResult
         message = ""
     Else
-        message = "管理簿の所在を確定できません。アクセス権、開いているブック、ネットワークを確認してください。"
+        message = "管理簿の所在を確定できません。" & vbCrLf & _
+            "Staff: " & ProbeDescription(firstState, firstFailure) & vbCrLf & _
+            "General: " & ProbeDescription(secondState, secondFailure)
     End If
 End Function
 
-Private Function ProbeExcelAddress(ByVal address As String, ByRef actualAddress As String, Optional ByVal deriveSite As Boolean = False) As Long
+Private Function ProbeExcelAddress(ByVal address As String, ByRef actualAddress As String, _
+    Optional ByVal deriveSite As Boolean = False, Optional ByRef failureReason As String = "") As Long
     Dim book As Workbook
     Dim state As Object
     Dim message As String
 
     ProbeExcelAddress = -1
+    failureReason = ""
 
     ' Do not open a missing SharePoint/OneDrive workbook in Excel.
     If IsHttpsAddress(address) Then
         Set state = FileState(address, message, deriveSite)
-        If state Is Nothing Then Exit Function
+        If state Is Nothing Then
+            failureReason = message
+            If Len(failureReason) = 0 Then failureReason = "ファイル確認を実行できませんでした。"
+            Exit Function
+        End If
         If Not state("Exists") Then
             ProbeExcelAddress = 0
             Exit Function
@@ -167,6 +177,7 @@ Private Function ProbeExcelAddress(ByVal address As String, ByRef actualAddress 
     End If
 
     Set book = OpenLedger(address, True, message)
+    If book Is Nothing Then failureReason = message
     If Not book Is Nothing Then
         actualAddress = book.FullName
         book.Close False
@@ -178,6 +189,18 @@ Private Function ProbeExcelAddress(ByVal address As String, ByRef actualAddress 
             If Not state("Exists") Then ProbeExcelAddress = 0
         End If
     End If
+End Function
+
+Private Function ProbeDescription(ByVal state As Long, ByVal failureReason As String) As String
+    Select Case state
+        Case 1
+            ProbeDescription = "管理簿を確認済み"
+        Case 0
+            ProbeDescription = "管理簿なし"
+        Case Else
+            ProbeDescription = failureReason
+            If Len(ProbeDescription) = 0 Then ProbeDescription = "接続または確認に失敗しました。"
+    End Select
 End Function
 
 Private Function SharePointEndpointBase() As String
