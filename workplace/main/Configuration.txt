@@ -262,8 +262,8 @@ Public Function ValidateValues(ByVal values As Object, ByRef message As String) 
         End If
         values(id) = normalized
     Next
-    message = "共通番号は18桁の文字列で入力してください。"
-    If Not IsDigits(values("CommonNumber"), 18) Then Exit Function
+    message = "共通番号は13桁-5桁、またはハイフンなし18桁で入力してください。"
+    If Len(CommonNumberDigits(values("CommonNumber"))) <> 18 Then Exit Function
     message = ""
     ValidateValues = True
 End Function
