@@ -146,8 +146,8 @@ Private Function LocateRow(ByVal ws As Worksheet, ByVal columns As Object, ByVal
     last = ws.Cells(ws.Rows.count, col).End(xlUp).row
     For row = 2 To last
         value = ws.Cells(row, col).Value2
-        If IsDigits(value, 18) Then
-            If CStr(value) = caseIdentity Then
+        If Len(CommonNumberDigits(value)) = 18 Then
+            If CommonNumberDigits(value) = CommonNumberDigits(caseIdentity) Then
                 If LocateRow <> 0 Then
                     message = "同一年度の共通番号が重複しています。書き込みを中止します。"
                     LocateRow = 0
@@ -219,12 +219,12 @@ Public Function SaveCase(ByVal record As CaseRecord, ByVal values As Object, ByV
             message = "保存先設定が読込時から変わっています。最新を再読込してください。保存は実行していません。"
             Exit Function
         End If
-        If Not SameValue(record.values("CommonNumber"), values("CommonNumber")) Then
+        If CommonNumberDigits(record.values("CommonNumber")) <> CommonNumberDigits(values("CommonNumber")) Then
             message = "既存事案の共通番号は通常更新では変更できません。保存は実行していません。"
             Exit Function
         End If
     End If
-    personKey = CStr(values("CommonNumber"))
+    personKey = CommonNumberDigits(values("CommonNumber"))
     Set book = OpenLedger(definition(0), False, message)
     If book Is Nothing Then Exit Function
     definition(0) = book.FullName
@@ -407,7 +407,7 @@ Private Function VerifyRecordedSave(ByRef message As String) As Boolean
         id = CStr(recovery.Cells(index, 1).Value2)
         If id = "CommonNumber" Or recovery.Cells(index, 4).Value2 = "Yes" Then expected.Add id, recovery.Cells(index, 2).Value2
     Next
-    If Not IsDigits(expected("CommonNumber"), 18) Then GoTo Unconfirmed
+    If Len(CommonNumberDigits(expected("CommonNumber"))) <> 18 Then GoTo Unconfirmed
     Set book = OpenLedger(definition(0), True, message)
     If book Is Nothing Then GoTo Unconfirmed
     Set ws = LedgerSheet(book, CStr(definition(1)), message)
@@ -418,7 +418,12 @@ Private Function VerifyRecordedSave(ByRef message As String) As Boolean
     If rowIndex = 0 Or Len(message) > 0 Then GoTo Unconfirmed
     For Each id In expected.Keys
         If columns.Exists(id) Then
-            If Not SameValue(ws.Cells(rowIndex, columns(id)).Value2, expected(id)) Then GoTo Unconfirmed
+            If id = "CommonNumber" Then
+                If CommonNumberDigits(ws.Cells(rowIndex, columns(id)).Value2) <> _
+                    CommonNumberDigits(expected(id)) Then GoTo Unconfirmed
+            ElseIf Not SameValue(ws.Cells(rowIndex, columns(id)).Value2, expected(id)) Then
+                GoTo Unconfirmed
+            End If
         ElseIf Len(CStr(expected(id))) > 0 Then
             GoTo Unconfirmed
         End If
