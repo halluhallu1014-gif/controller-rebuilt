@@ -261,7 +261,13 @@ Public Function SaveCase(ByVal record As CaseRecord, ByVal values As Object, ByV
             If NormalizeValue(CStr(id), record.values(id), normalizedOriginal) Then
                 If SameValue(values(id), normalizedOriginal) Then values(id) = record.values(id)
             End If
-            If Not SameValue(values(id), record.values(id)) Then changed.Add id, values(id)
+            If id = "CommonNumber" Then
+                If CommonNumberDigits(values(id)) <> CommonNumberDigits(record.values(id)) Then
+                    changed.Add id, values(id)
+                End If
+            ElseIf Not SameValue(values(id), record.values(id)) Then
+                changed.Add id, values(id)
+            End If
         End If
     Next
     If changed.Exists("Office") And Len(CStr(values("Office"))) > 0 And Not IsLocalSingleLedger() And Not IsLocalDevelopment() Then
