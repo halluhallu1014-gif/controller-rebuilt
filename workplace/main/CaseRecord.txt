@@ -16,7 +16,7 @@ End Sub
 
 Public Property Get personKey() As String
     If values.Exists("CommonNumber") Then
-        If IsDigits(values("CommonNumber"), 18) Then personKey = CStr(values("CommonNumber"))
+        personKey = CommonNumberDigits(values("CommonNumber"))
     End If
 End Property
 
