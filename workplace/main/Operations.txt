@@ -156,39 +156,24 @@ End Function
 Private Function ProbeExcelAddress(ByVal address As String, ByRef actualAddress As String, _
     Optional ByVal deriveSite As Boolean = False, Optional ByRef failureReason As String = "") As Long
     Dim book As Workbook
-    Dim state As Object
     Dim message As String
 
+    ' Read-only discovery uses Excel's authenticated connection, not SharePoint REST.
+    ' An Excel-open failure is unknown (-1), never proof that the file is missing.
     ProbeExcelAddress = -1
+    actualAddress = ""
     failureReason = ""
 
-    ' Do not open a missing SharePoint/OneDrive workbook in Excel.
-    If IsHttpsAddress(address) Then
-        Set state = FileState(address, message, deriveSite)
-        If state Is Nothing Then
-            failureReason = message
-            If Len(failureReason) = 0 Then failureReason = "ファイル確認を実行できませんでした。"
-            Exit Function
-        End If
-        If Not state("Exists") Then
-            ProbeExcelAddress = 0
-            Exit Function
-        End If
+    Set book = OpenLedger(address, True, message)
+    If book Is Nothing Then
+        failureReason = message
+        If Len(failureReason) = 0 Then failureReason = "Excelで管理簿を開けませんでした。"
+        Exit Function
     End If
 
-    Set book = OpenLedger(address, True, message)
-    If book Is Nothing Then failureReason = message
-    If Not book Is Nothing Then
-        actualAddress = book.FullName
-        book.Close False
-        ProbeExcelAddress = 1
-    ElseIf Not IsHttpsAddress(address) Then
-        ' For local development, distinguish a missing file from other open failures.
-        Set state = FileState(address, message, deriveSite)
-        If Not state Is Nothing Then
-            If Not state("Exists") Then ProbeExcelAddress = 0
-        End If
-    End If
+    actualAddress = book.FullName
+    book.Close SaveChanges:=False
+    ProbeExcelAddress = 1
 End Function
 
 Private Function ProbeDescription(ByVal state As Long, ByVal failureReason As String) As String
