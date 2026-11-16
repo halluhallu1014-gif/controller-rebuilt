@@ -271,7 +271,10 @@ Public Function ComparisonKey(ByVal record As CaseRecord, ByVal rules As Object,
             End If
             If IsError(value) Or IsNull(value) Then Exit Function
             If Len(CStr(value)) = 0 Then Exit Function
-            If fieldId = "CommonNumber" And Not IsDigits(value, 18) Then Exit Function
+            If fieldId = "CommonNumber" Then
+                value = CommonNumberDigits(value)
+                If Len(CStr(value)) <> 18 Then Exit Function
+            End If
             key = key & Len(CStr(value)) & ":" & CStr(value)
         End If
     Next
