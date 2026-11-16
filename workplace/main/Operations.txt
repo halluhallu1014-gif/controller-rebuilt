@@ -153,14 +153,26 @@ Private Function ProbeExcelAddress(ByVal address As String, ByRef actualAddress 
     Dim book As Workbook
     Dim state As Object
     Dim message As String
+
     ProbeExcelAddress = -1
+
+    ' Do not open a missing SharePoint/OneDrive workbook in Excel.
+    If IsHttpsAddress(address) Then
+        Set state = FileState(address, message, deriveSite)
+        If state Is Nothing Then Exit Function
+        If Not state("Exists") Then
+            ProbeExcelAddress = 0
+            Exit Function
+        End If
+    End If
+
     Set book = OpenLedger(address, True, message)
     If Not book Is Nothing Then
         actualAddress = book.FullName
         book.Close False
         ProbeExcelAddress = 1
-    Else
-        'Excelのエラーだけでは不存在と権限エラーを区別できない。
+    ElseIf Not IsHttpsAddress(address) Then
+        ' For local development, distinguish a missing file from other open failures.
         Set state = FileState(address, message, deriveSite)
         If Not state Is Nothing Then
             If Not state("Exists") Then ProbeExcelAddress = 0
