@@ -122,6 +122,12 @@ Private Function ConfirmLedgerLocation(ByVal first As String, ByVal second As St
     Dim firstFailure As String
     Dim secondFailure As String
     firstState = ProbeExcelAddress(first, firstResult, deriveSite, firstFailure)
+    ' Read-only access must not open the optional General copy when Staff is available.
+    If firstState = 1 And Not isWrite Then
+        ConfirmLedgerLocation = firstResult
+        message = ""
+        Exit Function
+    End If
     secondState = ProbeExcelAddress(second, secondResult, deriveSite, secondFailure)
     If firstState = 1 And secondState = 1 Then
         message = "両方の候補に管理簿があります。正式データを確定してください。"
