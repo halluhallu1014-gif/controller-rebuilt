@@ -12,6 +12,25 @@ Public Function IsDigits(ByVal value As Variant, ByVal size As Long) As Boolean
     IsDigits = True
 End Function
 
+Public Function CommonNumberDigits(ByVal value As Variant) As String
+    Dim text As String
+    If VarType(value) <> vbString Then Exit Function
+    text = CStr(value)
+    If IsDigits(text, 18) Then
+        CommonNumberDigits = text
+    ElseIf Len(text) = 19 Then
+        If Mid$(text, 14, 1) <> "-" Then Exit Function
+        text = Left$(text, 13) & Right$(text, 5)
+        If IsDigits(text, 18) Then CommonNumberDigits = text
+    End If
+End Function
+
+Public Function CommonNumberDisplay(ByVal value As Variant) As String
+    Dim digits As String
+    digits = CommonNumberDigits(value)
+    If Len(digits) = 18 Then CommonNumberDisplay = Left$(digits, 13) & "-" & Right$(digits, 5)
+End Function
+
 Public Function RestoreNumber(ByVal masked As Variant, ByRef number As String) As Boolean
     Dim text As String
     Dim body As String
@@ -63,7 +82,10 @@ Public Function NormalizeValue(ByVal fieldId As String, ByVal value As Variant, 
         '文字列項目を数値から推測復元しない。失われた先頭0は補完しない。
         If VarType(value) <> vbString Then Exit Function
         text = CStr(value)
-        If fieldId = "PostalCode" Or fieldId = "PhoneNumber" Then
+        If fieldId = "CommonNumber" Then
+            text = CommonNumberDisplay(text)
+            If Len(text) = 0 Then Exit Function
+        ElseIf fieldId = "PostalCode" Or fieldId = "PhoneNumber" Then
             text = Replace(text, "-", "")
             If fieldId = "PostalCode" Then
                 If Not IsDigits(text, 7) Then Exit Function
@@ -80,7 +102,10 @@ End Function
 Public Function DisplayValue(ByVal fieldId As String, ByVal value As Variant) As Variant
     Dim text As String
     DisplayValue = value
-    If fieldId = "PostalCode" Then
+    If fieldId = "CommonNumber" Then
+        text = CommonNumberDisplay(value)
+        If Len(text) > 0 Then DisplayValue = text
+    ElseIf fieldId = "PostalCode" Then
         text = CStr(value)
         If IsDigits(text, 7) Then DisplayValue = left$(text, 3) & "-" & right$(text, 4)
     ElseIf fieldId = "PhoneNumber" Then
