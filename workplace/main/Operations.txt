@@ -204,7 +204,7 @@ Private Function AddressSite(ByVal file As String) As String
     parts = Split(file, "/")
     If UBound(parts) < 4 Then Exit Function
     Select Case LCase$(CStr(parts(3)))
-        Case "sites", "teams"
+        Case "sites", "teams", "personal"
             AddressSite = "https://" & parts(2) & "/" & parts(3) & "/" & parts(4)
     End Select
 End Function
