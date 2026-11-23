@@ -9,7 +9,7 @@
 2. Alt+F11 → 挿入 → 標準モジュール。 `BuildOfficeController.bas` の **Attribute VB_Name行を除くコード本文** を貼り付けます。
 3. `BuildOfficeController` を実行します。4枚のシート（検索、詳細、Address、Sheet2）が作成されます。
 4. 「Address」シートのB2:B8に**会社環境で使うフォルダパス**を入力します。C列はファイル名で、C2だけ空欄。SharePointでは実際に開けるURLを入力します。
-5. 他の `.bas` と `CaseRecord.cls` を各モジュールへ貼り付けます。**CaseRecordはクラスモジュール**を新規作成し、名前を `CaseRecord` に変更してください。
+5. 他の `.bas` は標準モジュールへ、`CaseRecord.cls` は**クラスモジュール**へ貼り付けます。GitHub Rawからコピーする場合、`.bas` は先頭の `Attribute VB_Name` 行を除き、`CaseRecord.cls` は `Option Explicit` 行から末尾までを貼り付けてください。クラスの名前は `CaseRecord` に変更してください。
 6. ［デバッグ］→［VBAProjectのコンパイル］を実行します。
 7. 既に実運用中の進捗整理簿がある場合、`CreateEmptyLedgers` は実行しません。
 
@@ -41,5 +41,7 @@ SharePointのURL保存先では、作成したローカルの空の `.xlsx` を�
 ## 5. テスト順序
 
 コンパイル → 全体読込 `TestLoadMasterRecords` → 検索 → 詳細表示 → 変更なし保存 → 1項目だけ更新 → 一般事務整理簿取込 → 5署への転記。
+
+**画面生成コードは元ブックのセル配置・結合・主要書式を再構築しますが、図形などの完全一致は保証できません。** Excel実機で画面を確認してください。
 
 この配布版は、会話内で単体テストを通過した処理をベースにしていますが、**会社のOffice/SharePoint環境での実機試験は未実施**です。特にURLでのSaveAsや既存マクロとの衝突は会社側で確認が必要です。
