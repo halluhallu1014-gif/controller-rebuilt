@@ -120,7 +120,7 @@ Private Function FindMasterRecordRow(ByVal targetSheet As Worksheet, ByVal recor
     Dim branchNumber As String
     commonNumber = CStr(record.Value("共通番号"))
     branchNumber = CStr(record.Value("枝番号"))
-    lastRow = targetSheet.Cells(targetSheet.Rows.Count, ColumnFromSettings(ThisWorkbook.Worksheets("Sheet2").Cells(2, "B").Value2)).End(xlUp).Row
+    lastRow = targetSheet.Cells(targetSheet.Rows.Count, GetFieldColumn("共通番号")).End(xlUp).Row
     For rowIndex = 2 To lastRow
         If CStr(targetSheet.Cells(rowIndex, GetFieldColumn("共通番号")).Value2) = commonNumber And _
            CStr(targetSheet.Cells(rowIndex, GetFieldColumn("枝番号")).Value2) = branchNumber Then
