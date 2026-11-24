@@ -1,0 +1,40 @@
+Option Explicit
+
+' 検索結果をクリックしたとき、選択行だけ薄い緑色で表示する。
+Private Sub Worksheet_SelectionChange(ByVal Target As Range)
+
+    Dim resultRange As Range
+    Dim condition As FormatCondition
+    Dim hasCondition As Boolean
+
+    Set resultRange = Me.Range("C20:U33")
+    If Intersect(Target, resultRange) Is Nothing Then Exit Sub
+
+    On Error GoTo CleanUp
+
+    ' 元のセル書式を変更せずに選択行を強調する。
+    For Each condition In resultRange.FormatConditions
+        If condition.Type = xlExpression Then
+            If condition.Formula1 = "=$AA$1=ROW()" Then
+                hasCondition = True
+                Exit For
+            End If
+        End If
+    Next condition
+
+    If Not hasCondition Then
+        Set condition = resultRange.FormatConditions.Add( _
+            Type:=xlExpression, _
+            Formula1:="=$AA$1=ROW()")
+        condition.Interior.Color = RGB(221, 240, 223)
+        condition.SetFirstPriority
+    End If
+
+    Me.Range("AA1").Value2 = Target.Row
+
+CleanUp:
+    If Err.Number <> 0 Then
+        MsgBox "検索行の色変更に失敗しました。" & vbCrLf & Err.Description, vbExclamation
+    End If
+
+End Sub
