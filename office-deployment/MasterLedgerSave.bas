@@ -121,7 +121,7 @@ Private Function FindMasterRecordRow(ByVal targetSheet As Worksheet, ByVal recor
     commonNumber = CStr(record.Value("共通番号"))
     branchNumber = CStr(record.Value("枝番号"))
     lastRow = targetSheet.Cells(targetSheet.Rows.Count, GetFieldColumn("共通番号")).End(xlUp).Row
-    For rowIndex = 2 To lastRow
+    For rowIndex = 6 To lastRow
         If CStr(targetSheet.Cells(rowIndex, GetFieldColumn("共通番号")).Value2) = commonNumber And _
            CStr(targetSheet.Cells(rowIndex, GetFieldColumn("枝番号")).Value2) = branchNumber Then
             matchCount = matchCount + 1
