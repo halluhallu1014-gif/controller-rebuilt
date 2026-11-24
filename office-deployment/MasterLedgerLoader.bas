@@ -2,6 +2,8 @@ Attribute VB_Name = "MasterLedgerLoader"
 Option Explicit
 
 Private Const FIELD_COUNT As Long = 48
+Private Const HEADER_ROW As Long = 5
+Private Const FIRST_DATA_ROW As Long = HEADER_ROW + 1
 
 ' Addressのzentai行を探し、全体ファイルのフルパスを返す。
 Public Function GetMasterLedgerPath() As String
@@ -96,7 +98,7 @@ Public Sub ValidateMasterHeaders(ByVal targetSheet As Worksheet)
     Set definitions = ThisWorkbook.Worksheets("Sheet2")
     For columnIndex = 1 To FIELD_COUNT
         expectedName = CStr(definitions.Cells(columnIndex + 1, "A").Value2)
-        actualName = CStr(targetSheet.Cells(1, columnIndex).Value2)
+        actualName = CStr(targetSheet.Cells(HEADER_ROW, columnIndex).Value2)
         If expectedName <> actualName Then
             Err.Raise vbObjectError + 904, "ValidateMasterHeaders", _
                 "全体ファイルの見出しが一致しません: " & columnIndex & "列（" & actualName & "）"
@@ -123,8 +125,8 @@ Public Function LoadMasterRecords() As Collection
     Set targetSheet = targetBook.Worksheets(GetMasterLedgerSheetName())
     ValidateMasterHeaders targetSheet
     lastRow = targetSheet.Cells(targetSheet.Rows.Count, 1).End(xlUp).Row
-    If lastRow >= 2 Then
-        data = targetSheet.Range(targetSheet.Cells(2, 1), targetSheet.Cells(lastRow, FIELD_COUNT)).Value2
+    If lastRow >= FIRST_DATA_ROW Then
+        data = targetSheet.Range(targetSheet.Cells(FIRST_DATA_ROW, 1), targetSheet.Cells(lastRow, FIELD_COUNT)).Value2
         For rowIndex = LBound(data, 1) To UBound(data, 1)
             If Len(Trim$(CStr(data(rowIndex, 1)))) > 0 Then
                 Set record = New CaseRecord
