@@ -911,17 +911,17 @@ Public Sub CreateEmptyLedgers()
             If isMaster Or CStr(definitions.Cells(fieldRow, "D").Value2) = "○" Then
                 targetColumn = targetColumn + 1
                 fieldName = CStr(definitions.Cells(fieldRow, "A").Value2)
-                sheet.Cells(1, targetColumn).Value2 = fieldName
+                sheet.Cells(5, targetColumn).Value2 = fieldName
             End If
         Next fieldRow
-        sheet.Range(sheet.Cells(1, 1), sheet.Cells(1, targetColumn)).Interior.Color = RGB(35, 69, 100)
-        sheet.Range(sheet.Cells(1, 1), sheet.Cells(1, targetColumn)).Font.Color = vbWhite
-        sheet.Range(sheet.Cells(1, 1), sheet.Cells(1, targetColumn)).Font.Bold = True
+        sheet.Range(sheet.Cells(5, 1), sheet.Cells(5, targetColumn)).Interior.Color = RGB(35, 69, 100)
+        sheet.Range(sheet.Cells(5, 1), sheet.Cells(5, targetColumn)).Font.Color = vbWhite
+        sheet.Range(sheet.Cells(5, 1), sheet.Cells(5, targetColumn)).Font.Bold = True
         sheet.Range(sheet.Cells(1, 1), sheet.Cells(1, targetColumn)).ColumnWidth = 19
         sheet.Range("F:G").NumberFormat = "@"
-        sheet.Rows(1).RowHeight = 32
-        sheet.Rows(1).WrapText = True
-        sheet.Range("A1").Select
+        sheet.Rows(5).RowHeight = 32
+        sheet.Rows(5).WrapText = True
+        sheet.Range("A6").Select
         ActiveWindow.FreezePanes = True
         book.SaveAs Filename:=filePath, FileFormat:=xlOpenXMLWorkbook
         book.Close SaveChanges:=False
