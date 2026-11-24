@@ -655,18 +655,20 @@ Private Sub BuildDetailLayout(ByVal sh As Worksheet)
 End Sub
 
 Private Sub BuildAddressSettings(ByVal sh As Worksheet)
-    sh.Range("A1:C1").Value2 = Array("署（識別名）", "フォルダパス", "ファイル名")
-    sh.Range("A1:C1").Font.Bold = True
-    sh.Range("A1:C1").Interior.Color = RGB(35, 69, 100)
-    sh.Range("A1:C1").Font.Color = vbWhite
+    sh.Range("A1:D1").Value2 = Array("署（識別名）", "フォルダパス", "ファイル名", "シート名")
+    sh.Range("A1:D1").Font.Bold = True
+    sh.Range("A1:D1").Interior.Color = RGB(35, 69, 100)
+    sh.Range("A1:D1").Font.Color = vbWhite
     sh.Columns("A").ColumnWidth = 18
     sh.Columns("B").ColumnWidth = 72
     sh.Columns("C").ColumnWidth = 32
+    sh.Columns("D").ColumnWidth = 24
     sh.Range("A2:A8").Value2 = Application.Transpose(Array("ippann", "zentai", "Numadu", "Fuji", "Mishima", "Atami", "Shimoda"))
     sh.Range("C3:C8").Value2 = Application.Transpose(Array("進捗整理簿【全体】", "進捗整理簿【沼津】", "進捗整理簿【富士】", "進捗整理簿【三島】", "進捗整理簿【熱海】", "進捗整理簿【下田】"))
     sh.Range("B2:B8").Interior.Color = RGB(255, 250, 210)
-    sh.Range("A10").Value2 = "B列に各ファイルがあるフォルダパスを入力。一般事務整理簿のC2は空欄で運用します。"
-    sh.Range("A2:C8").NumberFormat = "@"
+    sh.Range("D2:D8").Interior.Color = RGB(255, 250, 210)
+    sh.Range("A10").Value2 = "B列=保存先、C列=ファイル名、D列=シート名。一般事務整理簿のC2は空欄、D2は省略可。"
+    sh.Range("A2:D8").NumberFormat = "@"
 End Sub
 
 Private Sub BuildFieldSettings(ByVal sh As Worksheet)
@@ -895,11 +897,14 @@ Public Sub CreateEmptyLedgers()
         fileName = Trim$(CStr(settings.Cells(settingRow, "C").Value2))
         If Len(folderPath) = 0 Or Len(fileName) = 0 Then Err.Raise vbObjectError + 2001, , "Addressの設定不足: " & settingRow & "行"
         If Right$(folderPath, 1) <> "\" And Right$(folderPath, 1) <> "/" Then folderPath = folderPath & IIf(InStr(1, folderPath, "https://", vbTextCompare) = 1, "/", "\")
-        If LCase$(Right$(fileName, 5)) <> ".xlsx" Then fileName = fileName & ".xlsx"
+        If InStrRev(fileName, ".") = 0 Then fileName = fileName & ".xlsx"
         filePath = folderPath & fileName
         If Len(Dir$(filePath)) > 0 Then Err.Raise vbObjectError + 2002, , "既存ファイルがあるため中止: " & filePath
         Set book = Workbooks.Add(xlWBATWorksheet)
-        Set sheet = book.Worksheets(1): sheet.Name = "管理簿"
+        Set sheet = book.Worksheets(1)
+        outputName = Trim$(CStr(settings.Cells(settingRow, "D").Value2))
+        If Len(outputName) = 0 Then Err.Raise vbObjectError + 2003, , "Addressのシート名未設定: D" & settingRow
+        sheet.Name = outputName
         isMaster = (settingRow = 3)
         targetColumn = 0
         For fieldRow = 2 To 49
