@@ -1,0 +1,48 @@
+Option Explicit
+
+' 検索結果の選択行を、元の書式を変更せず薄い緑色で表示する。
+Private Sub Worksheet_SelectionChange(ByVal Target As Range)
+    Const FIRST_RESULT_ROW As Long = 20
+    Const LAST_RESULT_ROW As Long = 33
+    Const SELECTED_ROW_CELL As String = "AA1"
+    Const HIGHLIGHT_FORMULA As String = "=$AA$1=ROW()"
+
+    Dim resultRange As Range
+    Dim formatRule As FormatCondition
+    Dim hasHighlight As Boolean
+    Dim previousEvents As Boolean
+
+    Set resultRange = Me.Range("C20:U33")
+
+    If Intersect(Target, resultRange) Is Nothing Then Exit Sub
+
+    previousEvents = Application.EnableEvents
+    On Error GoTo CleanUp
+    Application.EnableEvents = False
+
+    ' 何度選択しても条件付き書式を重複登録しない。
+    For Each formatRule In resultRange.FormatConditions
+        If formatRule.Type = xlExpression Then
+            If formatRule.Formula1 = HIGHLIGHT_FORMULA Then
+                hasHighlight = True
+                Exit For
+            End If
+        End If
+    Next formatRule
+
+    If Not hasHighlight Then
+        Set formatRule = resultRange.FormatConditions.Add( _
+            Type:=xlExpression, Formula1:=HIGHLIGHT_FORMULA)
+        formatRule.Interior.Color = RGB(221, 240, 223)
+        formatRule.SetFirstPriority
+    End If
+
+    Me.Range(SELECTED_ROW_CELL).Value2 = Target.Row
+
+CleanUp:
+    Application.EnableEvents = previousEvents
+    If Err.Number <> 0 Then
+        MsgBox "検索結果の選択色を変更できませんでした。" & vbCrLf & _
+            Err.Description, vbExclamation, "検索"
+    End If
+End Sub
