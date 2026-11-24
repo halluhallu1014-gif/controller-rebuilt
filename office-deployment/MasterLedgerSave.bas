@@ -64,7 +64,7 @@ Public Sub SaveCurrentCase()
     eventsChanged = True
     Set targetBook = Workbooks.Open(Filename:=GetMasterLedgerPath(), ReadOnly:=False, UpdateLinks:=0)
     If targetBook.ReadOnly Then Err.Raise vbObjectError + 915, , "全体ファイルが読み取り専用です。"
-    Set targetSheet = targetBook.Worksheets("管理簿")
+    Set targetSheet = targetBook.Worksheets(GetMasterLedgerSheetName())
     ValidateMasterHeaders targetSheet
     recordRow = FindMasterRecordRow(targetSheet, record)
     If recordRow = 0 Then Err.Raise vbObjectError + 916, , "対象事案が見つからないか、識別番号が重複しています。"
