@@ -2,13 +2,12 @@ Attribute VB_Name = "TransferEngine"
 Option Explicit
 
 ' 週次一般事務整理簿 → 全体 → 5署の転記を担当する独立エンジン。
-' Address: A=識別名 B=フォルダパス C=ファイル名（拡張子なし）
+' Address: A=識別名 B=フォルダパス C=ファイル名 D=シート名
 ' Sheet2 : A=項目名 B=管理簿列 C=詳細表示セル D=5署へ転記（○/×）
-' 進捗整理簿のデータシート名は「管理簿」、見出しは1行目。
+' 進捗整理簿のデータシート名はAddressのD列、見出しは1行目。
 
 Private Const ADDRESS_SHEET As String = "Address"
 Private Const FIELD_SHEET As String = "Sheet2"
-Private Const DATA_SHEET As String = "管理簿"
 Private Const HISTORY_SHEET As String = "転記基準"
 Private Const FIELD_COUNT As Long = 48
 Private Const FIRST_OFFICE_ROW As Long = 4
@@ -63,7 +62,12 @@ Public Sub ImportWeeklyLedger()
 
     fieldNames = ReadMasterFields()
     Set sourceBook = Workbooks.Open(Filename:=sourcePath, ReadOnly:=True, UpdateLinks:=0)
-    Set sourceSheet = sourceBook.Worksheets(1)
+    ' D2を省略した一般事務整理簿は先頭シートを使う。
+    If Len(Trim$(SafeText(ThisWorkbook.Worksheets(ADDRESS_SHEET).Range("D2").Value2))) > 0 Then
+        Set sourceSheet = sourceBook.Worksheets(Trim$(SafeText(ThisWorkbook.Worksheets(ADDRESS_SHEET).Range("D2").Value2)))
+    Else
+        Set sourceSheet = sourceBook.Worksheets(1)
+    End If
     Set sourceMap = ReadHeaderMap(sourceSheet)
     RequireField sourceMap, "共通番号", sourceBook.Name
     RequireField sourceMap, "枝番号", sourceBook.Name
@@ -73,7 +77,7 @@ Public Sub ImportWeeklyLedger()
 
     Set masterBook = Workbooks.Open(Filename:=GetConfiguredPath(3), ReadOnly:=False, UpdateLinks:=0)
     If masterBook.ReadOnly Then Err.Raise vbObjectError + 801, , "全体ファイルが読み取り専用です。"
-    Set masterSheet = masterBook.Worksheets(DATA_SHEET)
+    Set masterSheet = masterBook.Worksheets(GetConfiguredSheetName(3))
     Set masterMap = ReadHeaderMap(masterSheet)
     ValidateMasterFields masterMap, fieldNames
     masterData = ReadTable(masterSheet, CLng(masterMap("共通番号")))
@@ -200,7 +204,7 @@ Public Sub TransferToFiveOffices()
     Set enabledFields = ReadTransferFlags(fieldNames)
     Set masterBook = Workbooks.Open(Filename:=GetConfiguredPath(3), ReadOnly:=False, UpdateLinks:=0)
     If masterBook.ReadOnly Then Err.Raise vbObjectError + 811, , "全体ファイルが読み取り専用です。"
-    Set masterSheet = masterBook.Worksheets(DATA_SHEET)
+    Set masterSheet = masterBook.Worksheets(GetConfiguredSheetName(3))
     Set masterMap = ReadHeaderMap(masterSheet)
     ValidateMasterFields masterMap, fieldNames
     masterData = ReadTable(masterSheet, CLng(masterMap("共通番号")))
@@ -223,7 +227,7 @@ Public Sub TransferToFiveOffices()
         officeName = GetOfficeName(settingRow)
         Set officeBook = Workbooks.Open(Filename:=GetConfiguredPath(settingRow), ReadOnly:=False, UpdateLinks:=0)
         If officeBook.ReadOnly Then Err.Raise vbObjectError + 813, , "署ファイルが読み取り専用です: " & officeName
-        Set officeSheet = officeBook.Worksheets(DATA_SHEET)
+        Set officeSheet = officeBook.Worksheets(GetConfiguredSheetName(settingRow))
         Set officeMap = ReadHeaderMap(officeSheet)
         RequireField officeMap, "共通番号", officeName
         RequireField officeMap, "枝番号", officeName
@@ -558,6 +562,17 @@ Private Function GetConfiguredPath(ByVal settingRow As Long) As String
     ' 拡張子付きはそのまま使い、未指定時のみxlsxを補完する。
     If InStrRev(fileName, ".") = 0 Then fileName = fileName & ".xlsx"
     GetConfiguredPath = AddPathSeparator(folderPath) & fileName
+End Function
+
+' 各ファイル内の実際のシート名はAddressのD列から取得する。
+Private Function GetConfiguredSheetName(ByVal settingRow As Long) As String
+    Dim sheetName As String
+    sheetName = Trim$(SafeText(ThisWorkbook.Worksheets(ADDRESS_SHEET).Cells(settingRow, 4).Value2))
+    If Len(sheetName) = 0 Then
+        Err.Raise vbObjectError + 831, "GetConfiguredSheetName", _
+            "AddressのD" & settingRow & "にシート名を入力してください。"
+    End If
+    GetConfiguredSheetName = sheetName
 End Function
 
 Private Function AddPathSeparator(ByVal folderPath As String) As String
