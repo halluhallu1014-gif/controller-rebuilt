@@ -4,12 +4,14 @@ Option Explicit
 ' 週次一般事務整理簿 → 全体 → 5署の転記を担当する独立エンジン。
 ' Address: A=識別名 B=フォルダパス C=ファイル名 D=シート名
 ' Sheet2 : A=項目名 B=管理簿列 C=詳細表示セル D=5署へ転記（○/×）
-' 進捗整理簿のデータシート名はAddressのD列、見出しは1行目。
+' 進捗整理簿は5行目が見出し、6行目からデータ。転記基準は1行目が見出し。
 
 Private Const ADDRESS_SHEET As String = "Address"
 Private Const FIELD_SHEET As String = "Sheet2"
 Private Const HISTORY_SHEET As String = "転記基準"
 Private Const FIELD_COUNT As Long = 48
+Private Const LEDGER_HEADER_ROW As Long = 5
+Private Const LEDGER_FIRST_DATA_ROW As Long = LEDGER_HEADER_ROW + 1
 Private Const FIRST_OFFICE_ROW As Long = 4
 Private Const LAST_OFFICE_ROW As Long = 8
 
@@ -68,19 +70,19 @@ Public Sub ImportWeeklyLedger()
     Else
         Set sourceSheet = sourceBook.Worksheets(1)
     End If
-    Set sourceMap = ReadHeaderMap(sourceSheet)
+    Set sourceMap = ReadHeaderMap(sourceSheet, 1)
     RequireField sourceMap, "共通番号", sourceBook.Name
     RequireField sourceMap, "枝番号", sourceBook.Name
     RequireField sourceMap, "署名", sourceBook.Name
     RequireField sourceMap, "氏名法人名", sourceBook.Name
-    sourceData = ReadTable(sourceSheet, CLng(sourceMap("共通番号")))
+    sourceData = ReadTable(sourceSheet, CLng(sourceMap("共通番号")), 1)
 
     Set masterBook = Workbooks.Open(Filename:=GetConfiguredPath(3), ReadOnly:=False, UpdateLinks:=0)
     If masterBook.ReadOnly Then Err.Raise vbObjectError + 801, , "全体ファイルが読み取り専用です。"
     Set masterSheet = masterBook.Worksheets(GetConfiguredSheetName(3))
-    Set masterMap = ReadHeaderMap(masterSheet)
+    Set masterMap = ReadHeaderMap(masterSheet, LEDGER_HEADER_ROW)
     ValidateMasterFields masterMap, fieldNames
-    masterData = ReadTable(masterSheet, CLng(masterMap("共通番号")))
+    masterData = ReadTable(masterSheet, CLng(masterMap("共通番号")), LEDGER_HEADER_ROW)
     Set existing = BuildKeyIndex(masterData, masterMap, masterBook.Name)
     Set newRows = New Collection
 
@@ -110,7 +112,7 @@ Public Sub ImportWeeklyLedger()
 
     If newRows.Count > 0 Then
         lastRow = masterSheet.Cells(masterSheet.Rows.Count, CLng(masterMap("共通番号"))).End(xlUp).Row
-        nextRow = Application.Max(2, lastRow + 1)
+        nextRow = Application.Max(LEDGER_FIRST_DATA_ROW, lastRow + 1)
         ReDim outputData(1 To newRows.Count, 1 To FIELD_COUNT)
         For rowIndex = 1 To newRows.Count
             values = newRows(rowIndex)
@@ -205,13 +207,13 @@ Public Sub TransferToFiveOffices()
     Set masterBook = Workbooks.Open(Filename:=GetConfiguredPath(3), ReadOnly:=False, UpdateLinks:=0)
     If masterBook.ReadOnly Then Err.Raise vbObjectError + 811, , "全体ファイルが読み取り専用です。"
     Set masterSheet = masterBook.Worksheets(GetConfiguredSheetName(3))
-    Set masterMap = ReadHeaderMap(masterSheet)
+    Set masterMap = ReadHeaderMap(masterSheet, LEDGER_HEADER_ROW)
     ValidateMasterFields masterMap, fieldNames
-    masterData = ReadTable(masterSheet, CLng(masterMap("共通番号")))
+    masterData = ReadTable(masterSheet, CLng(masterMap("共通番号")), LEDGER_HEADER_ROW)
     Set officeIndexes = BuildKeyIndex(masterData, masterMap, masterBook.Name)
 
     Set historySheet = GetHistorySheet(masterBook, fieldNames)
-    historyData = ReadTable(historySheet, 2)
+    historyData = ReadTable(historySheet, 2, 1)
     Set historyIndexes = CreateObject("Scripting.Dictionary")
     For currentRow = 2 To UBound(historyData, 1)
         If Len(SafeText(historyData(currentRow, 1))) > 0 Then
@@ -228,7 +230,7 @@ Public Sub TransferToFiveOffices()
         Set officeBook = Workbooks.Open(Filename:=GetConfiguredPath(settingRow), ReadOnly:=False, UpdateLinks:=0)
         If officeBook.ReadOnly Then Err.Raise vbObjectError + 813, , "署ファイルが読み取り専用です: " & officeName
         Set officeSheet = officeBook.Worksheets(GetConfiguredSheetName(settingRow))
-        Set officeMap = ReadHeaderMap(officeSheet)
+        Set officeMap = ReadHeaderMap(officeSheet, LEDGER_HEADER_ROW)
         RequireField officeMap, "共通番号", officeName
         RequireField officeMap, "枝番号", officeName
 
@@ -237,14 +239,14 @@ Public Sub TransferToFiveOffices()
             If enabledFields.Exists(fieldName) Then RequireField officeMap, fieldName, officeName
         Next fieldIndex
 
-        officeData = ReadTable(officeSheet, CLng(officeMap("共通番号")))
+        officeData = ReadTable(officeSheet, CLng(officeMap("共通番号")), LEDGER_HEADER_ROW)
         Set officeIndexes = BuildKeyIndex(officeData, officeMap, officeName)
-        nextOfficeRow = Application.Max(2, officeSheet.Cells(officeSheet.Rows.Count, _
+        nextOfficeRow = Application.Max(LEDGER_FIRST_DATA_ROW, officeSheet.Cells(officeSheet.Rows.Count, _
                                                CLng(officeMap("共通番号"))).End(xlUp).Row + 1)
         nextHistoryRow = Application.Max(2, historySheet.Cells(historySheet.Rows.Count, 1).End(xlUp).Row + 1)
         didWrite = False
 
-        For currentRow = 2 To UBound(masterData, 1)
+        For currentRow = LEDGER_FIRST_DATA_ROW To UBound(masterData, 1)
             If SafeText(masterData(currentRow, CLng(masterMap("署名")))) = officeName Then
                 If Len(Trim$(SafeText(masterData(currentRow, CLng(masterMap("共通番号")))))) > 0 Then
                     fullKey = officeKey & "|" & MakeKey( _
@@ -432,7 +434,7 @@ Private Function ReadMasterFields() As Variant
     ReadMasterFields = fields
 End Function
 
-Private Function ReadHeaderMap(ByVal sheet As Worksheet) As Object
+Private Function ReadHeaderMap(ByVal sheet As Worksheet, ByVal headerRow As Long) As Object
     Dim mapping As Object
     Dim counts As Object
     Dim columnIndex As Long
@@ -442,9 +444,9 @@ Private Function ReadHeaderMap(ByVal sheet As Worksheet) As Object
 
     Set mapping = CreateObject("Scripting.Dictionary")
     Set counts = CreateObject("Scripting.Dictionary")
-    lastColumn = sheet.Cells(1, sheet.Columns.Count).End(xlToLeft).Column
+    lastColumn = sheet.Cells(headerRow, sheet.Columns.Count).End(xlToLeft).Column
     For columnIndex = 1 To lastColumn
-        name = Trim$(SafeText(sheet.Cells(1, columnIndex).Value2))
+        name = Trim$(SafeText(sheet.Cells(headerRow, columnIndex).Value2))
         If Len(name) > 0 Then
             If counts.Exists(name) Then
                 occurrence = counts(name) + 1
@@ -498,12 +500,12 @@ Private Function GetFieldPosition(ByRef fields As Variant, ByVal fieldName As St
     Err.Raise vbObjectError + 824, , "Sheet2に項目がありません: " & fieldName
 End Function
 
-Private Function ReadTable(ByVal sheet As Worksheet, ByVal keyColumn As Long) As Variant
+Private Function ReadTable(ByVal sheet As Worksheet, ByVal keyColumn As Long, ByVal headerRow As Long) As Variant
     Dim lastRow As Long
     Dim lastColumn As Long
     lastRow = sheet.Cells(sheet.Rows.Count, keyColumn).End(xlUp).Row
-    lastColumn = sheet.Cells(1, sheet.Columns.Count).End(xlToLeft).Column
-    If lastRow = 1 Then lastRow = 2
+    lastColumn = sheet.Cells(headerRow, sheet.Columns.Count).End(xlToLeft).Column
+    If lastRow < headerRow + 1 Then lastRow = headerRow + 1
     ReadTable = sheet.Range(sheet.Cells(1, 1), sheet.Cells(lastRow, lastColumn)).Value2
 End Function
 
@@ -513,7 +515,7 @@ Private Function BuildKeyIndex(ByRef data As Variant, ByVal mapping As Object, _
     Dim rowIndex As Long
     Dim key As String
     Set keys = CreateObject("Scripting.Dictionary")
-    For rowIndex = 2 To UBound(data, 1)
+    For rowIndex = LEDGER_FIRST_DATA_ROW To UBound(data, 1)
         If Len(Trim$(SafeText(data(rowIndex, CLng(mapping("共通番号")))))) > 0 Then
             key = MakeKey(data(rowIndex, CLng(mapping("共通番号"))), _
                           data(rowIndex, CLng(mapping("枝番号"))))
