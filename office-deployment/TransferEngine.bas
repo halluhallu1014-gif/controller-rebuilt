@@ -555,7 +555,8 @@ Private Function GetConfiguredPath(ByVal settingRow As Long) As String
     fileName = Trim$(SafeText(sheet.Cells(settingRow, 3).Value2))
     If Len(folderPath) = 0 Or Len(fileName) = 0 Then Err.Raise vbObjectError + 829, , _
         "Addressのパスまたはファイル名が空欄です: " & settingRow & "行目"
-    If LCase$(Right$(fileName, 5)) <> ".xlsx" Then fileName = fileName & ".xlsx"
+    ' 拡張子付きはそのまま使い、未指定時のみxlsxを補完する。
+    If InStrRev(fileName, ".") = 0 Then fileName = fileName & ".xlsx"
     GetConfiguredPath = AddPathSeparator(folderPath) & fileName
 End Function
 
