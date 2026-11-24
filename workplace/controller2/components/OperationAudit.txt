@@ -1,0 +1,116 @@
+Option Explicit
+
+Private sessionActor As String
+Private lastLogError As String
+
+Public Sub SetOperationActor(ByVal actor As String)
+    sessionActor = Trim$(actor)
+End Sub
+
+Public Function OperationActor() As String
+    If Len(sessionActor) > 0 Then
+        OperationActor = sessionActor
+    Else
+        OperationActor = ReadAuditSetting("B2")
+    End If
+End Function
+
+Public Function OperationLogLastError() As String
+    OperationLogLastError = lastLogError
+End Function
+
+Private Function ReadAuditSetting(ByVal cellAddress As String) As String
+    On Error Resume Next
+    ReadAuditSetting = Trim$(CStr(ThisWorkbook.Worksheets("Operations").range(cellAddress).Value2))
+End Function
+
+' Each entry is Array(file, key, field, encoded before, encoded after).
+' The journal remains the only source for resuming a transfer.
+Public Sub AppendOperationAudit(ByVal actor As String, ByVal operation As String, ByVal transaction As String, _
+                               ByVal result As String, ByVal message As String, ByVal entries As Collection)
+    Dim path As String, book As Workbook, sheet As Worksheet, candidate As Workbook
+    Dim headers As Variant, data() As Variant, item As Variant, count As Long, firstRow As Long, Row As Long, col As Long
+    Dim oldEvents As Boolean, oldSecurity As Long, timestamp As Double, fileName As String, hasAutoSave As Boolean
+    Dim checkedOut As Boolean
+    lastLogError = vbNullString
+    path = ReadAuditSetting("B3")
+    If Len(path) = 0 Then Exit Sub
+    If Len(actor) = 0 Then actor = "(unidentified)"
+    oldEvents = Application.EnableEvents: oldSecurity = Application.AutomationSecurity
+    On Error GoTo Failed
+    fileName = Mid$(path, InStrRev(Replace(path, "\", "/"), "/") + 1)
+    If LCase$(Right$(fileName, 5)) <> ".xlsx" Then Err.Raise 5, , "Audit location must be an .xlsx workbook."
+    For Each candidate In Application.Workbooks
+        If StrComp(candidate.name, fileName, vbTextCompare) = 0 Then Err.Raise 5, , "Audit workbook already open."
+    Next candidate
+    Application.EnableEvents = False: Application.AutomationSecurity = 3
+    If LCase$(Left$(path, 8)) = "https://" Then
+        If Not Workbooks.CanCheckOut(path) Then Err.Raise 5, , "Cannot obtain exclusive SharePoint checkout for audit."
+        Workbooks.CheckOut path
+        checkedOut = True
+    End If
+    Set book = Workbooks.Open(path, UpdateLinks:=0, readOnly:=False, AddToMru:=False, Notify:=False)
+    If book.readOnly Or book.MultiUserEditing Then Err.Raise 5, , "Audit workbook is not writable exclusively."
+    On Error Resume Next
+    hasAutoSave = book.AutoSaveOn
+    On Error GoTo Failed
+    If hasAutoSave Then Err.Raise 5, , "Disable AutoSave on the audit workbook."
+    If book.Worksheets.count <> 1 Then Err.Raise 5, , "Audit workbook must have one sheet."
+    Set sheet = book.Worksheets(1)
+    headers = Array("Actor", "LocalTimestamp", "Operation", "Transaction", "File", "Key", "Field", "Before", "After", "Result", "Error")
+    If Application.CountA(sheet.UsedRange) = 0 Then
+        For col = 0 To UBound(headers)
+            sheet.Cells(1, col + 1).Value2 = headers(col)
+        Next col
+    Else
+        For col = 0 To UBound(headers)
+            If CStr(sheet.Cells(1, col + 1).Value2) <> CStr(headers(col)) Then Err.Raise 5, , "Unexpected audit workbook schema."
+        Next col
+    End If
+    firstRow = sheet.Cells(sheet.rows.count, 2).End(xlUp).Row + 1
+    If Not entries Is Nothing Then count = entries.count
+    If count = 0 Then count = 1
+    If firstRow + count - 1 > sheet.rows.count Then Err.Raise 5, , "Audit workbook capacity exceeded."
+    ReDim data(1 To count, 1 To 11)
+    timestamp = CDbl(Now)
+    For Row = 1 To count
+        data(Row, 1) = "'" & actor: data(Row, 2) = timestamp
+        data(Row, 3) = "'" & operation: data(Row, 4) = "'" & transaction
+        If Not entries Is Nothing Then
+            If entries.count > 0 Then
+                item = entries(Row)
+                For col = 0 To 4
+                    If Len(CStr(item(col))) > 0 Then data(Row, col + 5) = "'" & CStr(item(col))
+                Next col
+            End If
+        End If
+        data(Row, 10) = "'" & result
+        If Len(message) > 0 Then data(Row, 11) = "'" & Left$(message, 32760)
+    Next Row
+    sheet.Cells(firstRow, 2).Resize(count, 1).NumberFormat = "yyyy-mm-dd hh:mm:ss"
+    sheet.Cells(firstRow, 1).Resize(count, 11).Value2 = data
+    book.Save
+    If Not book.saved Then Err.Raise 5, , "Audit workbook save did not complete."
+    If checkedOut Then
+        If Not book.CanCheckIn Then Err.Raise 5, , "Cannot check in the audit workbook."
+        book.CheckIn SaveChanges:=True
+        checkedOut = False
+        Set book = Nothing
+    End If
+    GoTo Cleanup
+Failed:
+    lastLogError = Err.Description
+    Debug.Print "Operation audit: " & lastLogError
+Cleanup:
+    On Error Resume Next
+    If checkedOut Then
+        If book Is Nothing Then Set book = Workbooks.Open(path, UpdateLinks:=0, readOnly:=False, AddToMru:=False, Notify:=False)
+        If Not book Is Nothing Then
+            If book.CanCheckIn Then book.CheckIn SaveChanges:=False
+        End If
+    End If
+    If Not book Is Nothing Then book.Close False
+    Application.EnableEvents = oldEvents: Application.AutomationSecurity = oldSecurity
+End Sub
+
+

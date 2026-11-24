@@ -1,0 +1,162 @@
+Option Explicit
+
+Private Const UI_WHITE As Long = 16777215
+Private Const UI_NAVY As Long = 4860690
+Private Const UI_NAVY2 As Long = 6240798
+Private Const UI_LIGHT As Long = 16512754
+Private Const UI_MID As Long = 15063245
+Private Const UI_TEXT As Long = 4009761
+Private Const UI_MUTED As Long = 8417376
+
+Private Const UI_FONT As String = "Meiryo UI"
+Private Const UI_FONT_SIZE As Double = 10
+
+Public Sub UITheme_ApplyForm(ByVal targetForm As Object)
+    On Error Resume Next
+
+    targetForm.BackColor = UI_WHITE
+    targetForm.ForeColor = UI_TEXT
+    targetForm.Font.name = UI_FONT
+    targetForm.Font.size = UI_FONT_SIZE
+
+    UITheme_ApplyContainer targetForm
+
+    On Error GoTo 0
+End Sub
+
+Private Sub UITheme_ApplyContainer(ByVal container As Object)
+    Dim control As Object
+    Dim controlType As String
+
+    On Error Resume Next
+
+    For Each control In container.Controls
+        controlType = TypeName(control)
+
+        Select Case controlType
+            Case "CommandButton"
+                UITheme_StyleButton control
+
+            Case "Label"
+                UITheme_StyleLabel control
+
+            Case "Frame"
+                UITheme_StyleFrame control
+                UITheme_ApplyContainer control
+
+            Case "TextBox", "ComboBox"
+                UITheme_StyleInput control
+
+            Case "ListBox"
+                UITheme_StyleList control
+
+            Case "OptionButton", "CheckBox"
+                UITheme_StyleChoice control
+
+            Case "MultiPage", "Page"
+                UITheme_ApplyContainer control
+        End Select
+    Next control
+
+    On Error GoTo 0
+End Sub
+
+Private Sub UITheme_StyleButton(ByVal button As Object)
+    On Error Resume Next
+
+    button.Font.name = UI_FONT
+    button.Font.size = UI_FONT_SIZE
+    button.Font.bold = True
+
+    If UITheme_IsSecondaryButton(CStr(button.name)) Then
+        button.BackColor = UI_WHITE
+        button.ForeColor = UI_NAVY
+    Else
+        button.BackColor = UI_NAVY
+        button.ForeColor = UI_WHITE
+    End If
+
+    button.SpecialEffect = 0
+
+    On Error GoTo 0
+End Sub
+
+Private Sub UITheme_StyleLabel(ByVal label As Object)
+    On Error Resume Next
+
+    label.BackStyle = 0
+    label.ForeColor = UI_TEXT
+    label.Font.name = UI_FONT
+    label.Font.size = UI_FONT_SIZE
+
+    If InStr(1, LCase$(CStr(label.name)), "title", vbTextCompare) > 0 _
+       Or LCase$(CStr(label.name)) = "lblmonth" Then
+        label.ForeColor = UI_NAVY
+        label.Font.size = 13
+        label.Font.bold = True
+    End If
+
+    On Error GoTo 0
+End Sub
+
+Private Sub UITheme_StyleFrame(ByVal frame As Object)
+    On Error Resume Next
+
+    frame.BackColor = UI_WHITE
+    frame.ForeColor = UI_NAVY
+    frame.SpecialEffect = 0
+    frame.Font.name = UI_FONT
+    frame.Font.size = UI_FONT_SIZE
+    frame.Font.bold = True
+
+    On Error GoTo 0
+End Sub
+
+Private Sub UITheme_StyleInput(ByVal inputControl As Object)
+    On Error Resume Next
+
+    inputControl.BackColor = UI_WHITE
+    inputControl.ForeColor = UI_TEXT
+    inputControl.BorderStyle = 1
+    inputControl.BorderColor = UI_MID
+    inputControl.SpecialEffect = 0
+    inputControl.Font.name = UI_FONT
+    inputControl.Font.size = UI_FONT_SIZE
+
+    On Error GoTo 0
+End Sub
+
+Private Sub UITheme_StyleList(ByVal listControl As Object)
+    On Error Resume Next
+
+    listControl.BackColor = UI_WHITE
+    listControl.ForeColor = UI_TEXT
+    listControl.BorderStyle = 1
+    listControl.BorderColor = UI_MID
+    listControl.SpecialEffect = 0
+    listControl.Font.name = UI_FONT
+    listControl.Font.size = UI_FONT_SIZE
+
+    On Error GoTo 0
+End Sub
+
+Private Sub UITheme_StyleChoice(ByVal choiceControl As Object)
+    On Error Resume Next
+
+    choiceControl.BackColor = UI_WHITE
+    choiceControl.ForeColor = UI_TEXT
+    choiceControl.Font.name = UI_FONT
+    choiceControl.Font.size = UI_FONT_SIZE
+
+    On Error GoTo 0
+End Sub
+
+Private Function UITheme_IsSecondaryButton(ByVal controlName As String) As Boolean
+    Select Case LCase$(controlName)
+        Case "cmdcancel", "cmdclose", "cmdprev", "cmdnext", "cmdtoday"
+            UITheme_IsSecondaryButton = True
+        Case Else
+            UITheme_IsSecondaryButton = False
+    End Select
+End Function
+

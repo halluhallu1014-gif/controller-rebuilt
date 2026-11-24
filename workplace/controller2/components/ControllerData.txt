@@ -1,0 +1,151 @@
+Option Explicit
+
+Private cachedRows As Collection
+Private cachedFields As Object
+Private cachedAddresses As Object
+Private cachedTypes As Object
+Private masterId As String
+
+Public Sub RefreshControllerData()
+    Dim fields As Object, addresses As Object, rows As Collection, kinds As Object, definition As Object
+    Dim fileId As Variant, fieldId As Variant, record As Object, currentMaster As String, kind As Long
+    Set fields = LoadLedgerFields()
+    Set addresses = LoadLedgerAddresses()
+    For Each fileId In addresses.Keys
+        Set definition = addresses(fileId)
+        If definition("Role") = "Master" Then
+            If Len(currentMaster) > 0 Then Err.Raise 5, , "全体管理簿が複数設定されています。"
+            currentMaster = CStr(fileId)
+        End If
+    Next fileId
+    If Len(currentMaster) = 0 Then Err.Raise 5, , "全体管理簿が設定されていません。"
+    Set rows = ReadLedgerRecords(currentMaster)
+    Set kinds = NewLedgerRecord()
+    For Each fieldId In fields.Keys
+        kinds.Add fieldId, CLng(vbEmpty)
+    Next fieldId
+    For Each record In rows
+        For Each fieldId In fields.Keys
+            kind = VarType(record(fieldId))
+            If kind <> vbEmpty Then
+                If kinds(fieldId) = vbEmpty Then
+                    kinds(fieldId) = kind
+                ElseIf kinds(fieldId) <> kind Then
+                    kinds(fieldId) = vbVariant
+                End If
+            End If
+        Next fieldId
+    Next record
+    Set cachedFields = fields: Set cachedAddresses = addresses
+    Set cachedTypes = kinds: Set cachedRows = rows: masterId = currentMaster
+End Sub
+
+Public Sub EnsureControllerData()
+    If cachedRows Is Nothing Then RefreshControllerData
+End Sub
+
+Public Function ControllerRows() As Collection
+    EnsureControllerData
+    Set ControllerRows = cachedRows
+End Function
+
+Public Function ControllerFields() As Object
+    EnsureControllerData
+    Set ControllerFields = cachedFields
+End Function
+
+Public Function ControllerOfficeNames() As Collection
+    Dim names As New Collection, id As Variant, item As Object
+    EnsureControllerData
+    For Each id In cachedAddresses.Keys
+        Set item = cachedAddresses(id)
+        If item("Role") = "Branch" Then names.Add CStr(item("Office"))
+    Next id
+    Set ControllerOfficeNames = names
+End Function
+
+Public Function ControllerMasterRecord(ByVal identity As Object) As Object
+    EnsureControllerData
+    Set ControllerMasterRecord = ReadLedgerRecord(masterId, identity)
+End Function
+
+Public Function ControllerBranchRecord(ByVal identity As Object) As Object
+    Dim id As Variant, item As Object
+    EnsureControllerData
+    For Each id In cachedAddresses.Keys
+        Set item = cachedAddresses(id)
+        If item("Role") = "Branch" And CStr(item("Office")) = CStr(identity("OfficeName")) Then
+            Set ControllerBranchRecord = ReadLedgerRecord(CStr(id), identity)
+            Exit Function
+        End If
+    Next id
+    Err.Raise 5, , "対象署の管理簿が設定されていません。"
+End Function
+
+Public Function ControllerSetting(ByVal cellAddress As String) As String
+    ControllerSetting = Trim$(CStr(ThisWorkbook.Worksheets("Operations").range(cellAddress).Value2))
+End Function
+
+Public Function ControllerFieldType(ByVal fieldId As String) As Long
+    EnsureControllerData
+    ControllerFieldType = cachedTypes(fieldId)
+End Function
+
+Public Sub OpenControllerSource(ByVal identity As Object)
+    Dim item As Object, book As Workbook, current As Workbook, sheet As Worksheet, wanted As Object, keyFields As Object
+    Dim Field As Object, fieldId As Variant, key As String, Row As Long, column As Long, lastRow As Long
+    Dim openedHere As Boolean, number As Long, message As String, match As Long
+    EnsureControllerData
+    Set item = cachedAddresses(masterId)
+    On Error GoTo Failed
+    For Each current In Application.Workbooks
+        If StrComp(current.FullName, CStr(item("Address")), vbTextCompare) = 0 Then
+            Set book = current
+            Exit For
+        End If
+    Next current
+    If book Is Nothing Then
+        Set book = Application.Workbooks.Open(CStr(item("Address")), UpdateLinks:=0, readOnly:=True, AddToMru:=False)
+        openedHere = True
+    End If
+    Set sheet = book.Worksheets(CStr(item("Sheet")))
+    Set keyFields = NewLedgerRecord()
+    For Each fieldId In cachedFields.Keys
+        Set Field = cachedFields(fieldId)
+        If Field("Rank") > 0 Then
+            column = CLng(Field("Column"))
+            If CStr(sheet.Cells(CLng(item("HeaderRow")), column).Value2) <> CStr(Field("Header")) Then Err.Raise 5, , "照合キーの見出しが一致しません。"
+            keyFields.Add fieldId, column
+            Row = sheet.Cells(sheet.rows.count, column).End(xlUp).Row
+            If Row > lastRow Then lastRow = Row
+        End If
+    Next fieldId
+    For Row = CLng(item("FirstRow")) To lastRow
+        Set wanted = NewLedgerRecord()
+        For Each fieldId In keyFields.Keys
+            wanted.Add fieldId, sheet.Cells(Row, keyFields(fieldId)).Value2
+        Next fieldId
+        If ControllerKeysMatch(wanted, identity, keyFields) Then
+            If match > 0 Then Err.Raise 5, , "照合キーに一致する行が複数あります。"
+            match = Row
+        End If
+    Next Row
+    If match = 0 Then Err.Raise 5, , "元の管理簿に対象行がありません。"
+    book.Activate
+    Application.GoTo sheet.Cells(match, 1), True
+    Exit Sub
+Failed:
+    number = Err.number: message = Err.Description
+    On Error Resume Next
+    If openedHere Then book.Close False
+    On Error GoTo 0
+    Err.Raise number, "OpenControllerSource", message
+End Sub
+
+Private Function ControllerKeysMatch(ByVal record As Object, ByVal identity As Object, ByVal keyFields As Object) As Boolean
+    Dim fieldId As Variant
+    For Each fieldId In keyFields.Keys
+        If Not LedgerValuesEqual(record(fieldId), identity(fieldId)) Then Exit Function
+    Next fieldId
+    ControllerKeysMatch = True
+End Function

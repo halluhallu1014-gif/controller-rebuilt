@@ -1,0 +1,197 @@
+
+Option Explicit
+
+Private mDisplayMonth As Date
+Private mSelectedDate As Date
+Private mAccepted As Boolean
+
+Private mDayHandlers As Collection
+Private mHolidayDates As Collection
+
+Private Sub UserForm_Initialize()
+    UITheme_ApplyForm Me
+End Sub
+
+Public Property Get Accepted() As Boolean
+    Accepted = mAccepted
+End Property
+
+Public Property Get selectedDate() As Date
+    selectedDate = mSelectedDate
+End Property
+
+Public Sub Prepare( _
+    ByVal initialDate As Date, _
+    ByVal title As String, _
+    Optional ByVal holidayDates As Variant _
+)
+    Me.caption = title
+    lblMonth.Font.bold = True
+
+    mAccepted = False
+    mSelectedDate = DateValue(initialDate)
+    mDisplayMonth = dateSerial(Year(initialDate), Month(initialDate), 1)
+
+    Set mHolidayDates = NormalizeHolidayDates(holidayDates)
+
+    lblWeek1.ForeColor = RGB(192, 0, 0)
+    lblWeek7.ForeColor = RGB(0, 90, 180)
+
+    AttachDayHandlers
+    RefreshCalendar
+End Sub
+
+Public Sub HandleDayClick(ByVal dateSerial As Long)
+    mSelectedDate = CDate(dateSerial)
+    mAccepted = True
+    Me.Hide
+End Sub
+
+Private Sub cmdPrev_Click()
+    mDisplayMonth = DateAdd("m", -1, mDisplayMonth)
+    RefreshCalendar
+End Sub
+
+Private Sub cmdNext_Click()
+    mDisplayMonth = DateAdd("m", 1, mDisplayMonth)
+    RefreshCalendar
+End Sub
+
+Private Sub cmdToday_Click()
+    mDisplayMonth = dateSerial(Year(Date), Month(Date), 1)
+    mSelectedDate = Date
+    RefreshCalendar
+End Sub
+
+Private Sub cmdCancel_Click()
+    mAccepted = False
+    Me.Hide
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+    If CloseMode = 0 Then
+        Cancel = True
+        mAccepted = False
+        Me.Hide
+    End If
+End Sub
+
+Private Sub AttachDayHandlers()
+    Dim index As Long
+    Dim handler As CCalendarDayButton
+    Dim button As MSForms.CommandButton
+
+    Set mDayHandlers = New Collection
+
+    For index = 1 To 42
+        Set button = Me.Controls("cmdDay" & Format$(index, "00"))
+
+        Set handler = New CCalendarDayButton
+        handler.Initialize button, Me
+
+        mDayHandlers.Add handler
+    Next index
+End Sub
+
+Private Sub RefreshCalendar()
+    Dim firstVisibleDate As Date
+    Dim currentDate As Date
+    Dim index As Long
+    Dim button As MSForms.CommandButton
+    Dim weekdayNumber As Long
+
+    lblMonth.caption = Format$(mDisplayMonth, "yyyy年m月")
+
+    firstVisibleDate = mDisplayMonth - (Weekday(mDisplayMonth, vbSunday) - 1)
+
+    For index = 1 To 42
+        currentDate = firstVisibleDate + (index - 1)
+
+        Set button = Me.Controls("cmdDay" & Format$(index, "00"))
+
+        button.caption = CStr(day(currentDate))
+        button.Tag = CStr(CLng(currentDate))
+        button.Enabled = True
+        button.Font.bold = False
+        button.BackColor = RGB(244, 248, 246)
+
+        If Month(currentDate) = Month(mDisplayMonth) Then
+            button.ForeColor = RGB(0, 0, 0)
+        Else
+            button.ForeColor = RGB(145, 145, 145)
+        End If
+
+        weekdayNumber = Weekday(currentDate, vbSunday)
+
+        If weekdayNumber = vbSunday Then
+            button.ForeColor = RGB(192, 0, 0)
+
+        ElseIf weekdayNumber = vbSaturday Then
+            button.ForeColor = RGB(0, 90, 180)
+        End If
+
+        If IsHolidayDate(currentDate) Then
+            button.ForeColor = RGB(192, 0, 0)
+            button.Font.bold = True
+        End If
+
+        If DateValue(currentDate) = DateValue(mSelectedDate) Then
+            button.BackColor = RGB(211, 235, 219)
+            button.Font.bold = True
+        End If
+    Next index
+End Sub
+
+Private Function NormalizeHolidayDates(ByVal holidayDates As Variant) As Collection
+    Dim result As New Collection
+    Dim item As Variant
+    Dim index As Long
+
+    If IsMissing(holidayDates) Or IsEmpty(holidayDates) Then
+        Set NormalizeHolidayDates = result
+        Exit Function
+    End If
+
+    If IsObject(holidayDates) Then
+        If TypeName(holidayDates) = "Collection" Then
+            For Each item In holidayDates
+                AddHolidayDate result, item
+            Next item
+        End If
+
+    ElseIf IsArray(holidayDates) Then
+        For index = LBound(holidayDates) To UBound(holidayDates)
+            AddHolidayDate result, holidayDates(index)
+        Next index
+
+    Else
+        AddHolidayDate result, holidayDates
+    End If
+
+    Set NormalizeHolidayDates = result
+End Function
+
+Private Sub AddHolidayDate(ByRef target As Collection, ByVal value As Variant)
+    If Not IsDate(value) Then Exit Sub
+
+    On Error Resume Next
+    target.Add True, CStr(CLng(DateValue(CDate(value))))
+    On Error GoTo 0
+End Sub
+
+Private Function IsHolidayDate(ByVal value As Date) As Boolean
+    Dim dummy As Variant
+    Dim key As String
+
+    If mHolidayDates Is Nothing Then Exit Function
+
+    key = CStr(CLng(DateValue(value)))
+
+    On Error Resume Next
+    dummy = mHolidayDates.item(key)
+    IsHolidayDate = (Err.number = 0)
+    Err.Clear
+    On Error GoTo 0
+End Function
+
+

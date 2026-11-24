@@ -1,0 +1,30 @@
+Option Explicit
+
+Public Function Calendar_Select( _
+    ByRef selectedDate As Date, _
+    Optional ByVal initialDate As Variant, _
+    Optional ByVal title As String = "日付選択", _
+    Optional ByVal holidayDates As Variant _
+) As Boolean
+    Dim startDate As Date
+
+    If IsMissing(initialDate) Or IsEmpty(initialDate) Or Not IsDate(initialDate) Then
+        startDate = Date
+    Else
+        startDate = CDate(initialDate)
+    End If
+
+    With frmCalendar
+        .Prepare startDate, title, holidayDates
+        .Show vbModal
+
+        Calendar_Select = .Accepted
+
+        If .Accepted Then
+            selectedDate = .selectedDate
+        End If
+    End With
+
+    Unload frmCalendar
+End Function
+

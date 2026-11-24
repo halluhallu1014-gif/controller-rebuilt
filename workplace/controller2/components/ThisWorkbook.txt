@@ -1,0 +1,6 @@
+Option Explicit
+
+Private Sub Workbook_Open()
+    RunConfiguredDailyBackup
+    If Application.Visible Then OpenLedgerController
+End Sub

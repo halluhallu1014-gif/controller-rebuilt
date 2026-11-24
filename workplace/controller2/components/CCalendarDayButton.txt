@@ -1,0 +1,19 @@
+Option Explicit
+
+Public WithEvents button As MSForms.CommandButton
+
+Private mOwner As frmCalendar
+
+Public Sub Initialize( _
+    ByVal targetButton As MSForms.CommandButton, _
+    ByVal owner As frmCalendar _
+)
+    Set button = targetButton
+    Set mOwner = owner
+End Sub
+
+Private Sub Button_Click()
+    If Len(button.Tag) = 0 Then Exit Sub
+
+    mOwner.HandleDayClick CLng(button.Tag)
+End Sub

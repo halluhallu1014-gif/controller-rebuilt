@@ -1,0 +1,1106 @@
+Option Explicit
+
+Private isRunning As Boolean
+Private Const ENGINE_ERROR As Long = vbObjectError + 7400
+Private Const JOURNAL_VERSION As String = "LedgerTransfer/1"
+
+' Public API: records are late-bound dictionaries, keyed by Fields column E.
+' An instruction contains a full before snapshot (Nothing for append), and a patch.
+' Values are raw Value2 values, not formatted display strings.
+Public Function NewLedgerRecord() As Object
+    Dim record As Object
+    Set record = CreateObject("Scripting.Dictionary")
+    record.CompareMode = vbBinaryCompare
+    Set NewLedgerRecord = record
+End Function
+
+Public Function NewLedgerInstruction(ByVal fileId As String, ByVal beforeRecord As Object, ByVal changes As Object) As Object
+    Dim instruction As Object
+    Set instruction = NewLedgerRecord()
+    instruction.Add "FileId", fileId
+    instruction.Add "Before", beforeRecord
+    instruction.Add "Changes", changes
+    Set NewLedgerInstruction = instruction
+End Function
+
+Public Function ReadLedgerRecord(ByVal fileId As String, ByVal identity As Object) As Object
+    Dim settings As Object, fields As Object, definition As Object
+    Dim book As Workbook, sheet As Worksheet, rowNumber As Long
+    Dim errorNumber As Long, errorMessage As String
+    On Error GoTo Failed
+    Set fields = LoadLedgerFields()
+    Set settings = LoadLedgerAddresses()
+    Set definition = settings(fileId)
+    Set book = OpenLedger(definition, True)
+    Set sheet = book.Worksheets(definition("Sheet"))
+    ValidateHeaders sheet, definition, fields
+    rowNumber = FindRecordRow(sheet, definition, fields, identity)
+    If rowNumber = 0 Then RaiseEngine "Record not found: " & fileId
+    Set ReadLedgerRecord = ReadRecord(sheet, rowNumber, fields)
+    book.Close SaveChanges:=False
+    Exit Function
+Failed:
+    errorNumber = Err.number: errorMessage = Err.Description
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    On Error GoTo 0
+    Err.Raise errorNumber, "ReadLedgerRecord", errorMessage
+End Function
+
+' journalAddress: dedicated, pre-created empty .xlsx, one worksheet, no other data.
+' Exclusive access must be arranged externally; this flag is NOT a lock.
+Public Sub ExecuteLedgerTransfer(ByVal instructions As Collection, ByVal journalAddress As String, ByVal hasExclusiveAccess As Boolean, Optional ByVal operationKind As String)
+    RunTransfer instructions, journalAddress, hasExclusiveAccess, False, operationKind
+End Sub
+
+' Resume the same journal, not a newly generated plan. Already applied rows are skipped.
+Public Sub ResumeLedgerTransfer(ByVal journalAddress As String, ByVal hasExclusiveAccess As Boolean)
+    Dim instructions As Collection
+    RunTransfer instructions, journalAddress, hasExclusiveAccess, True, vbNullString
+End Sub
+
+Private Sub RunTransfer(ByVal instructions As Collection, ByVal journalAddress As String, ByVal hasExclusiveAccess As Boolean, ByVal isResume As Boolean, ByVal operationKind As String)
+    Dim fields As Object, addresses As Object, plans As Collection, groups As Object
+    Dim books As Object, book As Workbook, definition As Object, group As Collection
+    Dim fileId As Variant, journal As Workbook, journalSheet As Worksheet
+    Dim oldEvents As Boolean, oldScreen As Boolean, oldSecurity As Long
+    Dim errorNumber As Long, errorMessage As String, currentFile As String
+    Dim hasJournal As Boolean, hasStarted As Boolean, originalPlans As Collection
+    Dim auditActor As String, auditOperation As String, auditEntries As Collection, summary As Collection
+    auditActor = OperationActor()
+    If isResume Then
+        auditOperation = "Recovery"
+    Else
+        auditOperation = PlannedOperation(instructions, operationKind)
+    End If
+    If isRunning Or Not hasExclusiveAccess Then
+        If isRunning Then errorMessage = "Transfer is already running." Else errorMessage = "Exclusive access must be arranged before transfer."
+        AppendOperationAudit auditActor, auditOperation, journalAddress, "ERROR", errorMessage, summary
+        RaiseEngine errorMessage
+    End If
+    isRunning = True
+    oldEvents = Application.EnableEvents
+    oldScreen = Application.ScreenUpdating
+    oldSecurity = Application.AutomationSecurity
+    On Error GoTo Failed
+    Application.EnableEvents = False
+    Application.ScreenUpdating = False
+    Application.AutomationSecurity = 3
+    Set fields = LoadLedgerFields()
+    Set addresses = LoadLedgerAddresses()
+    Set books = NewLedgerRecord()
+    Set journal = OpenDedicatedBook(journalAddress, False)
+    If journal.Worksheets.count <> 1 Then RaiseEngine "Journal must have exactly one worksheet."
+    Set journalSheet = journal.Worksheets(1)
+    If isResume Then
+        If Left$(CStr(journalSheet.range("I1").Value2), 1) = "S" Then _
+            auditOperation = "Recovery/" & Mid$(CStr(journalSheet.range("I1").Value2), 2)
+        Set plans = ReadJournal(journalSheet, fields, addresses)
+        hasJournal = True
+    Else
+        If Application.CountA(journalSheet.UsedRange) <> 0 Then RaiseEngine "Journal is not empty. Use Resume for an existing transaction."
+        Set plans = BuildPlans(instructions, fields, addresses)
+    End If
+    Set auditEntries = AuditChanges(plans, fields, addresses)
+    AppendOperationAudit auditActor, auditOperation, journalAddress, "START", vbNullString, auditEntries
+    Set groups = GroupPlans(plans)
+    ' Open and validate all destinations before the first write.
+    For Each fileId In groups.Keys
+        Set definition = addresses(fileId)
+        Set book = OpenLedger(definition, False)
+        books.Add CStr(fileId), book
+        Set group = groups(fileId)
+        CheckGroup book, definition, fields, group, isResume
+    Next fileId
+    If Not isResume Then
+        WriteJournal journalSheet, plans, fields, addresses
+        journalSheet.range("I1").Value2 = "S" & auditOperation
+        journal.Save
+        journal.Close SaveChanges:=False
+        Set journal = Nothing
+        Set journal = OpenDedicatedBook(journalAddress, False)
+        Set journalSheet = journal.Worksheets(1)
+        Set originalPlans = plans
+        Set plans = ReadJournal(journalSheet, fields, addresses)
+        ComparePlans originalPlans, plans, fields
+        Set groups = GroupPlans(plans)
+        hasJournal = True
+    End If
+    SetJournalStatus journal, "PENDING", ""
+    For Each fileId In groups.Keys
+        currentFile = CStr(fileId)
+        Set definition = addresses(fileId)
+        Set group = groups(fileId)
+        Set book = books(fileId)
+        CheckGroup book, definition, fields, group, isResume
+        hasStarted = True
+        ApplyGroup book, definition, fields, group, isResume
+        If Not book.saved Then book.Save
+        book.Close SaveChanges:=False
+        books.Remove fileId
+        Set book = OpenLedger(definition, True)
+        books.Add CStr(fileId), book
+        VerifyGroup book, definition, fields, group
+        book.Close SaveChanges:=False
+        books.Remove fileId
+        SetJournalStatus journal, "PENDING", "Verified: " & currentFile
+    Next fileId
+    SetJournalStatus journal, "COMPLETE", "All destinations reopened and verified."
+    GoTo Cleanup
+Failed:
+    errorNumber = Err.number: errorMessage = Err.Description
+    On Error Resume Next
+    If hasJournal And Not journal Is Nothing Then
+        SetJournalStatus journal, "PENDING", currentFile & ": " & errorMessage
+    End If
+    On Error GoTo 0
+Cleanup:
+    On Error Resume Next
+    If Not books Is Nothing Then
+        For Each fileId In books.Keys
+            Set book = books(fileId)
+            book.Close SaveChanges:=False
+        Next fileId
+    End If
+    If Not journal Is Nothing Then journal.Close SaveChanges:=False
+    Application.AutomationSecurity = oldSecurity
+    Application.ScreenUpdating = oldScreen
+    Application.EnableEvents = oldEvents
+    isRunning = False
+    On Error GoTo 0
+    If errorNumber <> 0 Then
+        If hasStarted Or hasJournal Then errorMessage = errorMessage & " | Inspect journal and resume: " & journalAddress
+        AppendOperationAudit auditActor, auditOperation, journalAddress, "ERROR", errorMessage, summary
+        Err.Raise errorNumber, "LedgerTransfer", errorMessage
+    End If
+    AppendOperationAudit auditActor, auditOperation, journalAddress, "COMPLETE", vbNullString, summary
+End Sub
+
+Public Function LoadLedgerFields() As Object
+    Dim sheet As Worksheet, fields As Object, columns As Object, ranks As Object, definition As Object
+    Dim rowNumber As Long, lastRow As Long, fieldId As String, columnName As String, columnNumber As Long, rank As Long
+    Set sheet = ThisWorkbook.Worksheets("Fields")
+    Set fields = NewLedgerRecord(): Set columns = NewLedgerRecord(): Set ranks = NewLedgerRecord()
+    lastRow = sheet.Cells(sheet.rows.count, 5).End(xlUp).Row
+    For rowNumber = 2 To lastRow
+        fieldId = Trim$(CStr(sheet.Cells(rowNumber, 5).Value2))
+        If Len(fieldId) = 0 Then RaiseEngine "Missing field ID at Fields row " & rowNumber
+        columnName = UCase$(Trim$(CStr(sheet.Cells(rowNumber, 2).Value2)))
+        If Len(columnName) = 0 Or Len(columnName) > 3 Or columnName Like "*[!A-Z]*" Then RaiseEngine "Invalid field column: " & columnName
+        columnNumber = sheet.range(columnName & "1").column
+        If fields.Exists(fieldId) Or columns.Exists(CStr(columnNumber)) Then RaiseEngine "Duplicate field ID or column: " & fieldId
+        Set definition = NewLedgerRecord()
+        definition.Add "Header", CStr(sheet.Cells(rowNumber, 1).Value2)
+        If Len(definition("Header")) = 0 Then RaiseEngine "Missing field header: " & fieldId
+        definition.Add "Column", columnNumber
+        definition.Add "Branch", CStr(sheet.Cells(rowNumber, 4).Value2)
+        definition.Add "Conversion", CStr(sheet.Cells(rowNumber, 6).Value2)
+        definition.Add "Format", CStr(sheet.Cells(rowNumber, 7).Value2)
+        definition.Add "Editable", CStr(sheet.Cells(rowNumber, 8).Value2)
+        definition.Add "Sync", CStr(sheet.Cells(rowNumber, 10).Value2)
+        definition.Add "SourceHeader", CStr(sheet.Cells(rowNumber, 11).Value2)
+        definition.Add "SourceColumn", UCase$(Trim$(CStr(sheet.Cells(rowNumber, 12).Value2)))
+        definition.Add "SourceRequired", Trim$(CStr(sheet.Cells(rowNumber, 13).Value2))
+        If Len(definition("SourceRequired")) > 0 And definition("SourceRequired") <> ChrW(&H25CB) And _
+           definition("SourceRequired") <> ChrW(&HD7) Then RaiseEngine "Invalid weekly required flag: " & fieldId
+        definition.Add "Rank", 0&
+        If Len(CStr(sheet.Cells(rowNumber, 9).Value2)) > 0 Then
+            rank = PositiveInteger(sheet.Cells(rowNumber, 9).Value2)
+            If ranks.Exists(CStr(rank)) Then RaiseEngine "Duplicate key rank: " & rank
+            ranks.Add CStr(rank), True
+            definition("Rank") = rank
+        End If
+        columns.Add CStr(columnNumber), True
+        fields.Add fieldId, definition
+    Next rowNumber
+    If ranks.count = 0 Then RaiseEngine "Fields column I: no unique key defined."
+    For rank = 1 To ranks.count
+        If Not ranks.Exists(CStr(rank)) Then RaiseEngine "Key ranks must be consecutive from 1."
+    Next rank
+    Set LoadLedgerFields = fields
+End Function
+
+Public Function LoadLedgerAddresses() As Object
+    Dim sheet As Worksheet, result As Object, definition As Object, paths As Object
+    Dim rowNumber As Long, lastRow As Long, fileId As String, role As String, folder As String, fileName As String, address As String
+    Set sheet = ThisWorkbook.Worksheets("Address")
+    Set result = NewLedgerRecord(): Set paths = NewLedgerRecord()
+    lastRow = sheet.Cells(sheet.rows.count, 5).End(xlUp).Row
+    For rowNumber = 2 To lastRow
+        role = Trim$(CStr(sheet.Cells(rowNumber, 5).Value2))
+        If role = "Master" Or role = "Branch" Then
+            fileId = Trim$(CStr(sheet.Cells(rowNumber, 1).Value2))
+            folder = Trim$(CStr(sheet.Cells(rowNumber, 2).Value2))
+            fileName = Trim$(CStr(sheet.Cells(rowNumber, 3).Value2))
+            If Len(fileId) = 0 Then RaiseEngine "Missing address ID."
+            address = JoinLedgerAddress(folder, fileName)
+            If result.Exists(fileId) Or paths.Exists(LCase$(address)) Then RaiseEngine "Duplicate destination: " & fileId
+            Set definition = NewLedgerRecord()
+            definition.Add "Address", address
+            definition.Add "Sheet", Trim$(CStr(sheet.Cells(rowNumber, 4).Value2))
+            definition.Add "Role", role
+            definition.Add "Office", CStr(sheet.Cells(rowNumber, 6).Value2)
+            definition.Add "HeaderRow", PositiveInteger(sheet.Cells(rowNumber, 7).Value2)
+            definition.Add "FirstRow", PositiveInteger(sheet.Cells(rowNumber, 8).Value2)
+            If Len(definition("Sheet")) = 0 Then RaiseEngine "Missing sheet name: " & fileId
+            If definition("FirstRow") <= definition("HeaderRow") Then RaiseEngine "Invalid data start: " & fileId
+            paths.Add LCase$(address), True
+            result.Add fileId, definition
+        ElseIf role <> "Source" And Len(role) > 0 Then
+            RaiseEngine "Unknown file role: " & role
+        End If
+    Next rowNumber
+    If result.count = 0 Then RaiseEngine "No destinations configured."
+    Set LoadLedgerAddresses = result
+End Function
+
+Private Function PositiveInteger(ByVal value As Variant) As Long
+    If Not IsNumeric(value) Then RaiseEngine "Expected positive integer."
+    If CDbl(value) < 1 Or CDbl(value) > 1048576 Or CDbl(value) <> Fix(CDbl(value)) Then RaiseEngine "Invalid positive integer."
+    PositiveInteger = CLng(value)
+End Function
+
+Private Function JoinLedgerAddress(ByVal folder As String, ByVal fileName As String) As String
+    Dim separator As String
+    If Len(folder) = 0 Or Len(fileName) = 0 Then RaiseEngine "Missing folder or file name."
+    If InStr(fileName, "/") > 0 Or InStr(fileName, "\") > 0 Or InStrRev(fileName, ".") = 0 Then RaiseEngine "Use an exact file name including extension: " & fileName
+    separator = "\"
+    If LCase$(Left$(folder, 8)) = "https://" Then separator = "/"
+    If Right$(folder, 1) <> separator Then folder = folder & separator
+    JoinLedgerAddress = folder & fileName
+End Function
+
+Private Function OpenDedicatedBook(ByVal address As String, ByVal readOnly As Boolean) As Workbook
+    Dim existing As Workbook, book As Workbook, fileName As String, position As Long
+    Dim errorNumber As Long, errorMessage As String, oldSecurity As Long, oldEvents As Boolean
+    oldSecurity = Application.AutomationSecurity
+    oldEvents = Application.EnableEvents
+    On Error GoTo Failed
+    position = InStrRev(Replace(address, "\", "/"), "/")
+    fileName = Mid$(address, position + 1)
+    For Each existing In Application.Workbooks
+        If StrComp(existing.name, fileName, vbTextCompare) = 0 Or StrComp(existing.FullName, address, vbTextCompare) = 0 Then RaiseEngine "Close the already-open workbook: " & fileName
+    Next existing
+    Application.AutomationSecurity = 3
+    Application.EnableEvents = False
+    Set book = Application.Workbooks.Open(fileName:=address, UpdateLinks:=0, readOnly:=readOnly, IgnoreReadOnlyRecommended:=True, AddToMru:=False, Notify:=False)
+    If Not readOnly Then
+        If book.readOnly Then RaiseEngine "Read-only: " & address
+        If book.MultiUserEditing Then RaiseEngine "Shared workbook: " & address
+        If AutoSaveEnabled(book) Then RaiseEngine "Disable AutoSave before transfer: " & address
+    End If
+    Application.AutomationSecurity = oldSecurity
+    Application.EnableEvents = oldEvents
+    Set OpenDedicatedBook = book
+    Exit Function
+Failed:
+    errorNumber = Err.number: errorMessage = Err.Description
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    On Error GoTo 0
+    Application.AutomationSecurity = oldSecurity
+    Application.EnableEvents = oldEvents
+    Err.Raise errorNumber, "OpenDedicatedBook", errorMessage
+End Function
+
+Private Function AutoSaveEnabled(ByVal book As Workbook) As Boolean
+    Dim value As Variant, errorNumber As Long
+    On Error Resume Next
+    value = CallByName(book, "AutoSaveOn", VbGet)
+    errorNumber = Err.number
+    On Error GoTo 0
+    If errorNumber = 0 Then
+        AutoSaveEnabled = CBool(value)
+    ElseIf errorNumber <> 438 Then
+        RaiseEngine "Cannot determine AutoSave state: " & book.name
+    End If
+End Function
+
+Private Function OpenLedger(ByVal definition As Object, ByVal readOnly As Boolean) As Workbook
+    Dim book As Workbook
+    Set book = OpenDedicatedBook(CStr(definition("Address")), readOnly)
+    If book.Date1904 Then
+        book.Close SaveChanges:=False
+        RaiseEngine "1904 date system requires explicit conversion."
+    End If
+    Set OpenLedger = book
+End Function
+
+Private Sub ValidateHeaders(ByVal sheet As Worksheet, ByVal definition As Object, ByVal fields As Object)
+    Dim fieldId As Variant, Field As Object, actualHeader As String
+    If Not sheet.Parent.readOnly Then
+        If sheet.ProtectContents Then RaiseEngine "Protected destination: " & sheet.name
+    End If
+    For Each fieldId In fields.Keys
+        Set Field = fields(fieldId)
+        actualHeader = CStr(sheet.Cells(definition("HeaderRow"), Field("Column")).Value2)
+        If Len(actualHeader) > 0 Or definition("Role") <> "Branch" Or _
+           Field("Branch") <> ChrW(&HD7) Or Field("Rank") > 0 Then
+            If StrComp(actualHeader, CStr(Field("Header")), vbBinaryCompare) <> 0 Then _
+                RaiseEngine "Header mismatch: " & sheet.Parent.name & " / " & CStr(fieldId)
+        End If
+    Next fieldId
+End Sub
+
+Private Function LastDataRow(ByVal sheet As Worksheet, ByVal definition As Object, ByVal fields As Object) As Long
+    Dim fieldId As Variant, Field As Object, rowNumber As Long
+    LastDataRow = CLng(definition("FirstRow")) - 1
+    For Each fieldId In fields.Keys
+        Set Field = fields(fieldId)
+        rowNumber = sheet.Cells(sheet.rows.count, Field("Column")).End(xlUp).Row
+        If rowNumber > LastDataRow Then LastDataRow = rowNumber
+    Next fieldId
+End Function
+
+Private Function ReadRecord(ByVal sheet As Worksheet, ByVal rowNumber As Long, ByVal fields As Object) As Object
+    Dim record As Object, fieldId As Variant, Field As Object
+    Set record = NewLedgerRecord()
+    For Each fieldId In fields.Keys
+        Set Field = fields(fieldId)
+        record.Add CStr(fieldId), sheet.Cells(rowNumber, Field("Column")).Value2
+    Next fieldId
+    Set ReadRecord = record
+End Function
+
+Public Function LedgerRecordKey(ByVal record As Object, ByVal fields As Object) As String
+    Dim rank As Long, fieldId As Variant, Field As Object, encoded As String, found As Boolean
+    rank = 1
+    Do
+        found = False
+        For Each fieldId In fields.Keys
+            Set Field = fields(fieldId)
+            If Field("Rank") = rank Then
+                If Not record.Exists(fieldId) Then RaiseEngine "Missing key field: " & CStr(fieldId)
+                encoded = EncodeKeyValue(record(fieldId))
+                If encoded = "E" Or encoded = "S" Then RaiseEngine "Blank key field: " & CStr(fieldId)
+                LedgerRecordKey = LedgerRecordKey & Len(encoded) & ":" & encoded
+                found = True
+                Exit For
+            End If
+        Next fieldId
+        rank = rank + 1
+    Loop While found
+End Function
+
+Private Function FindRecordRow(ByVal sheet As Worksheet, ByVal definition As Object, ByVal fields As Object, ByVal identity As Object) As Long
+    Dim index As Object
+    Set index = BuildKeyIndex(sheet, definition, fields)
+    FindRecordRow = LookupRecordRow(index, identity, fields)
+End Function
+
+Private Function BuildKeyIndex(ByVal sheet As Worksheet, ByVal definition As Object, ByVal fields As Object) As Object
+    Dim index As Object, Field As Object, keyParts() As String, blankCounts() As Long
+    Dim fieldId As Variant, values As Variant, offset As Long, firstRow As Long, lastRow As Long, key As String, columnNumber As Long
+    Dim value As Variant, encoded As String, rank As Long, count As Long, keyCount As Long, rowNumber As Long
+    Set index = NewLedgerRecord()
+    firstRow = definition("FirstRow"): lastRow = LastDataRow(sheet, definition, fields)
+    If lastRow < firstRow Then
+        Set BuildKeyIndex = index
+        Exit Function
+    End If
+    count = lastRow - firstRow + 1
+    ReDim keyParts(1 To count): ReDim blankCounts(1 To count)
+    For rank = 1 To fields.count
+        For Each fieldId In fields.Keys
+            Set Field = fields(fieldId)
+            If Field("Rank") = rank Then
+                keyCount = keyCount + 1
+                columnNumber = Field("Column")
+                values = sheet.range(sheet.Cells(firstRow, columnNumber), sheet.Cells(lastRow, columnNumber)).Value2
+                For offset = 1 To count
+                    If IsArray(values) Then
+                        value = values(offset, 1)
+                    Else
+                        value = values
+                    End If
+                    encoded = EncodeKeyValue(value)
+                    If encoded = "E" Or encoded = "S" Then
+                        blankCounts(offset) = blankCounts(offset) + 1
+                    ElseIf index.Exists("Type:" & CStr(fieldId)) Then
+                        If index("Type:" & CStr(fieldId)) <> Left$(encoded, 1) Then RaiseEngine "Mixed key storage types: " & CStr(fieldId)
+                    Else
+                        index.Add "Type:" & CStr(fieldId), Left$(encoded, 1)
+                    End If
+                    keyParts(offset) = keyParts(offset) & LengthPrefix(encoded)
+                Next offset
+                Exit For
+            End If
+        Next fieldId
+    Next rank
+    For offset = 1 To count
+        rowNumber = firstRow + offset - 1
+        If blankCounts(offset) = keyCount Then
+            For Each fieldId In fields.Keys
+                Set Field = fields(fieldId)
+                If Not IsEmpty(sheet.Cells(rowNumber, Field("Column")).Value2) Then RaiseEngine "Data row with no key: " & sheet.Parent.name & " / " & rowNumber
+            Next fieldId
+        ElseIf blankCounts(offset) > 0 Then
+            RaiseEngine "Incomplete key: " & sheet.Parent.name & " / " & rowNumber
+        Else
+            key = keyParts(offset)
+            If index.Exists(key) Then
+                index(key) = -1&
+            Else
+                index.Add key, rowNumber
+            End If
+        End If
+    Next offset
+    Set BuildKeyIndex = index
+End Function
+
+Private Function LookupRecordRow(ByVal index As Object, ByVal identity As Object, ByVal fields As Object) As Long
+    Dim key As String, fieldId As Variant, Field As Object, encoded As String
+    key = LedgerRecordKey(identity, fields)
+    For Each fieldId In fields.Keys
+        Set Field = fields(fieldId)
+        If Field("Rank") > 0 And index.Exists("Type:" & CStr(fieldId)) Then
+            encoded = EncodeKeyValue(identity(fieldId))
+            If index("Type:" & CStr(fieldId)) <> Left$(encoded, 1) Then RaiseEngine "Key storage type differs: " & CStr(fieldId)
+        End If
+    Next fieldId
+    If index.Exists(key) Then
+        If index(key) < 0 Then RaiseEngine "Multiple matching records."
+        LookupRecordRow = index(key)
+    End If
+End Function
+
+Private Function EncodeValue(ByVal value As Variant) As String
+    Select Case VarType(value)
+        Case vbEmpty: EncodeValue = "E"
+        Case vbString: EncodeValue = "S" & CStr(value)
+        Case vbBoolean: If CBool(value) Then EncodeValue = "B1" Else EncodeValue = "B0"
+        Case vbByte, vbInteger, vbLong, vbSingle, vbDouble, vbCurrency: EncodeValue = "N" & Trim$(Str$(CDbl(value)))
+        Case Else: RaiseEngine "Unsupported cell value type (including Excel errors): " & VarType(value)
+    End Select
+    If Len(EncodeValue) > 32767 Then RaiseEngine "Value exceeds journal cell capacity."
+End Function
+
+Private Function DecodeValue(ByVal encoded As String) As Variant
+    Select Case Left$(encoded, 1)
+        Case "E": If encoded = "E" Then DecodeValue = Empty Else RaiseEngine "Invalid empty journal value."
+        Case "S": DecodeValue = Mid$(encoded, 2)
+        Case "B"
+            If encoded <> "B1" And encoded <> "B0" Then RaiseEngine "Invalid Boolean journal value."
+            DecodeValue = (encoded = "B1")
+        Case "N"
+            If Len(encoded) < 2 Then RaiseEngine "Invalid numeric journal value."
+            DecodeValue = Val(Mid$(encoded, 2))
+            If EncodeValue(DecodeValue) <> encoded Then RaiseEngine "Invalid numeric journal value."
+        Case Else: RaiseEngine "Invalid journal value."
+    End Select
+End Function
+
+Public Function LedgerValuesEqual(ByVal leftValue As Variant, ByVal rightValue As Variant) As Boolean
+    Dim leftEncoded As String, rightEncoded As String
+    leftEncoded = EncodeValue(leftValue): rightEncoded = EncodeValue(rightValue)
+    If Left$(leftEncoded, 1) = "N" And Left$(rightEncoded, 1) = "N" Then
+        LedgerValuesEqual = (CDbl(leftValue) = CDbl(rightValue))
+    Else
+        LedgerValuesEqual = (StrComp(leftEncoded, rightEncoded, vbBinaryCompare) = 0)
+    End If
+End Function
+
+Private Function SameRecord(ByVal leftRecord As Object, ByVal rightRecord As Object, ByVal fields As Object) As Boolean
+    Dim fieldId As Variant
+    For Each fieldId In fields.Keys
+        If Not LedgerValuesEqual(leftRecord(fieldId), rightRecord(fieldId)) Then Exit Function
+    Next fieldId
+    SameRecord = True
+End Function
+
+Private Function BuildPlans(ByVal instructions As Collection, ByVal fields As Object, ByVal addresses As Object) As Collection
+    Dim plans As New Collection, instruction As Object, plan As Object, beforeRecord As Object, afterRecord As Object, changes As Object
+    Dim definition As Object, Field As Object, fieldId As Variant, fileId As String, isInsert As Boolean, seen As Object, identity As String
+    If instructions Is Nothing Then RaiseEngine "No instructions."
+    If instructions.count = 0 Then RaiseEngine "No instructions."
+    Set seen = NewLedgerRecord()
+    For Each instruction In instructions
+        fileId = CStr(instruction("FileId"))
+        If Not addresses.Exists(fileId) Then RaiseEngine "Unknown destination: " & fileId
+        Set definition = addresses(fileId)
+        Set beforeRecord = instruction("Before")
+        Set changes = instruction("Changes")
+        If changes Is Nothing Then RaiseEngine "Missing changes."
+        isInsert = (beforeRecord Is Nothing)
+        Set afterRecord = NewLedgerRecord()
+        For Each fieldId In fields.Keys
+            If isInsert Then
+                afterRecord.Add CStr(fieldId), Empty
+            Else
+                If Not beforeRecord.Exists(fieldId) Then RaiseEngine "Incomplete before snapshot: " & CStr(fieldId)
+                afterRecord.Add CStr(fieldId), beforeRecord(fieldId)
+            End If
+        Next fieldId
+        For Each fieldId In changes.Keys
+            If Not fields.Exists(fieldId) Then RaiseEngine "Unknown field: " & CStr(fieldId)
+            Set Field = fields(fieldId)
+            If definition("Role") = "Branch" And Field("Branch") <> ChrW(&H25CB) Then RaiseEngine "Field not allowed in branch: " & CStr(fieldId)
+            If VarType(changes(fieldId)) = vbString Then
+                If Len(CStr(changes(fieldId))) = 0 Then RaiseEngine "Use Empty to clear a field: " & CStr(fieldId)
+            End If
+            If Not isInsert Then
+                If Not IsEmpty(beforeRecord(fieldId)) And Not IsEmpty(changes(fieldId)) Then
+                    If Left$(EncodeValue(beforeRecord(fieldId)), 1) <> Left$(EncodeValue(changes(fieldId)), 1) Then RaiseEngine "Storage type change: " & CStr(fieldId)
+                    If Field("Conversion") = "Date" Then ValidateDateStorage beforeRecord(fieldId), changes(fieldId), CStr(fieldId)
+                End If
+            End If
+            afterRecord(fieldId) = changes(fieldId)
+        Next fieldId
+        identity = LedgerRecordKey(afterRecord, fields)
+        If Not isInsert Then
+            If LedgerRecordKey(beforeRecord, fields) <> identity Then RaiseEngine "Key change is not supported."
+        End If
+        identity = Len(fileId) & ":" & fileId & identity
+        If seen.Exists(identity) Then RaiseEngine "Duplicate instruction: " & fileId
+        seen.Add identity, True
+        Set plan = NewLedgerRecord()
+        plan.Add "FileId", fileId
+        plan.Add "Insert", isInsert
+        plan.Add "Before", beforeRecord
+        plan.Add "After", afterRecord
+        plans.Add plan
+    Next instruction
+    Set BuildPlans = plans
+End Function
+
+Private Function GroupPlans(ByVal plans As Collection) As Object
+    Dim groups As Object, plan As Object, group As Collection, fileId As String
+    Set groups = NewLedgerRecord()
+    For Each plan In plans
+        fileId = plan("FileId")
+        If groups.Exists(fileId) Then
+            Set group = groups(fileId)
+        Else
+            Set group = New Collection
+            groups.Add fileId, group
+        End If
+        group.Add plan
+    Next plan
+    Set GroupPlans = groups
+End Function
+
+Private Function RecordState(ByVal sheet As Worksheet, ByVal definition As Object, ByVal fields As Object, ByVal plan As Object, ByRef rowNumber As Long, ByVal isResume As Boolean, ByVal index As Object) As Long
+    Dim afterRecord As Object, beforeRecord As Object, currentRecord As Object
+    Set afterRecord = plan("After")
+    Set beforeRecord = plan("Before")
+    rowNumber = LookupRecordRow(index, afterRecord, fields)
+    If rowNumber = 0 Then
+        If Not plan("Insert") Then RaiseEngine "Update target disappeared: " & sheet.Parent.name
+        RecordState = 0
+        Exit Function
+    End If
+    Set currentRecord = ReadRecord(sheet, rowNumber, fields)
+    If isResume Then
+        If SameRecord(currentRecord, afterRecord, fields) Then
+            RecordState = 2
+            Exit Function
+        End If
+    End If
+    If plan("Insert") Then RaiseEngine "Duplicate insert: " & sheet.Parent.name
+    If Not SameRecord(currentRecord, beforeRecord, fields) Then RaiseEngine "Concurrent change: " & sheet.Parent.name
+    RecordState = 1
+End Function
+
+Private Sub CheckGroup(ByVal book As Workbook, ByVal definition As Object, ByVal fields As Object, ByVal group As Collection, ByVal isResume As Boolean)
+    Dim sheet As Worksheet, plan As Object, rowNumber As Long, state As Long, nextRow As Long, index As Object
+    Set sheet = book.Worksheets(definition("Sheet"))
+    ValidateHeaders sheet, definition, fields
+    nextRow = LastDataRow(sheet, definition, fields) + 1
+    Set index = BuildKeyIndex(sheet, definition, fields)
+    For Each plan In group
+        state = RecordState(sheet, definition, fields, plan, rowNumber, isResume, index)
+        If state = 0 Then
+            RegisterKeyTypes index, plan("After"), fields
+            rowNumber = nextRow
+            nextRow = nextRow + 1
+        End If
+        If state <> 2 Then CheckWritableCells sheet, rowNumber, fields, plan
+    Next plan
+End Sub
+
+Private Sub CheckWritableCells(ByVal sheet As Worksheet, ByVal rowNumber As Long, ByVal fields As Object, ByVal plan As Object)
+    Dim fieldId As Variant, Field As Object, beforeRecord As Object, afterRecord As Object, cell As range, shouldWrite As Boolean
+    Dim table As ListObject
+    If rowNumber > sheet.rows.count Then RaiseEngine "No remaining rows."
+    Set beforeRecord = plan("Before"): Set afterRecord = plan("After")
+    For Each fieldId In fields.Keys
+        Set Field = fields(fieldId)
+        Set cell = sheet.Cells(rowNumber, Field("Column"))
+        If plan("Insert") Then
+            shouldWrite = Not IsEmpty(afterRecord(fieldId))
+        Else
+            shouldWrite = Not LedgerValuesEqual(beforeRecord(fieldId), afterRecord(fieldId))
+        End If
+        If shouldWrite Then
+            If cell.HasFormula Or cell.MergeCells Then RaiseEngine "Formula or merged cell: " & cell.address
+            If plan("Insert") Then
+                For Each table In sheet.ListObjects
+                    If rowNumber = table.range.Row + table.range.rows.count Then
+                        If cell.column >= table.range.column And cell.column < table.range.column + table.range.columns.count Then RaiseEngine "Append adjacent to Excel table requires a table adapter."
+                    End If
+                Next table
+            End If
+            If plan("Insert") And Not IsEmpty(cell.Value2) Then RaiseEngine "Append cell occupied: " & cell.address
+        End If
+    Next fieldId
+End Sub
+
+Private Sub ApplyGroup(ByVal book As Workbook, ByVal definition As Object, ByVal fields As Object, ByVal group As Collection, ByVal isResume As Boolean)
+    Dim sheet As Worksheet, plan As Object, state As Long, rowNumber As Long, nextRow As Long, index As Object
+    Dim fieldId As Variant, Field As Object, beforeRecord As Object, afterRecord As Object, shouldWrite As Boolean
+    Set sheet = book.Worksheets(definition("Sheet"))
+    Set index = BuildKeyIndex(sheet, definition, fields)
+    nextRow = LastDataRow(sheet, definition, fields) + 1
+    For Each plan In group
+        state = RecordState(sheet, definition, fields, plan, rowNumber, isResume, index)
+        If state <> 2 Then
+            If state = 0 Then
+                rowNumber = nextRow
+                nextRow = nextRow + 1
+            End If
+            CheckWritableCells sheet, rowNumber, fields, plan
+            Set beforeRecord = plan("Before"): Set afterRecord = plan("After")
+            For Each fieldId In fields.Keys
+                Set Field = fields(fieldId)
+                If plan("Insert") Then
+                    shouldWrite = Not IsEmpty(afterRecord(fieldId))
+                Else
+                    shouldWrite = Not LedgerValuesEqual(beforeRecord(fieldId), afterRecord(fieldId))
+                End If
+                If shouldWrite Then WriteRawValue sheet.Cells(rowNumber, Field("Column")), afterRecord(fieldId)
+            Next fieldId
+        End If
+    Next plan
+    VerifyGroup book, definition, fields, group
+End Sub
+
+Private Sub WriteRawValue(ByVal cell As range, ByVal value As Variant)
+    If IsEmpty(value) Then
+        cell.ClearContents
+    ElseIf VarType(value) = vbString Then
+        If Len(CStr(value)) = 0 Then RaiseEngine "Use Empty to clear a cell."
+        cell.Value2 = "'" & CStr(value)
+    Else
+        cell.Value2 = value
+    End If
+    If Not LedgerValuesEqual(cell.Value2, value) Then RaiseEngine "Excel altered the value: " & cell.address
+End Sub
+
+Private Sub VerifyGroup(ByVal book As Workbook, ByVal definition As Object, ByVal fields As Object, ByVal group As Collection)
+    Dim sheet As Worksheet, plan As Object, afterRecord As Object, actual As Object, rowNumber As Long, index As Object
+    Set sheet = book.Worksheets(definition("Sheet"))
+    ValidateHeaders sheet, definition, fields
+    Set index = BuildKeyIndex(sheet, definition, fields)
+    For Each plan In group
+        Set afterRecord = plan("After")
+        rowNumber = LookupRecordRow(index, afterRecord, fields)
+        If rowNumber = 0 Then RaiseEngine "Verification: record missing."
+        Set actual = ReadRecord(sheet, rowNumber, fields)
+        If Not SameRecord(actual, afterRecord, fields) Then RaiseEngine "Verification: record differs."
+    Next plan
+End Sub
+
+Private Function SettingsSignature(ByVal definition As Object, ByVal fields As Object) As String
+    Dim fieldId As Variant, Field As Object, propertyName As Variant
+    SettingsSignature = "S"
+    For Each propertyName In Array("Address", "Sheet", "Role", "Office", "HeaderRow", "FirstRow")
+        SettingsSignature = SettingsSignature & LengthPrefix(EncodeValue(definition(propertyName)))
+    Next propertyName
+    For Each fieldId In fields.Keys
+        Set Field = fields(fieldId)
+        SettingsSignature = SettingsSignature & LengthPrefix(CStr(fieldId))
+        For Each propertyName In Array("Header", "Column", "Rank", "Branch", "Editable", "Sync", "SourceHeader", "Conversion", "Format")
+            SettingsSignature = SettingsSignature & LengthPrefix(EncodeValue(Field(propertyName)))
+        Next propertyName
+    Next fieldId
+    If Len(SettingsSignature) > 32767 Then RaiseEngine "Settings signature too long."
+End Function
+
+Private Sub WriteJournal(ByVal sheet As Worksheet, ByVal plans As Collection, ByVal fields As Object, ByVal addresses As Object)
+    Dim plan As Object, fieldId As Variant, beforeRecord As Object, afterRecord As Object, rowNumber As Long, planNumber As Long, definition As Object
+    Dim isFirstField As Boolean, headers(1 To 1, 1 To 7) As Variant, data() As Variant, totalRows As Long
+    If CDbl(plans.count) * fields.count > sheet.rows.count - 2 Then RaiseEngine "Journal capacity exceeded."
+    totalRows = plans.count * fields.count
+    ReDim data(1 To totalRows, 1 To 7)
+    headers(1, 1) = "Plan": headers(1, 2) = "File": headers(1, 3) = "Insert"
+    headers(1, 4) = "Field": headers(1, 5) = "Before": headers(1, 6) = "After": headers(1, 7) = "Settings"
+    For Each plan In plans
+        planNumber = planNumber + 1
+        Set definition = addresses(plan("FileId"))
+        Set beforeRecord = plan("Before"): Set afterRecord = plan("After")
+        isFirstField = True
+        For Each fieldId In fields.Keys
+            rowNumber = rowNumber + 1
+            data(rowNumber, 1) = planNumber
+            data(rowNumber, 2) = "S" & plan("FileId")
+            data(rowNumber, 3) = plan("Insert")
+            data(rowNumber, 4) = "S" & CStr(fieldId)
+            If plan("Insert") Then
+                data(rowNumber, 5) = "E"
+            Else
+                data(rowNumber, 5) = EncodeValue(beforeRecord(fieldId))
+            End If
+            data(rowNumber, 6) = EncodeValue(afterRecord(fieldId))
+            If isFirstField Then
+                data(rowNumber, 7) = SettingsSignature(definition, fields)
+                isFirstField = False
+            End If
+        Next fieldId
+    Next plan
+    sheet.range("A2:G2").Value2 = headers
+    sheet.range("A3").Resize(totalRows, 7).Value2 = data
+    sheet.range("H1").Value2 = plans.count
+    sheet.range("D1").Value2 = Now
+    sheet.range("B1").Value2 = "PENDING"
+    sheet.range("A1").Value2 = JOURNAL_VERSION
+End Sub
+
+Private Function ReadJournal(ByVal sheet As Worksheet, ByVal fields As Object, ByVal addresses As Object) As Collection
+    Dim plans As New Collection, plan As Object, beforeRecord As Object, afterRecord As Object, definition As Object
+    Dim rowNumber As Long, lastRow As Long, planNumber As Long, index As Long, fileId As String, fieldId As String, isInsert As Boolean
+    Dim data As Variant
+    If CStr(sheet.range("A1").Value2) <> JOURNAL_VERSION Then RaiseEngine "Invalid journal version."
+    If CStr(sheet.range("B1").Value2) <> "PENDING" Then RaiseEngine "Journal is not pending."
+    lastRow = sheet.Cells(sheet.rows.count, 1).End(xlUp).Row
+    If lastRow < 3 Or (lastRow - 2) Mod fields.count <> 0 Then RaiseEngine "Incomplete journal."
+    data = sheet.range("A3:G" & lastRow).Value2
+    lastRow = lastRow - 2
+    rowNumber = 1
+    Do While rowNumber <= lastRow
+        planNumber = planNumber + 1
+        fileId = Mid$(CStr(data(rowNumber, 2)), 2)
+        If Not addresses.Exists(fileId) Then RaiseEngine "Unknown journal destination."
+        Set definition = addresses(fileId)
+        If CStr(data(rowNumber, 7)) <> SettingsSignature(definition, fields) Then RaiseEngine "Settings changed after journal creation."
+        isInsert = CBool(data(rowNumber, 3))
+        Set beforeRecord = NewLedgerRecord(): Set afterRecord = NewLedgerRecord()
+        For index = 1 To fields.count
+            If CLng(data(rowNumber, 1)) <> planNumber Then RaiseEngine "Invalid journal plan number."
+            If Mid$(CStr(data(rowNumber, 2)), 2) <> fileId Then RaiseEngine "Invalid journal destination."
+            If CBool(data(rowNumber, 3)) <> isInsert Then RaiseEngine "Invalid journal operation."
+            fieldId = Mid$(CStr(data(rowNumber, 4)), 2)
+            If Not fields.Exists(fieldId) Or afterRecord.Exists(fieldId) Then RaiseEngine "Invalid journal field."
+            beforeRecord.Add fieldId, DecodeValue(CStr(data(rowNumber, 5)))
+            afterRecord.Add fieldId, DecodeValue(CStr(data(rowNumber, 6)))
+            rowNumber = rowNumber + 1
+        Next index
+        If isInsert Then Set beforeRecord = Nothing
+        Set plan = NewLedgerRecord()
+        plan.Add "FileId", fileId
+        plan.Add "Insert", isInsert
+        plan.Add "Before", beforeRecord
+        plan.Add "After", afterRecord
+        plans.Add plan
+    Loop
+    If plans.count <> CLng(sheet.range("H1").Value2) Then RaiseEngine "Journal plan count mismatch."
+    Set ReadJournal = ValidateJournalPlans(plans, fields, addresses)
+End Function
+
+Private Sub SetJournalStatus(ByVal journal As Workbook, ByVal status As String, ByVal message As String)
+    With journal.Worksheets(1)
+        .range("B1").Value2 = status
+        .range("C1").Value2 = "S" & message
+        .range("D1").Value2 = Now
+    End With
+    journal.Save
+End Sub
+
+Private Sub RaiseEngine(ByVal message As String)
+    Err.Raise ENGINE_ERROR, "LedgerTransfer", message
+End Sub
+
+Private Function LengthPrefix(ByVal value As String) As String
+    LengthPrefix = Len(value) & ":" & value
+End Function
+
+Private Sub ComparePlans(ByVal original As Collection, ByVal restored As Collection, ByVal fields As Object)
+    Dim index As Long, leftPlan As Object, rightPlan As Object
+    If original.count <> restored.count Then RaiseEngine "Journal verification: plan count differs."
+    For index = 1 To original.count
+        Set leftPlan = original(index): Set rightPlan = restored(index)
+        If leftPlan("FileId") <> rightPlan("FileId") Or leftPlan("Insert") <> rightPlan("Insert") Then RaiseEngine "Journal verification: operation differs."
+        If Not SameRecord(leftPlan("After"), rightPlan("After"), fields) Then RaiseEngine "Journal verification: after values differ."
+        If Not leftPlan("Insert") Then
+            If Not SameRecord(leftPlan("Before"), rightPlan("Before"), fields) Then RaiseEngine "Journal verification: before values differ."
+        End If
+    Next index
+End Sub
+
+Private Function ValidateJournalPlans(ByVal plans As Collection, ByVal fields As Object, ByVal addresses As Object) As Collection
+    Dim instructions As New Collection, plan As Object, beforeRecord As Object, afterRecord As Object, changes As Object, fieldId As Variant
+    For Each plan In plans
+        Set beforeRecord = plan("Before"): Set afterRecord = plan("After")
+        Set changes = NewLedgerRecord()
+        For Each fieldId In fields.Keys
+            If plan("Insert") Then
+                If Not IsEmpty(afterRecord(fieldId)) Then changes.Add CStr(fieldId), afterRecord(fieldId)
+            ElseIf Not LedgerValuesEqual(beforeRecord(fieldId), afterRecord(fieldId)) Then
+                changes.Add CStr(fieldId), afterRecord(fieldId)
+            End If
+        Next fieldId
+        instructions.Add NewLedgerInstruction(CStr(plan("FileId")), beforeRecord, changes)
+    Next plan
+    Dim rebuilt As Collection
+    Set rebuilt = BuildPlans(instructions, fields, addresses)
+    ComparePlans plans, rebuilt, fields
+    Set ValidateJournalPlans = rebuilt
+End Function
+
+Private Function EncodeKeyValue(ByVal value As Variant) As String
+    EncodeKeyValue = EncodeValue(value)
+    If Left$(EncodeKeyValue, 1) = "N" Then
+        If Abs(CDbl(value)) >= 1E+15 Then RaiseEngine "Key exceeds Excel numeric precision. Store it as text."
+        If CDbl(DecodeValue(EncodeKeyValue)) <> CDbl(value) Then RaiseEngine "Numeric key cannot be represented exactly."
+    ElseIf Left$(EncodeKeyValue, 1) = "S" Then
+        If Trim$(CStr(value)) <> CStr(value) Then RaiseEngine "Whitespace at either end of key."
+    End If
+End Function
+
+Private Sub RegisterKeyTypes(ByVal index As Object, ByVal record As Object, ByVal fields As Object)
+    Dim fieldId As Variant, Field As Object, valueType As String
+    For Each fieldId In fields.Keys
+        Set Field = fields(fieldId)
+        If Field("Rank") > 0 Then
+            valueType = Left$(EncodeKeyValue(record(fieldId)), 1)
+            If index.Exists("Type:" & CStr(fieldId)) Then
+                If index("Type:" & CStr(fieldId)) <> valueType Then RaiseEngine "Mixed key storage types: " & CStr(fieldId)
+            Else
+                index.Add "Type:" & CStr(fieldId), valueType
+            End If
+        End If
+    Next fieldId
+End Sub
+
+' Read all records in one open operation. Use only for CPU planning and snapshots.
+Public Function ReadLedgerRecords(ByVal fileId As String) As Collection
+    Dim addresses As Object, fields As Object, definition As Object, book As Workbook, sheet As Worksheet
+    Dim index As Object, key As Variant, records As New Collection, record As Object
+    Dim data As Variant, fieldId As Variant, Field As Object, maxColumn As Long, firstRow As Long, lastRow As Long
+    Dim errorNumber As Long, errorMessage As String
+    On Error GoTo Failed
+    Set addresses = LoadLedgerAddresses(): Set fields = LoadLedgerFields()
+    Set definition = addresses(fileId)
+    Set book = OpenLedger(definition, True)
+    Set sheet = book.Worksheets(definition("Sheet"))
+    ValidateHeaders sheet, definition, fields
+    Set index = BuildKeyIndex(sheet, definition, fields)
+    firstRow = definition("FirstRow"): lastRow = LastDataRow(sheet, definition, fields)
+    For Each fieldId In fields.Keys
+        Set Field = fields(fieldId)
+        If Field("Column") > maxColumn Then maxColumn = Field("Column")
+    Next fieldId
+    If lastRow >= firstRow Then data = sheet.range(sheet.Cells(firstRow, 1), sheet.Cells(lastRow, maxColumn)).Value2
+    For Each key In index.Keys
+        If Left$(CStr(key), 5) <> "Type:" Then
+            If index(key) < 0 Then RaiseEngine "Ambiguous key in " & fileId
+            Set record = NewLedgerRecord()
+            For Each fieldId In fields.Keys
+                Set Field = fields(fieldId)
+                If IsArray(data) Then
+                    record.Add CStr(fieldId), data(CLng(index(key)) - firstRow + 1, Field("Column"))
+                Else
+                    record.Add CStr(fieldId), data
+                End If
+            Next fieldId
+            records.Add record
+        End If
+    Next key
+    book.Close SaveChanges:=False
+    Set ReadLedgerRecords = records
+    Exit Function
+Failed:
+    errorNumber = Err.number: errorMessage = Err.Description
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    On Error GoTo 0
+    Err.Raise errorNumber, "ReadLedgerRecords", errorMessage
+End Function
+
+' Weekly source headers are explicitly mapped in Fields K; duplicate header names are rejected.
+Public Function ReadWeeklySourceRecords(ByVal address As String) As Collection
+    Dim fields As Object, definition As Object, settings As Worksheet, book As Workbook, sheet As Worksheet
+    Dim rowNumber As Long, lastRow As Long, sourceRow As Long, headerRow As Long, firstRow As Long, columnNumber As Long, lastColumn As Long
+    Dim headers As Object, mapping As Object, seen As Object, usedColumns As Object, requiredFields As Object
+    Dim records As New Collection, record As Object, Field As Object
+    Dim fieldId As Variant, headerName As String, value As Variant, key As String, hasData As Boolean, isRequired As Boolean
+    Dim errorNumber As Long, errorMessage As String
+    On Error GoTo Failed
+    Set fields = LoadLedgerFields()
+    Set settings = ThisWorkbook.Worksheets("Address")
+    For rowNumber = 2 To settings.Cells(settings.rows.count, 5).End(xlUp).Row
+        If CStr(settings.Cells(rowNumber, 5).Value2) = "Source" Then
+            If sourceRow <> 0 Then RaiseEngine "Multiple weekly sources configured."
+            sourceRow = rowNumber
+        End If
+    Next rowNumber
+    If sourceRow = 0 Then RaiseEngine "No weekly source configured."
+    If Len(address) = 0 Then RaiseEngine "No weekly source selected."
+    headerRow = PositiveInteger(settings.Cells(sourceRow, 7).Value2)
+    firstRow = PositiveInteger(settings.Cells(sourceRow, 8).Value2)
+    If firstRow <= headerRow Then RaiseEngine "Invalid source start row."
+    Set book = OpenDedicatedBook(address, True)
+    If book.Date1904 Then RaiseEngine "1904 source date system is not supported."
+    Set sheet = book.Worksheets(CStr(settings.Cells(sourceRow, 4).Value2))
+    Set headers = NewLedgerRecord(): Set mapping = NewLedgerRecord(): Set seen = NewLedgerRecord()
+    Set usedColumns = NewLedgerRecord(): Set requiredFields = NewLedgerRecord()
+    lastColumn = sheet.Cells(headerRow, sheet.columns.count).End(xlToLeft).column
+    For columnNumber = 1 To lastColumn
+        headerName = CStr(sheet.Cells(headerRow, columnNumber).Value2)
+        If Len(headerName) > 0 Then
+            If headers.Exists(headerName) Then
+                headers(headerName) = -1&
+            Else
+                headers.Add headerName, columnNumber
+            End If
+        End If
+    Next columnNumber
+    lastRow = firstRow - 1
+    For Each fieldId In fields.Keys
+        Set Field = fields(fieldId)
+        isRequired = (Field("Rank") > 0 Or CStr(fieldId) = "OfficeName" Or Field("SourceRequired") = ChrW(&H25CB))
+        headerName = CStr(Field("SourceHeader"))
+        columnNumber = WeeklySourceColumn(sheet, headerRow, headers, headerName, CStr(Field("SourceColumn")))
+        If columnNumber = 0 Then
+            If isRequired Then RaiseEngine "Missing required weekly source field: " & CStr(fieldId)
+        Else
+            If usedColumns.Exists(CStr(columnNumber)) Then RaiseEngine "Weekly source column mapped more than once: " & columnNumber
+            usedColumns.Add CStr(columnNumber), True
+            mapping.Add CStr(fieldId), columnNumber
+            If isRequired Then requiredFields.Add CStr(fieldId), True
+            rowNumber = sheet.Cells(sheet.rows.count, columnNumber).End(xlUp).Row
+            If rowNumber > lastRow Then lastRow = rowNumber
+        End If
+    Next fieldId
+    For rowNumber = firstRow To lastRow
+        Set record = NewLedgerRecord(): hasData = False
+        For Each fieldId In mapping.Keys
+            value = sheet.Cells(rowNumber, mapping(fieldId)).Value2
+            If Not IsEmpty(value) Then
+                If EncodeValue(value) <> "S" Then hasData = True
+            End If
+            If EncodeValue(value) = "S" Then value = Empty
+            record.Add CStr(fieldId), value
+        Next fieldId
+        If hasData Then
+            For Each fieldId In requiredFields.Keys
+                value = record(fieldId)
+                If IsError(value) Or IsEmpty(value) Then _
+                    RaiseEngine "Missing or invalid required weekly value: " & CStr(fieldId) & " / row " & rowNumber
+                If Len(Trim$(CStr(value))) = 0 Then _
+                    RaiseEngine "Missing required weekly value: " & CStr(fieldId) & " / row " & rowNumber
+            Next fieldId
+            key = LedgerRecordKey(record, fields)
+            If seen.Exists(key) Then RaiseEngine "Duplicate weekly source record."
+            seen.Add key, True
+            records.Add record
+        End If
+    Next rowNumber
+    book.Close SaveChanges:=False
+    Set ReadWeeklySourceRecords = records
+    Exit Function
+Failed:
+    errorNumber = Err.number: errorMessage = Err.Description
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close SaveChanges:=False
+    On Error GoTo 0
+    Err.Raise errorNumber, "ReadWeeklySourceRecords", errorMessage
+End Function
+
+Private Function WeeklySourceColumn(ByVal sheet As Worksheet, ByVal headerRow As Long, ByVal headers As Object, _
+                                    ByVal headerName As String, ByVal columnSpec As String) As Long
+    Dim columnNumber As Long, characterIndex As Long, actualHeader As String
+    If Len(columnSpec) = 0 Then
+        If headers.Exists(headerName) Then
+            columnNumber = headers(headerName)
+            If columnNumber < 1 Then RaiseEngine "Ambiguous source header: " & headerName
+        End If
+    Else
+        If columnSpec Like "*[!0-9]*" Then
+            If Len(columnSpec) > 3 Or columnSpec Like "*[!A-Z]*" Then RaiseEngine "Invalid weekly source column: " & columnSpec
+            For characterIndex = 1 To Len(columnSpec)
+                columnNumber = columnNumber * 26 + Asc(Mid$(columnSpec, characterIndex, 1)) - Asc("A") + 1
+            Next characterIndex
+        Else
+            columnNumber = PositiveInteger(columnSpec)
+        End If
+        If columnNumber < 1 Or columnNumber > sheet.columns.count Then RaiseEngine "Invalid weekly source column: " & columnSpec
+        actualHeader = CStr(sheet.Cells(headerRow, columnNumber).Value2)
+        If Len(actualHeader) = 0 Then
+            columnNumber = 0
+        ElseIf Len(headerName) > 0 And actualHeader <> headerName Then
+            RaiseEngine "Weekly source header mismatch at column " & columnSpec & ": " & headerName
+        End If
+    End If
+    WeeklySourceColumn = columnNumber
+End Function
+
+Private Sub ValidateDateStorage(ByVal previousValue As Variant, ByVal nextValue As Variant, ByVal fieldId As String)
+    Dim previousIsCompact As Boolean, nextIsCompact As Boolean
+    If Left$(EncodeValue(previousValue), 1) = "N" Then
+        previousIsCompact = (CDbl(previousValue) >= 10000000# And CDbl(previousValue) <= 99999999#)
+        nextIsCompact = (CDbl(nextValue) >= 10000000# And CDbl(nextValue) <= 99999999#)
+    ElseIf VarType(previousValue) = vbString Then
+        previousIsCompact = (Len(CStr(previousValue)) = 8 And Not (CStr(previousValue) Like "*[!0-9]*"))
+        nextIsCompact = (Len(CStr(nextValue)) = 8 And Not (CStr(nextValue) Like "*[!0-9]*"))
+    End If
+    If previousIsCompact <> nextIsCompact Then RaiseEngine "Date storage representation change: " & fieldId
+End Sub
+
+
+
+
+Public Sub RunConfiguredDailyBackup()
+    Dim config As Worksheet, archive As String, retention As Variant, addresses As Object, targets As Object
+    Dim fileId As Variant, definition As Object, entries As Collection, created As Boolean
+    On Error GoTo Failed
+    Set config = ThisWorkbook.Worksheets("Operations")
+    archive = Trim$(CStr(config.range("B4").Value2))
+    If Len(archive) = 0 Then Exit Sub
+    retention = config.range("B5").Value2
+    Set addresses = LoadLedgerAddresses()
+    Set targets = NewLedgerRecord()
+    For Each fileId In addresses.Keys
+        Set definition = addresses(fileId)
+        targets.Add CStr(fileId), CStr(definition("Address"))
+    Next fileId
+    created = CreateDailyBackup(archive, targets, PositiveInteger(retention))
+    Exit Sub
+Failed:
+    Dim message As String
+    message = Err.Description
+    AppendOperationAudit OperationActor(), "DailyBackup", archive, "ERROR", message, entries
+    Debug.Print "Daily backup: " & message
+End Sub
+
+Private Function PlannedOperation(ByVal instructions As Collection, ByVal explicitOperation As String) As String
+    Dim instruction As Object, operation As String
+    PlannedOperation = explicitOperation
+    If Len(explicitOperation) > 0 Then Exit Function
+    PlannedOperation = "LedgerTransfer"
+    If instructions Is Nothing Then Exit Function
+    For Each instruction In instructions
+        If Not instruction.Exists("Operation") Then Exit Function
+        If Len(operation) = 0 Then operation = CStr(instruction("Operation"))
+        If operation <> CStr(instruction("Operation")) Then Exit Function
+    Next instruction
+    If Len(operation) > 0 Then PlannedOperation = operation
+End Function
+
+Private Function AuditChanges(ByVal plans As Collection, ByVal fields As Object, ByVal addresses As Object) As Collection
+    Dim entries As New Collection, plan As Object, fieldId As Variant, beforeRecord As Object, afterRecord As Object
+    Dim definition As Object, beforeValue As Variant, afterValue As Variant, key As String
+    For Each plan In plans
+        Set definition = addresses(plan("FileId"))
+        Set beforeRecord = plan("Before"): Set afterRecord = plan("After")
+        key = LedgerRecordKey(afterRecord, fields)
+        For Each fieldId In fields.Keys
+            beforeValue = Empty
+            If Not beforeRecord Is Nothing Then beforeValue = beforeRecord(fieldId)
+            afterValue = afterRecord(fieldId)
+            If Not LedgerValuesEqual(beforeValue, afterValue) Then _
+                entries.Add Array(CStr(definition("Address")), key, CStr(fieldId), EncodeValue(beforeValue), EncodeValue(afterValue))
+        Next fieldId
+    Next plan
+    Set AuditChanges = entries
+End Function
+

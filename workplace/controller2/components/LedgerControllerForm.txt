@@ -1,0 +1,704 @@
+Option Explicit
+
+Private WithEvents results As ExtendedListBox
+Private WithEvents related As ExtendedListBox
+Private fields As Object
+Private editors As Object
+Private dateButtons As Object
+Private dateHandlers As Collection
+Private officeButtons As Collection
+Private hits As Collection
+Private relatedRows As Collection
+Private current As Object
+Private peer As Object
+Private isNew As Boolean
+Private isModal As Boolean
+Private isSwitching As Boolean
+Private isPositioned As Boolean
+
+Private Sub UserForm_Initialize()
+    Dim offices As Collection, office As Variant, button As MSForms.OptionButton, index As Long
+    Set fields = ControllerFields()
+    Set editors = NewLedgerRecord()
+    Set dateButtons = NewLedgerRecord()
+    Set dateHandlers = New Collection
+    Set offices = ControllerOfficeNames()
+    Set officeButtons = New Collection
+    Set results = New ExtendedListBox
+    Set related = New ExtendedListBox
+    ConfigureList results, fraResults, True
+    ConfigureList related, fraRelated, False
+    Set button = fraOffices.Controls.Add("Forms.OptionButton.1", "OfficeAll", True)
+    SetupOffice button, "全署", 0
+    button.value = True
+    For Each office In offices
+        index = index + 1
+        Set button = fraOffices.Controls.Add("Forms.OptionButton.1", "Office" & index, True)
+        SetupOffice button, CStr(office), index
+    Next office
+    fraOffices.ScrollBars = fmScrollBarsNone
+    If (index + 1) * 65 + 12 > fraOffices.InsideWidth Then
+        fraOffices.ScrollBars = fmScrollBarsHorizontal
+        fraOffices.ScrollWidth = (index + 1) * 65 + 12
+        fraOffices.Height = 37
+    End If
+    BuildFields
+    ApplyPageFonts
+    pages.value = 0
+    UpdateModeLabel
+    SearchNow
+End Sub
+
+Private Sub ApplyPageFonts()
+    Dim page As MSForms.page, control As MSForms.control
+    For Each page In pages.pages
+        For Each control In page.Controls
+            If TypeOf control Is MSForms.label Or TypeOf control Is MSForms.CommandButton Or _
+               TypeOf control Is MSForms.CheckBox Or TypeOf control Is MSForms.TextBox Or TypeOf control Is MSForms.ComboBox Then
+                control.Font.name = "Meiryo UI"
+                control.Font.size = 10
+            End If
+        Next control
+    Next page
+    lblSearchTitle.Font.size = 19: lblSearchTitle.Font.bold = True
+    lblDetail.Font.size = 12: lblDetail.Font.bold = True
+    lblLegacyDetailTitle.Font.size = 19: lblLegacyDetailTitle.Font.bold = True
+    lblRelated.Font.size = 12: lblRelated.Font.bold = True
+    lblCount.Font.size = 12: lblCount.Font.bold = True
+    cmdSave.Font.bold = True: cmdNew.Font.bold = True
+End Sub
+Private Sub ConfigureList(ByVal List As ExtendedListBox, ByVal host As MSForms.frame, ByVal isSearch As Boolean)
+    List.Initialize host
+    List.ApplyTheme "sage"
+    List.SetTypeface "Meiryo UI", 10
+    List.RowHeight = 24
+    List.HeaderHeight = 26
+    List.SelectionBackColor = RGB(219, 240, 222)
+    List.SelectionForeColor = RGB(22, 62, 45)
+    List.HeaderBackColor = 4861207
+    List.HeaderForeColor = vbWhite
+    List.BorderStyle = fmBorderStyleNone
+    List.IntegralHeight = False
+    If isSearch Then
+        List.ColumnCount = 5
+        List.SetHeaders Array("署名", "氏名・法人名", "年分・事業年度等", "請求文書名", "処理状態")
+        List.ColumnWidths = "43;186;149;208;159"
+    Else
+        List.ColumnCount = 4
+        List.SetHeaders Array("年度", "共通番号・枝番号", "文書名", "処理状態")
+        List.ColumnWidths = "79;143;105;113"
+    End If
+    List.ColumnHeads = True
+End Sub
+
+Private Sub SetupOffice(ByVal button As MSForms.OptionButton, ByVal label As String, ByVal index As Long)
+    button.caption = label
+    button.Left = 8 + 65 * index
+    button.Top = 3
+    button.Width = 63
+    button.Height = 18
+    button.BackColor = RGB(241, 246, 252)
+    button.ForeColor = RGB(30, 58, 94)
+    button.Font.name = "Meiryo UI"
+    button.Font.size = 10
+    officeButtons.Add button
+End Sub
+
+Private Sub BuildFields()
+    Dim base As Long, offset As Long, fieldId As Variant
+    AddBand "01  基本情報", 9, 8, 744
+    AddColumn Array("OfficeName", "CombinedCaseNumber", "PostalCode", "TaxAddress"), 9, 33
+    AddColumn Array("PersonName", "CommonNumber", "PhoneNumber", "BranchNumber"), 385, 33
+    AddBand "02  事案内容", 9, 132, 744
+    AddColumn Array("TaxType", "ApplicationType", "ApplicationDate"), 9, 157
+    AddColumn Array("TaxPeriod", "SubmissionMethod", "ApplicationReason"), 385, 157
+    AddBand "03  処理", 9, 232, 744
+    AddColumn Array("OfficeHandoverDate", "WithdrawalReceivedDate", "EnforcementDate", "ApprovedDate", _
+                    "BusinessCenter", "ProcessingDeadline", "ProcessingCategory", "ProcessingGroup"), 9, 257
+    AddColumn Array("OfficeHandoverReason", "ProcessingDate", "ElectronicNotice", "ApprovalNumber", _
+                    "SourceFile", "AssignedOfficer", "InquiryNumber", "ProcessingDepartment"), 385, 257
+    AddBand "メモ", 9, 451, 368
+    AddBand "発送文書", 385, 451, 368
+    AddEditor "MemoOne", 9, 475, True
+    AddEditor "MemoTwo", 9, 519, True
+    AddEditor "MemoThree", 9, 563, True
+    AddEditor "DispatchOne", 385, 475, True
+    AddEditor "DispatchTwo", 385, 519, True
+    AddEditor "DispatchThree", 385, 563, True
+    AddBand "摘要・その他の項目", 9, 611, 744
+    AddEditor "Remarks", 9, 635, True
+    base = 684
+    AddColumn Array("Furigana", "DraftDate", "CompletedDate", "Status"), 385, base
+    For Each fieldId In fields.Keys
+        If Not editors.Exists(fieldId) Then
+            AddEditor CStr(fieldId), 9 + 376 * (offset Mod 2), base + 96 + 24 * (offset \ 2), False
+            offset = offset + 1
+        End If
+    Next fieldId
+    fraFields.ScrollHeight = base + 108 + 24 * ((offset + 1) \ 2)
+End Sub
+
+Private Sub AddColumn(ByVal ids As Variant, ByVal Left As Long, ByVal Top As Long)
+    Dim fieldId As Variant
+    For Each fieldId In ids
+        AddEditor CStr(fieldId), Left, Top, False
+        Top = Top + 24
+    Next fieldId
+End Sub
+
+Private Sub AddBand(ByVal caption As String, ByVal Left As Long, ByVal Top As Long, ByVal Width As Long)
+    Dim label As MSForms.label
+    Set label = fraFields.Controls.Add("Forms.Label.1", , True)
+    label.caption = "  " & caption
+    label.Left = Left: label.Top = Top: label.Width = Width: label.Height = 21
+    label.BackColor = 4861207: label.ForeColor = vbWhite
+    label.Font.name = "Meiryo UI": label.Font.size = 11: label.Font.bold = True
+End Sub
+
+Private Sub AddEditor(ByVal fieldId As String, ByVal Left As Long, ByVal Top As Long, ByVal wide As Boolean)
+    Dim label As MSForms.label, box As MSForms.TextBox, definition As Object, caption As String
+    Set label = fraFields.Controls.Add("Forms.Label.1", , True)
+    Set box = fraFields.Controls.Add("Forms.TextBox.1", , True)
+    If fields.Exists(fieldId) Then
+        Set definition = fields(fieldId)
+        caption = CStr(definition("Header"))
+    Else
+        Select Case fieldId
+            Case "Furigana": caption = "フリガナ"
+            Case "DraftDate": caption = "起案日"
+            Case "ApprovedDate": caption = "決裁日"
+            Case "ApprovalNumber": caption = "決裁番号"
+            Case "InquiryNumber": caption = "問い合わせ番号"
+            Case "Status": caption = "状態"
+            Case "CompletedDate": caption = "完了日"
+        End Select
+    End If
+    label.caption = caption
+    label.ControlTipText = caption
+    label.WordWrap = False
+    label.Left = Left: label.Top = Top + 2: label.Width = 118: label.Height = 20
+    label.BackStyle = fmBackStyleOpaque
+    label.BackColor = 16247258
+    label.ForeColor = RGB(38, 60, 89): label.Font.name = "Meiryo UI": label.Font.size = 9
+    box.Left = Left + 120: box.Top = Top: box.Width = 248: box.Height = 20
+    box.ForeColor = RGB(26, 46, 72): box.BackColor = vbWhite
+    box.BorderStyle = fmBorderStyleSingle: box.BorderColor = RGB(186, 203, 225)
+    box.Font.name = "Meiryo UI": box.Font.size = 10
+    If wide Then
+        box.Width = 248: box.Height = 40
+        box.Multiline = True: box.WordWrap = True: box.ScrollBars = fmScrollBarsVertical
+        box.EnterKeyBehavior = True
+    End If
+    editors.Add fieldId, box
+    If Not definition Is Nothing Then
+        If definition("Conversion") = "Date" Then AddDateButton fieldId, box
+    End If
+End Sub
+
+Public Sub ShowInitial()
+    Dim owner As Window
+    If Me.Visible Then Exit Sub
+    If Not isPositioned Then
+        Set owner = ThisWorkbook.Windows(1)
+        Me.StartUpPosition = 0
+        Me.Left = Application.Left + (Application.Width - Me.Width) / 2
+        Me.Top = Application.Top + (Application.Height - Me.Height) / 2
+        isPositioned = True
+    End If
+    Me.Show vbModeless
+End Sub
+
+Public Sub ShowRequested()
+    If Not isSwitching Then Exit Sub
+    isSwitching = False
+    UpdateModeLabel
+    If isModal Then
+        Me.Show vbModal
+    Else
+        Me.Show vbModeless
+    End If
+End Sub
+
+Private Sub UpdateModeLabel()
+    If isModal Then
+        cmdMode.caption = "モードレスに切替"
+    Else
+        cmdMode.caption = "モーダルに切替"
+    End If
+    cmdDetailMode.caption = cmdMode.caption
+End Sub
+
+Private Sub cmdDetailMode_Click()
+    cmdMode_Click
+End Sub
+
+Private Sub cmdMode_Click()
+    On Error GoTo Failed
+    isModal = Not isModal
+    isSwitching = True
+    Application.OnTime Now + TimeSerial(0, 0, 1), "'" & Replace(ThisWorkbook.name, "'", "''") & "'!RedisplayLedgerController"
+    Me.Hide
+    Exit Sub
+Failed:
+    isSwitching = False
+    isModal = Not isModal
+    MsgBox Err.Description, vbExclamation
+End Sub
+
+Private Sub SearchNow()
+    Dim button As MSForms.OptionButton, office As String
+    On Error GoTo Failed
+    For Each button In officeButtons
+        If button.value And button.name <> "OfficeAll" Then office = button.caption
+    Next button
+    Set hits = ControllerFind(CStr(txtName.value), office, CBool(chkPending.value))
+    ShowRows results, hits, True
+    lblCount.caption = Format$(hits.count, "#,##0") & " 件"
+    Exit Sub
+Failed:
+    txtNotice.value = Err.Description
+End Sub
+
+Private Sub ShowRows(ByVal List As ExtendedListBox, ByVal rows As Collection, ByVal isSearch As Boolean)
+    Dim data() As Variant, Row As Long, record As Object
+    List.Clear
+    If rows.count = 0 Then Exit Sub
+    If isSearch Then
+        ReDim data(0 To rows.count - 1, 0 To 4)
+        For Each record In rows
+            data(Row, 0) = record("OfficeName")
+            data(Row, 1) = record("PersonName")
+            data(Row, 2) = record("TaxPeriod")
+            data(Row, 3) = record("ApplicationType")
+            data(Row, 4) = record("ProcessingCategory")
+            Row = Row + 1
+        Next record
+    Else
+        ReDim data(0 To rows.count - 1, 0 To 3)
+        For Each record In rows
+            data(Row, 0) = record("TaxPeriod")
+            data(Row, 1) = CStr(record("CommonNumber")) & "-" & CStr(record("BranchNumber"))
+            data(Row, 2) = record("ApplicationType")
+            data(Row, 3) = record("ProcessingCategory")
+            Row = Row + 1
+        Next record
+    End If
+    List.List = data
+End Sub
+
+Public Sub SelectSearchRow(ByVal index As Long)
+    If hits Is Nothing Then Exit Sub
+    If index < 1 Or index > hits.count Then Exit Sub
+    If Not LeaveDraft() Then Exit Sub
+    results.ListIndex = index - 1
+    ShowRecord hits(index)
+End Sub
+
+Private Sub ShowRecord(ByVal identity As Object)
+    Dim master As Object, snapshot As Object, warning As String, other As Object, index As Long, key As String
+    On Error GoTo Failed
+    Set master = ControllerMasterRecord(identity)
+    On Error Resume Next
+    Set snapshot = ControllerBranchRecord(master)
+    warning = Err.Description
+    Err.Clear
+    On Error GoTo Failed
+    Set current = master
+    Set peer = snapshot
+    isNew = False
+    Set relatedRows = ControllerRelated(current)
+    ShowRows related, relatedRows, False
+    key = LedgerRecordKey(current, fields)
+    For Each other In relatedRows
+        If LedgerRecordKey(other, fields) = key Then related.ListIndex = index
+        index = index + 1
+    Next other
+    lblDetail.caption = CStr(current("PersonName")) & "   /   " & CStr(current("OfficeName"))
+    lblRelated.caption = "関連事案  " & relatedRows.count & " 件"
+    lblDetailNote.caption = vbNullString
+    If ControllerLocked(current) Or ControllerLocked(peer) Then
+        lblDetailNote.caption = "署引継済みのため閲覧のみ"
+    ElseIf peer Is Nothing Then
+        lblDetailNote.caption = "対象署の読込み不可。閲覧のみ"
+        txtNotice.value = warning
+    End If
+    FillEditors
+    pages.value = 1
+    Exit Sub
+Failed:
+    MsgBox Err.Description, vbExclamation, "事案を開く"
+End Sub
+
+Private Sub FillEditors()
+    Dim fieldId As Variant, definition As Object, box As MSForms.TextBox, writable As Boolean
+    For Each fieldId In editors.Keys
+        Set box = editors(fieldId)
+        If fields.Exists(fieldId) Then
+            Set definition = fields(fieldId)
+            writable = isNew
+            If isNew Then
+                box.value = vbNullString
+            Else
+                box.value = ControllerDisplay(current(fieldId), definition)
+                writable = Not ControllerLocked(current) And Not ControllerLocked(peer) And Not peer Is Nothing And definition("Editable") = ChrW(&H25CB)
+            End If
+            box.Locked = Not writable
+        Else
+            box.value = "未割当"
+            box.Locked = True
+        End If
+        If dateButtons.Exists(fieldId) Then dateButtons(fieldId).Enabled = Not box.Locked
+        If box.Locked Then
+            box.BackColor = RGB(241, 245, 250)
+        Else
+            box.BackColor = vbWhite
+        End If
+    Next fieldId
+    fraFields.ScrollTop = 0
+    If isNew Then cmdSave.caption = "登録・保存" Else cmdSave.caption = "更新・保存"
+    cmdSave.Enabled = isNew Or (Not ControllerLocked(current) And Not ControllerLocked(peer) And Not peer Is Nothing)
+    cmdSource.Enabled = Not isNew
+    cmdPrev.Enabled = Not isNew
+    cmdNext.Enabled = Not isNew
+End Sub
+
+Private Function HasDraft() As Boolean
+    Dim box As MSForms.TextBox, fieldId As Variant, definition As Object, oldText As String
+    If pages.value <> 1 Then Exit Function
+    For Each fieldId In editors.Keys
+        Set box = editors(fieldId)
+        If Not box.Locked Then
+            oldText = vbNullString
+            If Not isNew Then
+                Set definition = fields(fieldId)
+                oldText = ControllerDisplay(current(fieldId), definition)
+            End If
+            If CStr(box.value) <> oldText Then
+                HasDraft = True
+                Exit Function
+            End If
+        End If
+    Next fieldId
+End Function
+
+Private Function LeaveDraft() As Boolean
+    If Not HasDraft() Then
+        LeaveDraft = True
+        Exit Function
+    End If
+    Select Case MsgBox("変更内容を保存しますか？" & vbCrLf & "［はい］保存  ［いいえ］破棄  ［キャンセル］この事案を表示したままにする", _
+                       vbYesNoCancel Or vbQuestion Or vbDefaultButton3, "未保存の変更")
+        Case vbYes: LeaveDraft = SaveDraft()
+        Case vbNo: LeaveDraft = True
+    End Select
+End Function
+
+Private Function DraftValues() As Object
+    Dim patch As Object, fieldId As Variant, box As MSForms.TextBox, definition As Object, oldValue As Variant, newValue As Variant
+    Set patch = NewLedgerRecord()
+    For Each fieldId In editors.Keys
+        Set box = editors(fieldId)
+        If Not box.Locked Then
+            Set definition = fields(fieldId)
+            oldValue = Empty
+            If Not isNew Then oldValue = current(fieldId)
+            newValue = ControllerInput(CStr(fieldId), CStr(box.value), oldValue, definition)
+            If Not LedgerValuesEqual(oldValue, newValue) Then patch.Add fieldId, newValue
+        End If
+    Next fieldId
+    Set DraftValues = patch
+End Function
+
+Private Function SaveDraft() As Boolean
+    Dim patch As Object, plans As Collection, identity As Object
+    On Error GoTo Failed
+    Set patch = DraftValues()
+    Set plans = ControllerPlanSave(current, peer, patch, isNew)
+    If plans.count = 0 Then
+        SaveDraft = True
+        Exit Function
+    End If
+    If Not ExecuteFromForm(plans, "事案の保存") Then Exit Function
+    SaveDraft = True
+    Set identity = current
+    If isNew Then Set identity = patch
+    isNew = False
+    RefreshControllerData
+    SearchNow
+    ShowRecord identity
+    lblDetailNote.caption = "保存しました"
+    Exit Function
+Failed:
+    MsgBox Err.Description, vbExclamation, "事案の保存"
+End Function
+
+Private Function ExecuteFromForm(ByVal plans As Collection, ByVal operation As String) As Boolean
+    Dim folder As String, journal As String, file As Variant
+    If plans.count = 0 Then Exit Function
+    If MsgBox("他の利用者が対象管理簿を更新しないよう調整済みですか？" & vbCrLf & _
+              "転記指示 " & plans.count & " 件を実行します。", vbYesNo Or vbQuestion Or vbDefaultButton2, operation) <> vbYes Then Exit Function
+    folder = ControllerSetting("B8")
+    If Len(folder) > 0 Then
+        journal = ControllerNewJournal(folder)
+    Else
+        file = Application.GetOpenFilename("Excel ブック (*.xlsx),*.xlsx", , "空の復旧ジャーナルを選択")
+        If VarType(file) = vbBoolean Then Exit Function
+        journal = CStr(file)
+    End If
+    ExecuteFromForm = ControllerExecute(plans, journal, True)
+End Function
+
+Private Sub MoveRecord(ByVal offset As Long)
+    Dim rows As Collection, record As Object, key As String, index As Long
+    If current Is Nothing Then Exit Sub
+    key = LedgerRecordKey(current, fields)
+    Set rows = hits
+    If Not rows Is Nothing Then
+        For Each record In rows
+            index = index + 1
+            If LedgerRecordKey(record, fields) = key Then Exit For
+        Next record
+        If index <= rows.count Then
+            If index > 0 Then
+                If LedgerRecordKey(rows(index), fields) = key Then
+                    SelectSearchRow index + offset
+                    Exit Sub
+                End If
+            End If
+        End If
+    End If
+    Set rows = ControllerRows()
+    index = 0
+    For Each record In rows
+        index = index + 1
+        If LedgerRecordKey(record, fields) = key Then
+            If index + offset >= 1 And index + offset <= rows.count Then
+                If LeaveDraft() Then ShowRecord rows(index + offset)
+            End If
+            Exit Sub
+        End If
+    Next record
+End Sub
+
+Private Sub cmdSearch_Click()
+    txtNotice.value = vbNullString
+    SearchNow
+End Sub
+
+Private Sub txtName_KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+    If KeyCode = vbKeyReturn Then
+        KeyCode = 0
+        cmdSearch_Click
+    End If
+End Sub
+
+Private Sub results_DblClick(ByVal Cancel As MSForms.ReturnBoolean)
+    SelectSearchRow results.ListIndex + 1
+End Sub
+
+Private Sub related_DblClick(ByVal Cancel As MSForms.ReturnBoolean)
+    Dim index As Long
+    index = related.ListIndex + 1
+    If index < 1 Then Exit Sub
+    If LeaveDraft() Then ShowRecord relatedRows(index)
+End Sub
+
+Private Sub cmdNew_Click()
+    If Not LeaveDraft() Then Exit Sub
+    Set current = Nothing
+    Set peer = Nothing
+    isNew = True
+    related.Clear
+    lblRelated.caption = "関連事案"
+    lblDetail.caption = "新規事案"
+    lblDetailNote.caption = "署名・照合キーを入力してください"
+    FillEditors
+    pages.value = 1
+End Sub
+
+Private Sub cmdBack_Click()
+    If Not LeaveDraft() Then Exit Sub
+    pages.value = 0
+End Sub
+
+Private Sub cmdPrev_Click()
+    MoveRecord -1
+End Sub
+
+Private Sub cmdNext_Click()
+    MoveRecord 1
+End Sub
+
+Private Sub cmdSave_Click()
+    Dim saved As Boolean
+    saved = SaveDraft()
+End Sub
+
+Private Sub cmdSource_Click()
+    On Error GoTo Failed
+    If current Is Nothing Then Exit Sub
+    OpenControllerSource current
+    If isModal Then cmdMode_Click
+    Exit Sub
+Failed:
+    MsgBox Err.Description, vbExclamation, "元の管理簿"
+End Sub
+
+Private Sub AddDateButton(ByVal fieldId As String, ByVal box As MSForms.TextBox)
+    Dim button As MSForms.CommandButton, handler As ControllerDateButton
+    box.Width = box.Width - 26
+    Set button = fraFields.Controls.Add("Forms.CommandButton.1", , True)
+    button.Left = box.Left + box.Width + 3
+    button.Top = box.Top
+    button.Width = 23
+    button.Height = box.Height
+    button.caption = "…"
+    button.ControlTipText = "日付を選択"
+    button.BackColor = RGB(222, 234, 249)
+    button.ForeColor = RGB(30, 58, 94)
+    Set handler = New ControllerDateButton
+    handler.Bind button, Me, fieldId
+    dateButtons.Add fieldId, button
+    dateHandlers.Add handler
+End Sub
+
+Public Sub PickFieldDate(ByVal id As String)
+    Dim box As MSForms.TextBox, day As Date, initial As Variant
+    On Error GoTo Failed
+    Set box = editors(id)
+    If box.Locked Then Exit Sub
+    On Error Resume Next
+    initial = ControllerDate(CStr(box.value))
+    If Err.number <> 0 Then initial = Empty
+    Err.Clear
+    On Error GoTo Failed
+    If Calendar_Select(day, initial, CStr(fields(id)("Header"))) Then box.value = Format$(day, "yyyy/mm/dd")
+    Exit Sub
+Failed:
+    MsgBox Err.Description, vbExclamation, "日付選択"
+End Sub
+
+Private Sub cmdWeekly_Click()
+    Dim plans As Collection, conflicts As Variant, issue As Variant, message As String
+    On Error GoTo Failed
+    Dim file As Variant
+    file = Application.GetOpenFilename("Excel ブック (*.xlsx),*.xlsx", , "週次取込元を選択")
+    If VarType(file) = vbBoolean Then Exit Sub
+    Set plans = PlanWeeklyImport(CStr(file), conflicts)
+    For Each issue In conflicts
+        message = message & LocalWeeklyIssue(CStr(issue)) & vbCrLf
+        If Len(message) > 26000 Then
+            message = Left$(message, 26000) & vbCrLf & "表示上限に達しました。"
+            Exit For
+        End If
+    Next issue
+    If conflicts.count > 0 Then message = "照合に差異がある事案  " & conflicts.count & " 件" & vbCrLf & message
+    If Len(message) = 0 Then message = "追加対象 " & (plans.count \ 2) & " 件"
+    txtNotice.value = message
+    If ExecuteFromForm(plans, "週次取込") Then
+        RefreshControllerData
+        SearchNow
+        txtNotice.value = "週次取込を完了しました。" & vbCrLf & message
+    End If
+    Exit Sub
+Failed:
+    txtNotice.value = Err.Description
+    MsgBox Err.Description, vbExclamation, "週次取込"
+End Sub
+
+Private Sub cmdReload_Click()
+    Dim plans As Collection, message As String
+    On Error GoTo SyncUnavailable
+    Set plans = PlanBranchSynchronization()
+    If plans.count > 0 Then
+        If ExecuteFromForm(plans, "署から全体への同期") Then message = "同期 " & plans.count & " 件を保存しました。"
+    Else
+        message = "同期対象の差分はありません。"
+    End If
+    GoTo ReloadRows
+SyncUnavailable:
+    message = "同期を実行できませんでした。" & vbCrLf & Err.Description
+    Resume ReloadRows
+ReloadRows:
+    On Error GoTo Failed
+    RefreshControllerData
+    SearchNow
+    txtNotice.value = message & vbCrLf & "検索データを再取得しました。"
+    Exit Sub
+Failed:
+    txtNotice.value = message & vbCrLf & Err.Description
+End Sub
+
+Private Sub cmdRecover_Click()
+    Dim path As Variant
+    On Error GoTo Failed
+    path = Application.GetOpenFilename("Excel ブック (*.xlsx),*.xlsx", , "中断した処理の復旧ジャーナルを選択")
+    If VarType(path) = vbBoolean Then Exit Sub
+    If MsgBox("他の利用者が更新しないよう調整済みですか？", vbYesNo Or vbQuestion Or vbDefaultButton2, "復旧") <> vbYes Then Exit Sub
+    ResumeLedgerTransfer CStr(path), True
+    RefreshControllerData
+    SearchNow
+    txtNotice.value = "復旧が完了しました。"
+    Exit Sub
+Failed:
+    txtNotice.value = Err.Description
+    MsgBox Err.Description, vbExclamation, "復旧"
+End Sub
+
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+    If CloseMode = vbFormControlMenu Then Cancel = Not LeaveDraft()
+    If Cancel = 0 Then ReleaseDateButtons
+End Sub
+
+Private Sub ReleaseDateButtons()
+    Dim handler As ControllerDateButton
+    If dateHandlers Is Nothing Then Exit Sub
+    For Each handler In dateHandlers
+        handler.Unbind
+    Next handler
+    Set dateHandlers = Nothing
+End Sub
+
+Private Sub UserForm_Terminate()
+    ReleaseDateButtons
+    If Not results Is Nothing Then results.Dispose
+    If Not related Is Nothing Then related.Dispose
+End Sub
+
+
+Private Function LocalWeeklyIssue(ByVal issue As String) As String
+    Dim separator As Long, tail As String, item As Object, id As Variant, label As String, pattern As Object
+    Dim addresses As Object
+    separator = InStr(1, issue, ": ", vbBinaryCompare)
+    If separator < 1 Then
+        LocalWeeklyIssue = issue
+        Exit Function
+    End If
+    tail = Mid$(issue, separator + 2)
+    Set pattern = CreateObject("VBScript.RegExp")
+    pattern.Global = True
+    For Each id In fields.Keys
+        If Not CStr(id) Like "*[!A-Za-z0-9_]*" Then
+            Set item = fields(id)
+            pattern.pattern = "\b" & CStr(id) & "\b"
+            tail = pattern.Replace(tail, CStr(item("Header")))
+        End If
+    Next id
+    Set addresses = LoadLedgerAddresses()
+    For Each id In addresses.Keys
+        If Not CStr(id) Like "*[!A-Za-z0-9_]*" Then
+            Set item = addresses(id)
+            label = CStr(item("Office"))
+            If item("Role") = "Master" Then label = "全体"
+            pattern.pattern = "\b" & CStr(id) & "\b"
+            tail = pattern.Replace(tail, label)
+        End If
+    Next id
+    tail = Replace(tail, " differs: ", "の差異：")
+    tail = Replace(tail, "Missing from ", "未登録：")
+    tail = Replace(tail, "Also exists in ", "別の署に登録済み：")
+    LocalWeeklyIssue = Left$(issue, separator - 1) & "：" & tail
+End Function
+
+
+

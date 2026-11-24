@@ -1,0 +1,161 @@
+Option Explicit
+
+Public Function ControllerFind(ByVal namePart As String, ByVal office As String, ByVal pendingOnly As Boolean) As Collection
+    Dim rows As Collection, result As New Collection, record As Object, fields As Object, completionField As String
+    Set rows = ControllerRows()
+    If pendingOnly Then
+        completionField = ControllerSetting("B7")
+        Set fields = ControllerFields()
+        If Len(completionField) = 0 Or Not fields.Exists(completionField) Then Err.Raise 5, , "未済判定の完了日項目をOperationsで指定してください。"
+    End If
+    namePart = Trim$(namePart)
+    For Each record In rows
+        If Len(office) = 0 Or CStr(record("OfficeName")) = office Then
+            If Len(namePart) = 0 Or InStr(1, CStr(record("PersonName")), namePart, vbTextCompare) > 0 Then
+                If Not pendingOnly Then
+                    result.Add record
+                ElseIf Len(CStr(record(completionField))) = 0 Then
+                    result.Add record
+                End If
+            End If
+        End If
+    Next record
+    Set ControllerFind = result
+End Function
+
+Public Function ControllerRelated(ByVal current As Object) As Collection
+    Dim result As New Collection, rows As Collection, record As Object, common As String
+    common = CStr(current("CommonNumber"))
+    If Len(common) = 13 And Not common Like "*[!0-9]*" Then
+        Set rows = ControllerRows()
+        For Each record In rows
+            If CStr(record("CommonNumber")) = common Then result.Add record
+        Next record
+    End If
+    Set ControllerRelated = result
+End Function
+
+Public Function ControllerLocked(ByVal record As Object) As Boolean
+    If record Is Nothing Then Exit Function
+    ControllerLocked = Len(CStr(record("OfficeHandoverDate"))) > 0
+End Function
+
+Public Function ControllerDisplay(ByVal value As Variant, ByVal definition As Object) As String
+    If IsEmpty(value) Then Exit Function
+    If definition("Conversion") = "Date" And VarType(value) = vbDouble Then
+        If value >= 1 And value <= 2958465# Then
+            ControllerDisplay = Format$(CDate(value), "yyyy/mm/dd")
+            Exit Function
+        End If
+    End If
+    ControllerDisplay = CStr(value)
+End Function
+
+Public Function ControllerInput(ByVal fieldId As String, ByVal entered As String, ByVal oldValue As Variant, ByVal Field As Object) As Variant
+    Dim kind As Long, day As Date
+    If entered = ControllerDisplay(oldValue, Field) Then
+        ControllerInput = oldValue
+        Exit Function
+    End If
+    If Len(entered) = 0 Then Exit Function
+    kind = VarType(oldValue)
+    If kind = vbEmpty Then kind = ControllerFieldType(fieldId)
+    If Field("Conversion") = "Date" Then
+        day = ControllerDate(entered)
+        If kind = vbString Then
+            If Len(CStr(oldValue)) = 8 And Not CStr(oldValue) Like "*[!0-9]*" Then
+                ControllerInput = Format$(day, "yyyymmdd")
+            Else
+                ControllerInput = Format$(day, "yyyy/mm/dd")
+            End If
+        ElseIf VarType(oldValue) = vbDouble Then
+            If oldValue >= 10000000# And oldValue <= 99999999# Then
+                ControllerInput = CDbl(Format$(day, "yyyymmdd"))
+            Else
+                ControllerInput = CDbl(day)
+            End If
+        Else
+            ControllerInput = CDbl(day)
+        End If
+    ElseIf kind = vbDouble Then
+        If Not IsNumeric(entered) Then Err.Raise 5, , CStr(Field("Header")) & "には数値を入力してください。"
+        ControllerInput = CDbl(entered)
+    ElseIf kind = vbBoolean Then
+        If LCase$(entered) <> "true" And LCase$(entered) <> "false" Then Err.Raise 5, , CStr(Field("Header")) & "には True または False を入力してください。"
+        ControllerInput = (LCase$(entered) = "true")
+    Else
+        ControllerInput = entered
+    End If
+End Function
+
+Public Function ControllerDate(ByVal value As String) As Date
+    Dim day As Date
+    If Len(value) = 8 And Not value Like "*[!0-9]*" Then
+        day = dateSerial(CInt(Left$(value, 4)), CInt(Mid$(value, 5, 2)), CInt(Right$(value, 2)))
+        If Format$(day, "yyyymmdd") <> value Then Err.Raise 5, , "日付が正しくありません。"
+    Else
+        If Not IsDate(value) Then Err.Raise 5, , "日付は yyyy/mm/dd で入力してください。"
+        day = DateValue(value)
+    End If
+    ControllerDate = day
+End Function
+
+Public Function ControllerPlanSave(ByVal master As Object, ByVal branch As Object, ByVal changes As Object, ByVal isNew As Boolean) As Collection
+    Dim key As String
+    If isNew Then
+        key = LedgerRecordKey(changes, ControllerFields())
+        Set ControllerPlanSave = PlanIndividualRegistration(changes)
+    Else
+        If ControllerLocked(master) Then Err.Raise 5, , "署引継日が入力済みのため更新できません。"
+        If branch Is Nothing Then Err.Raise 5, , "対象署の編集開始時データを取得できなかったため更新できません。"
+        Set ControllerPlanSave = PlanIndividualUpdate(master, branch, changes)
+    End If
+End Function
+
+Public Function ControllerExecute(ByVal instructions As Collection, ByVal journal As String, ByVal hasExclusiveAccess As Boolean) As Boolean
+    If instructions.count = 0 Or Len(journal) = 0 Then Exit Function
+    ExecuteLedgerTransfer instructions, journal, hasExclusiveAccess
+    ControllerExecute = True
+End Function
+
+Public Function ControllerNewJournal(ByVal folder As String) As String
+    Dim path As String, book As Workbook, separator As String, stamp As String, number As Long, message As String
+    If Len(folder) = 0 Then Exit Function
+    separator = "\"
+    If LCase$(Left$(folder, 8)) = "https://" Then separator = "/"
+    If Right$(folder, 1) <> separator Then folder = folder & separator
+    Randomize
+    stamp = Format$(Now, "yyyymmdd_hhnnss") & "_" & Format$(Int(Rnd() * 1000000), "000000")
+    path = folder & "LedgerJournal_" & stamp & ".xlsx"
+    On Error GoTo Failed
+    If separator = "\" Then
+        If Len(Dir$(path)) > 0 Then Err.Raise 5, , "復旧ジャーナル名が重複しました。もう一度実行してください。"
+    End If
+    Set book = Workbooks.Add(xlWBATWorksheet)
+    book.SaveAs fileName:=path, FileFormat:=xlOpenXMLWorkbook, AddToMru:=False
+    book.Close False
+    ControllerNewJournal = path
+    Exit Function
+Failed:
+    number = Err.number: message = Err.Description
+    On Error Resume Next
+    If Not book Is Nothing Then book.Close False
+    On Error GoTo 0
+    Err.Raise number, "ControllerNewJournal", message
+End Function
+
+Public Sub OpenLedgerController()
+    Dim owner As Window
+    On Error GoTo Failed
+    If ThisWorkbook.Windows.count = 0 Then Exit Sub
+    Set owner = ThisWorkbook.Windows(1)
+    owner.Activate
+    LedgerControllerForm.ShowInitial
+    Exit Sub
+Failed:
+    MsgBox Err.Description, vbExclamation, "管理簿コントローラー"
+End Sub
+
+Public Sub RedisplayLedgerController()
+    LedgerControllerForm.ShowRequested
+End Sub

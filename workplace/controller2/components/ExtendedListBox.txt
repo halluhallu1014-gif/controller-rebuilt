@@ -1,0 +1,1784 @@
+Option Explicit
+
+Private scrollBarMode As Long
+Private WithEvents vertical As MSForms.ScrollBar
+Private WithEvents horizontal As MSForms.ScrollBar
+Private WithEvents keyboard As MSForms.TextBox
+Private host As MSForms.frame
+Private surface As MSForms.frame
+Private backgrounds As Collection
+Private labels As Collection
+Private data As Variant
+Private rowCount As Long
+Private columnCountValue As Long
+Private rowHeightValue As Single
+Private isSurfaceTest As Boolean
+Private headers As Collection
+Private selectedRows() As Boolean
+Private focusRow As Long
+Private anchorRow As Long
+Private firstRow As Long
+Private lastTopRow As Long
+Private scrollOffset As Long
+Private maxOffset As Long
+Private pageRows As Long
+Private isRendering As Boolean
+Private isNotifying As Boolean
+Private customWidths As String
+Private headerValues As Variant
+Private hasHeaders As Boolean
+Private multiMode As MSForms.fmMultiSelect
+Private boundField As Long
+Private textField As Long
+Private headerHeightValue As Single
+Private typeface As StdFont
+Private fontNameValue As String
+Private fontSizeValue As Single
+Private isBold As Boolean
+Private bodyForeColor As Long
+Private stripeColor As Long
+Private headerFill As Long
+Private headerInk As Long
+Private selectedBackColor As Long
+Private selectedForeColor As Long
+Private isLocked As Boolean
+Private sortColumn As Long
+Private isDescending As Boolean
+Private canSort As Boolean
+Private hasVerticalGrid As Boolean
+Private hasHorizontalGrid As Boolean
+Private lineColor As Long
+Private grid As Collection
+Private alignments() As MSForms.fmTextAlign
+Private alignmentCount As Long
+Private canResize As Boolean
+Private resizeField As Long
+Private resizeStart As Single
+Private resizeWidths() As Single
+Private isResizing As Boolean
+Private hasIntegralHeight As Boolean
+Private matchMode As MSForms.fmMatchEntry
+Private tip As String
+Private hasTabStop As Boolean
+Private colors As Collection
+Private fills As Collection
+Private cellFills As Collection
+Private layoutWidths() As Single
+Private pendingClickRow As Long
+Private matchPrefix As String
+Private lastSearch As Single
+
+Public Event Change()
+Public Event Click()
+Public Event DblClick(ByVal Cancel As MSForms.ReturnBoolean)
+Public Event MouseDown(ByVal button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
+Public Event MouseMove(ByVal button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
+Public Event MouseUp(ByVal button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
+Public Event KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+Public Event KeyPress(ByVal KeyAscii As MSForms.ReturnInteger)
+Public Event KeyUp(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+
+Private Const SCROLL_BARS_AUTO As Long = -1
+Private Const SCROLL_LIMIT As Long = 30000
+Private Const SCROLL_WIDTH As Single = 13
+Private Const CELL_PADDING As Single = 6
+Private Const LEFT_BUTTON As Integer = 1
+Private Const SHIFT_MASK As Integer = 1
+Private Const CONTROL_MASK As Integer = 2
+
+Private Sub Class_Initialize()
+    scrollBarMode = SCROLL_BARS_AUTO
+End Sub
+
+Public Sub Initialize(ByVal container As MSForms.frame)
+    Dim errorNumber As Long
+    Dim errorSource As String
+    Dim errorDescription As String
+    If container Is Nothing Then Err.Raise 5, "ExtendedListBox.Initialize"
+    If Not host Is Nothing Then Err.Raise 5, "ExtendedListBox.Initialize", "Already initialized."
+    If container.Controls.count <> 0 Then Err.Raise 5, "ExtendedListBox.Initialize", "An empty Frame is required."
+
+    On Error GoTo Failed
+    Set host = container
+    Set backgrounds = New Collection
+    Set labels = New Collection
+    Set headers = New Collection
+    Set grid = New Collection
+    Set cellFills = New Collection
+    Set colors = New Collection
+    Set fills = New Collection
+    hasTabStop = True
+    hasIntegralHeight = True
+    pendingClickRow = -2
+    columnCountValue = 1
+    focusRow = -1
+    anchorRow = -1
+    sortColumn = -1
+    textField = -1
+    boundField = 1
+    headerHeightValue = 26
+    Set typeface = New StdFont
+    typeface.name = "Meiryo UI"
+    typeface.size = 9
+    typeface.bold = False
+    bodyForeColor = RGB(35, 49, 67)
+    stripeColor = RGB(245, 248, 252)
+    headerFill = RGB(232, 239, 248)
+    headerInk = RGB(30, 53, 79)
+    selectedBackColor = RGB(36, 88, 148)
+    selectedForeColor = vbWhite
+    lineColor = RGB(217, 226, 236)
+    rowHeightValue = 23
+    host.caption = vbNullString
+    host.SpecialEffect = fmSpecialEffectFlat
+    host.BorderStyle = fmBorderStyleSingle
+    host.BorderColor = RGB(209, 218, 228)
+    host.BackColor = RGB(255, 255, 255)
+    Set surface = host.Controls.Add("Forms.Frame.1", "ExtendedListBoxSurface")
+    surface.caption = vbNullString
+    surface.SpecialEffect = fmSpecialEffectFlat
+    surface.BorderStyle = fmBorderStyleNone
+    Set vertical = host.Controls.Add("Forms.ScrollBar.1", "ExtendedListBoxVertical")
+    vertical.Orientation = fmOrientationVertical
+    Set horizontal = host.Controls.Add("Forms.ScrollBar.1", "ExtendedListBoxHorizontal")
+    horizontal.Orientation = fmOrientationHorizontal
+    Set keyboard = surface.Controls.Add("Forms.TextBox.1", "ExtendedListBoxKeyboard")
+    keyboard.Move 0, 0, 1, 1
+    keyboard.Locked = True
+    keyboard.BorderStyle = fmBorderStyleNone
+    keyboard.SpecialEffect = fmSpecialEffectFlat
+    keyboard.ZOrder 1
+    keyboard.TabStop = hasTabStop
+    Render
+    Exit Sub
+Failed:
+    errorNumber = Err.number
+    errorSource = Err.Source
+    errorDescription = Err.Description
+    Dispose
+    Err.Raise errorNumber, errorSource, errorDescription
+End Sub
+
+Public Property Get List(Optional ByVal Row As Variant, Optional ByVal column As Variant) As Variant
+    If IsMissing(Row) Then
+        List = data
+        Exit Property
+    End If
+    If IsMissing(column) Then column = 0
+    CheckCell CLng(Row), CLng(column)
+    List = data(CLng(Row), CLng(column))
+End Property
+
+Public Property Let List(Optional ByVal Row As Variant, Optional ByVal column As Variant, ByVal values As Variant)
+    If IsMissing(Row) Then
+        LoadArray values, False
+    Else
+        If IsMissing(column) Then column = 0
+        CheckCell CLng(Row), CLng(column)
+        If IsObject(values) Then Err.Raise 13, "ExtendedListBox.List"
+        data(CLng(Row), CLng(column)) = values
+        sortColumn = -1
+        If CLng(Row) >= firstRow And CLng(Row) < firstRow + pageRows Then Render
+        If CLng(Row) = focusRow Then NotifyChange
+    End If
+End Property
+
+Public Property Get column(Optional ByVal columnIndex As Variant, Optional ByVal Row As Variant) As Variant
+    Dim result() As Variant
+    Dim rowIndex As Long
+    Dim Field As Long
+    If IsMissing(columnIndex) Then
+        If rowCount = 0 Then
+            column = Empty
+        Else
+            ReDim result(0 To columnCountValue - 1, 0 To rowCount - 1)
+            For rowIndex = 0 To rowCount - 1
+                For Field = 0 To columnCountValue - 1
+                    result(Field, rowIndex) = data(rowIndex, Field)
+                Next Field
+            Next rowIndex
+            column = result
+        End If
+    Else
+        If IsMissing(Row) Then Row = focusRow
+        If CLng(Row) = -1 Then
+            column = Null
+        Else
+            column = List(Row, columnIndex)
+        End If
+    End If
+End Property
+
+Public Property Let column(Optional ByVal columnIndex As Variant, Optional ByVal Row As Variant, ByVal values As Variant)
+    If IsMissing(columnIndex) Then
+        LoadArray values, True
+    Else
+        If IsMissing(Row) Then Row = focusRow
+        List(Row, columnIndex) = values
+    End If
+End Property
+
+Private Sub LoadArray(ByVal values As Variant, ByVal isTransposed As Boolean)
+    Dim first As Long
+    Dim second As Long
+    Dim rows As Long
+    Dim fields As Long
+    Dim Row As Long
+    Dim Field As Long
+    Dim result() As Variant
+    Dim hadSelection As Boolean
+
+    If IsEmpty(values) Then
+        Clear
+        Exit Sub
+    End If
+    first = LBound(values, 1)
+    second = LBound(values, 2)
+    rows = UBound(values, 1) - first + 1
+    fields = UBound(values, 2) - second + 1
+    If isTransposed Then
+        rows = UBound(values, 2) - second + 1
+        fields = UBound(values, 1) - first + 1
+    End If
+    If rows = 0 Or fields = 0 Then
+        Clear
+        Exit Sub
+    End If
+    ReDim result(0 To rows - 1, 0 To fields - 1)
+    For Row = 0 To rows - 1
+        For Field = 0 To fields - 1
+            If isTransposed Then
+                result(Row, Field) = values(first + Field, second + Row)
+            Else
+                result(Row, Field) = values(first + Row, second + Field)
+            End If
+        Next Field
+    Next Row
+
+    hadSelection = focusRow >= 0
+    data = result
+    rowCount = rows
+    columnCountValue = fields
+    ReDim selectedRows(0 To rows - 1)
+    ResetPosition
+    Render
+    If hadSelection Then NotifyChange
+End Sub
+
+Private Sub ResetPosition()
+    firstRow = 0
+    scrollOffset = 0
+    focusRow = -1
+    anchorRow = -1
+    sortColumn = -1
+    Set colors = New Collection
+    Set fills = New Collection
+End Sub
+
+Private Sub CheckCell(ByVal Row As Long, ByVal column As Long)
+    If Row < 0 Or Row >= rowCount Or column < 0 Or column >= columnCountValue Then
+        Err.Raise 381, "ExtendedListBox", "Invalid list index."
+    End If
+End Sub
+
+Public Property Get ListCount() As Long
+    ListCount = rowCount
+End Property
+
+Public Property Get ColumnCount() As Long
+    ColumnCount = columnCountValue
+End Property
+
+Public Property Let ColumnCount(ByVal value As Long)
+    Dim nextData() As Variant
+    Dim Row As Long
+    Dim Field As Long
+    Dim preservedFields As Long
+    If value < 1 Then Err.Raise 380, "ExtendedListBox.ColumnCount"
+    If value = columnCountValue Then Exit Property
+
+    If rowCount > 0 Then
+        ReDim nextData(0 To rowCount - 1, 0 To value - 1)
+        preservedFields = MinLong(value, columnCountValue)
+        For Row = 0 To rowCount - 1
+            For Field = 0 To preservedFields - 1
+                nextData(Row, Field) = data(Row, Field)
+            Next Field
+        Next Row
+        data = nextData
+    End If
+    columnCountValue = value
+    sortColumn = -1
+    Render
+End Property
+
+Public Sub Clear()
+    Dim hadSelection As Boolean
+    hadSelection = focusRow >= 0
+    data = Empty
+    rowCount = 0
+    Erase selectedRows
+    ResetPosition
+    Render
+    If hadSelection Then NotifyChange
+End Sub
+
+Public Sub AddItem(Optional ByVal item As Variant, Optional ByVal index As Variant)
+    Dim position As Long
+    position = rowCount
+    If Not IsMissing(index) Then position = CLng(index)
+    If position < 0 Or position > rowCount Then Err.Raise 381, "ExtendedListBox.AddItem"
+    If IsMissing(item) Then item = Empty
+    If IsObject(item) Then Err.Raise 13, "ExtendedListBox.AddItem"
+    EditRows position, item, True
+End Sub
+
+Public Sub RemoveItem(ByVal index As Long)
+    CheckCell index, 0
+    EditRows index, Empty, False
+End Sub
+
+Private Sub EditRows(ByVal position As Long, ByVal item As Variant, ByVal isInsert As Boolean)
+    Dim nextData() As Variant
+    Dim nextSelected() As Boolean
+    Dim nextCount As Long
+    Dim sourceRow As Long
+    Dim targetRow As Long
+    Dim Field As Long
+    Dim offset As Long
+    Dim hadSelectionChange As Boolean
+
+    If isInsert Then
+        offset = 1
+    Else
+        offset = -1
+        hadSelectionChange = selectedRows(position)
+    End If
+    nextCount = rowCount + offset
+    If nextCount = 0 Then
+        Clear
+        Exit Sub
+    End If
+    ReDim nextData(0 To nextCount - 1, 0 To columnCountValue - 1)
+    ReDim nextSelected(0 To nextCount - 1)
+    For sourceRow = 0 To rowCount - 1
+        If isInsert Or sourceRow <> position Then
+            targetRow = sourceRow
+            If sourceRow >= position Then targetRow = targetRow + offset
+            For Field = 0 To columnCountValue - 1
+                nextData(targetRow, Field) = data(sourceRow, Field)
+            Next Field
+            nextSelected(targetRow) = selectedRows(sourceRow)
+        End If
+    Next sourceRow
+    If isInsert Then nextData(position, 0) = item
+    data = nextData
+    selectedRows = nextSelected
+    rowCount = nextCount
+    focusRow = MovedIndex(focusRow, position, offset)
+    anchorRow = MovedIndex(anchorRow, position, offset)
+    sortColumn = -1
+    Set colors = New Collection
+    Set fills = New Collection
+    Render
+    If hadSelectionChange Then NotifyChange
+End Sub
+
+Private Function MovedIndex(ByVal index As Long, ByVal position As Long, ByVal offset As Long) As Long
+    MovedIndex = index
+    If index < position Then Exit Function
+    If index = position And offset < 0 Then
+        MovedIndex = -1
+    Else
+        MovedIndex = index + offset
+    End If
+End Function
+
+Public Property Get ListIndex() As Long
+    ListIndex = focusRow
+End Property
+
+Public Property Let ListIndex(ByVal value As Long)
+    If value < -1 Or value >= rowCount Then Err.Raise 381, "ExtendedListBox.ListIndex"
+    If multiMode = fmMultiSelectSingle Or value = -1 Then
+        SelectOnly value
+    Else
+        focusRow = value
+        RevealFocus
+        Render
+    End If
+End Property
+
+Public Property Get Selected(ByVal Row As Long) As Boolean
+    CheckCell Row, 0
+    Selected = selectedRows(Row)
+End Property
+
+Public Property Let Selected(ByVal Row As Long, ByVal value As Boolean)
+    CheckCell Row, 0
+    If selectedRows(Row) = value Then Exit Property
+    If multiMode = fmMultiSelectSingle Then
+        If value Then
+            SelectOnly Row
+        Else
+            SelectOnly -1
+        End If
+    Else
+        selectedRows(Row) = value
+        Render
+        NotifyChange
+    End If
+End Property
+
+Private Sub SelectOnly(ByVal Row As Long)
+    Dim index As Long
+    Dim hasChanged As Boolean
+    If multiMode = fmMultiSelectSingle Then
+        hasChanged = focusRow <> Row
+        If focusRow >= 0 Then selectedRows(focusRow) = False
+    Else
+        For index = 0 To rowCount - 1
+            If selectedRows(index) <> (index = Row) Then hasChanged = True
+            selectedRows(index) = False
+        Next index
+    End If
+    focusRow = Row
+    anchorRow = Row
+    If Row >= 0 Then selectedRows(Row) = True
+    RevealFocus
+    Render
+    If hasChanged Then NotifyChange
+End Sub
+
+Public Property Get MultiSelect() As MSForms.fmMultiSelect
+    MultiSelect = multiMode
+End Property
+
+Public Property Let MultiSelect(ByVal value As MSForms.fmMultiSelect)
+    If value < fmMultiSelectSingle Or value > fmMultiSelectExtended Then Err.Raise 380, "ExtendedListBox.MultiSelect"
+    If value = multiMode Then Exit Property
+    SelectOnly -1
+    multiMode = value
+End Property
+
+Private Sub RevealFocus()
+    If focusRow < 0 Then Exit Sub
+    If focusRow < firstRow Then firstRow = focusRow
+    If focusRow >= firstRow + pageRows Then firstRow = focusRow - pageRows + 1
+End Sub
+
+Private Sub NotifyChange()
+    If isNotifying Then Exit Sub
+    isNotifying = True
+    On Error GoTo Failed
+    RaiseEvent Change
+    isNotifying = False
+    Exit Sub
+Failed:
+    isNotifying = False
+    Err.Raise Err.number, Err.Source, Err.Description
+End Sub
+
+Public Property Get BoundColumn() As Long
+    BoundColumn = boundField
+End Property
+
+Public Property Let BoundColumn(ByVal value As Long)
+    If value < 0 Then Err.Raise 380, "ExtendedListBox.BoundColumn"
+    boundField = value
+End Property
+
+Public Property Get TextColumn() As Long
+    TextColumn = textField
+End Property
+
+Public Property Let TextColumn(ByVal value As Long)
+    If value < -1 Then Err.Raise 380, "ExtendedListBox.TextColumn"
+    textField = value
+End Property
+
+Public Property Get value() As Variant
+    value = Null
+    If multiMode <> fmMultiSelectSingle Or focusRow < 0 Then Exit Property
+    If boundField = 0 Then
+        value = focusRow
+    ElseIf boundField <= columnCountValue Then
+        value = data(focusRow, boundField - 1)
+    End If
+End Property
+
+Public Property Let value(ByVal item As Variant)
+    If IsNull(item) Then
+        ListIndex = -1
+    ElseIf boundField = 0 Then
+        ListIndex = CLng(item)
+    Else
+        SelectMatching boundField, item
+    End If
+End Property
+
+Public Property Get Text() As String
+    Dim Field As Long
+    If focusRow < 0 Then Exit Property
+    Field = DisplayField()
+    If Field = 0 Then
+        Text = CStr(focusRow)
+    ElseIf Field <= columnCountValue Then
+        Text = DisplayText(data(focusRow, Field - 1))
+    End If
+End Property
+
+Public Property Let Text(ByVal item As String)
+    If DisplayField() = 0 Then
+        ListIndex = CLng(item)
+    Else
+        SelectMatching DisplayField(), item
+    End If
+End Property
+
+Private Function DisplayField() As Long
+    Dim widths() As Single
+    Dim Field As Long
+    If textField >= 0 Then
+        DisplayField = textField
+        Exit Function
+    End If
+    ColumnLayout host.InsideWidth, widths
+    For Field = 0 To columnCountValue - 1
+        If widths(Field) > 0 Then
+            DisplayField = Field + 1
+            Exit Function
+        End If
+    Next Field
+    DisplayField = 1
+End Function
+
+Private Sub SelectMatching(ByVal Field As Long, ByVal item As Variant)
+    Dim Row As Long
+    If Field > 0 And Field <= columnCountValue Then
+        For Row = 0 To rowCount - 1
+            If StrComp(DisplayText(data(Row, Field - 1)), DisplayText(item), vbTextCompare) = 0 Then
+                ListIndex = Row
+                Exit Sub
+            End If
+        Next Row
+    End If
+    Err.Raise 380, "ExtendedListBox", "The value is not in the list."
+End Sub
+
+Public Property Get TopIndex() As Long
+    TopIndex = firstRow
+    If rowCount = 0 Then TopIndex = -1
+End Property
+
+Public Property Let TopIndex(ByVal value As Long)
+    If value < 0 Or value >= rowCount Then Err.Raise 381, "ExtendedListBox.TopIndex"
+    firstRow = value
+    Render
+End Property
+
+Public Property Get ScrollBars() As Long
+    ScrollBars = scrollBarMode
+End Property
+
+Public Property Let ScrollBars(ByVal value As Long)
+    If value < SCROLL_BARS_AUTO Or value > fmScrollBarsBoth Then
+        Err.Raise 380, "ExtendedListBox.ScrollBars"
+    End If
+    If value = scrollBarMode Then Exit Property
+    scrollBarMode = value
+    Render
+End Property
+
+Public Sub ShowUniformSurface(ByVal isEnabled As Boolean)
+    isSurfaceTest = isEnabled
+    Render
+End Sub
+
+Private Sub Render()
+    Dim widths() As Single
+    Dim Row As Long
+    Dim columnIndex As Long
+    Dim slot As Long
+    Dim headerSlot As Long
+    Dim gridSlot As Long
+    Dim fillSlot As Long
+    Dim visibleRows As Long
+    Dim rowTop As Single
+    Dim headingHeight As Single
+    Dim totalWidth As Single
+    Dim surfaceWidth As Single
+    Dim surfaceHeight As Single
+    Dim leftEdge As Single
+    Dim rightEdge As Single
+    Dim background As ExtendedListBoxLabel
+    Dim cell As ExtendedListBoxLabel
+    Dim header As ExtendedListBoxLabel
+    Dim heading As String
+    Dim ink As Long
+    Dim fill As Long
+    Dim hasVertical As Boolean
+    Dim hasHorizontal As Boolean
+    Dim actualRow As Long
+    Dim cellFill As Long
+    Dim rowFill As Long
+    Dim overlay As ExtendedListBoxLabel
+
+    If host Is Nothing Then Exit Sub
+    If isRendering Then Exit Sub
+    isRendering = True
+    On Error GoTo Failed
+    fontNameValue = typeface.name
+    fontSizeValue = typeface.size
+    isBold = typeface.bold
+    If hasHeaders Then headingHeight = headerHeightValue
+    MeasureViewport headingHeight, surfaceWidth, surfaceHeight, widths, totalWidth, hasVertical, hasHorizontal
+    pageRows = MaxSingle(1, Int((surfaceHeight - headingHeight) / rowHeightValue))
+    lastTopRow = MaxSingle(0, rowCount - pageRows)
+    firstRow = MinLong(firstRow, lastTopRow)
+    maxOffset = CLng(MaxSingle(0, -Int(surfaceWidth - totalWidth)))
+    scrollOffset = MinLong(scrollOffset, maxOffset)
+    surface.Move 0, 0, surfaceWidth, surfaceHeight
+    surface.BackColor = host.BackColor
+    keyboard.BackColor = surface.BackColor
+    vertical.Visible = hasVertical
+    horizontal.Visible = hasHorizontal
+    If vertical.Visible Then
+        vertical.Move surfaceWidth, 0, SCROLL_WIDTH, surfaceHeight
+        ConfigureScroll vertical, firstRow, lastTopRow, pageRows
+    End If
+    If horizontal.Visible Then
+        horizontal.Move 0, surfaceHeight, surfaceWidth, SCROLL_WIDTH
+        ConfigureScroll horizontal, scrollOffset, maxOffset, CLng(surfaceWidth)
+    End If
+
+    layoutWidths = widths
+    If hasIntegralHeight Then
+        visibleRows = MinLong(rowCount - firstRow, CLng(MaxSingle(0, Int((surfaceHeight - headingHeight) / rowHeightValue))))
+    Else
+        visibleRows = MinLong(rowCount - firstRow, CLng(MaxSingle(0, -Int((headingHeight - surfaceHeight) / rowHeightValue))))
+    End If
+    If isSurfaceTest Then visibleRows = MinLong(rowCount - firstRow, CLng(MaxSingle(0, -Int((headingHeight - surfaceHeight) / rowHeightValue))))
+    If hasHeaders Then
+        Set header = PooledLabel(headers, 1)
+        header.Row = -1
+        header.Field = -1
+        header.label.Move 0, 0, surfaceWidth, headingHeight
+        header.label.BackStyle = fmBackStyleOpaque
+        header.label.BackColor = headerFill
+        If isSurfaceTest Then header.label.BackColor = host.BackColor
+        header.label.Visible = True
+        header.label.ZOrder 0
+        headerSlot = 1
+    End If
+
+    For Row = 0 To visibleRows - 1
+        actualRow = firstRow + Row
+        rowTop = headingHeight + Row * rowHeightValue
+        fill = host.BackColor
+        ink = bodyForeColor
+        If Not isSurfaceTest Then
+            If actualRow Mod 2 = 1 Then fill = stripeColor
+            If fills.count > 0 Then
+                If TryColor(fills, ColorKey(actualRow, -1), rowFill) Then fill = rowFill
+            End If
+            If selectedRows(actualRow) Then
+                fill = selectedBackColor
+                ink = selectedForeColor
+            End If
+        End If
+        Set background = PooledLabel(backgrounds, Row + 1)
+        background.Row = actualRow
+        background.Field = -1
+        background.label.Move 0, rowTop, surfaceWidth, rowHeightValue
+        background.label.BackStyle = fmBackStyleOpaque
+        If background.label.BackColor <> fill Then background.label.BackColor = fill
+        background.label.ZOrder 1
+        background.label.Visible = True
+
+        leftEdge = -scrollOffset
+        For columnIndex = 0 To columnCountValue - 1
+            rightEdge = leftEdge + widths(columnIndex)
+            If widths(columnIndex) > 0 And rightEdge > 0 And leftEdge < surfaceWidth Then
+                slot = slot + 1
+                Set cell = PooledLabel(labels, slot)
+                cell.Row = actualRow
+                cell.Field = columnIndex
+                If Not selectedRows(actualRow) Then
+                    ink = BodyCellColor(actualRow, columnIndex)
+                    If Not isSurfaceTest And fills.count > 0 Then
+                        If TryCellFill(actualRow, columnIndex, cellFill) Then
+                            fillSlot = fillSlot + 1
+                            Set overlay = PooledLabel(cellFills, fillSlot)
+                            overlay.Row = actualRow
+                            overlay.Field = columnIndex
+                            overlay.label.Move leftEdge, rowTop, widths(columnIndex), rowHeightValue
+                            overlay.label.BackStyle = fmBackStyleOpaque
+                            overlay.label.BackColor = cellFill
+                            overlay.label.Visible = True
+                            overlay.label.ZOrder 0
+                        End If
+                    End If
+                End If
+                PaintText cell, DisplayText(data(actualRow, columnIndex)), ink, leftEdge, rightEdge, rowTop, rowHeightValue, isBold
+                If fillSlot > 0 Then cell.label.ZOrder 0
+            End If
+            leftEdge = rightEdge
+        Next columnIndex
+        If hasHorizontalGrid And Not isSurfaceTest Then
+            gridSlot = gridSlot + 1
+            PaintLine gridSlot, 0, rowTop + rowHeightValue - 0.5, surfaceWidth, 0.5
+        End If
+    Next Row
+
+    leftEdge = -scrollOffset
+    For columnIndex = 0 To columnCountValue - 1
+        rightEdge = leftEdge + widths(columnIndex)
+        If widths(columnIndex) > 0 And rightEdge > 0 And leftEdge < surfaceWidth Then
+            If hasVerticalGrid And Not isSurfaceTest And rightEdge < surfaceWidth Then
+                gridSlot = gridSlot + 1
+                PaintLine gridSlot, rightEdge - 0.5, 0, 0.5, surfaceHeight
+            End If
+            If hasHeaders Then
+                headerSlot = headerSlot + 1
+                Set cell = PooledLabel(headers, headerSlot)
+                cell.Row = -1
+                cell.Field = columnIndex
+                heading = HeaderText(columnIndex)
+                If columnIndex = sortColumn Then
+                    If isDescending Then
+                        heading = heading & " " & ChrW(&H25BC)
+                    Else
+                        heading = heading & " " & ChrW(&H25B2)
+                    End If
+                End If
+                PaintText cell, heading, headerInk, leftEdge, rightEdge, 0, headingHeight, True
+                cell.label.ZOrder 0
+            End If
+        End If
+        leftEdge = rightEdge
+    Next columnIndex
+    HideUnused backgrounds, visibleRows
+    HideUnused labels, slot
+    HideUnused headers, headerSlot
+    HideUnused grid, gridSlot
+    HideUnused cellFills, fillSlot
+    isRendering = False
+    Exit Sub
+Failed:
+    isRendering = False
+    Err.Raise Err.number, Err.Source, Err.Description
+End Sub
+
+Private Sub MeasureViewport(ByVal headingHeight As Single, ByRef Width As Single, ByRef Height As Single, ByRef widths() As Single, ByRef totalWidth As Single, ByRef hasVertical As Boolean, ByRef hasHorizontal As Boolean)
+    Dim columnIndex As Long
+    Dim shouldAddVertical As Boolean
+    Dim shouldAddHorizontal As Boolean
+
+    If Not isSurfaceTest And scrollBarMode <> SCROLL_BARS_AUTO Then
+        hasVertical = (scrollBarMode And fmScrollBarsVertical) <> 0
+        hasHorizontal = (scrollBarMode And fmScrollBarsHorizontal) <> 0
+    End If
+
+    ' Adding one bar may make the other necessary. Auto mode only adds bars.
+    Do
+        Width = host.InsideWidth
+        Height = host.InsideHeight
+        If hasVertical Then Width = Width - SCROLL_WIDTH
+        If hasHorizontal Then Height = Height - SCROLL_WIDTH
+        Width = MaxSingle(1, Width)
+        Height = MaxSingle(1, Height)
+        ColumnLayout Width, widths
+        totalWidth = 0
+        For columnIndex = 0 To columnCountValue - 1
+            totalWidth = totalWidth + widths(columnIndex)
+        Next columnIndex
+
+        If isSurfaceTest Or scrollBarMode <> SCROLL_BARS_AUTO Then Exit Do
+        shouldAddVertical = Not hasVertical And rowCount > 0 And rowCount * rowHeightValue > Height - headingHeight
+        shouldAddHorizontal = Not hasHorizontal And totalWidth > Width + 0.05
+        If Not shouldAddVertical And Not shouldAddHorizontal Then Exit Do
+        hasVertical = hasVertical Or shouldAddVertical
+        hasHorizontal = hasHorizontal Or shouldAddHorizontal
+    Loop
+End Sub
+
+Private Sub PaintText(ByVal cell As ExtendedListBoxLabel, ByVal caption As String, ByVal ink As Long, ByVal leftEdge As Single, ByVal rightEdge As Single, ByVal rowTop As Single, ByVal Height As Single, ByVal useBold As Boolean)
+    caption = Left$(caption, 255)
+    With cell.label
+        If .caption <> caption Then .caption = caption
+        If .ControlTipText <> tip Then .ControlTipText = tip
+        If .ForeColor <> ink Then .ForeColor = ink
+        If .Font.name <> fontNameValue Then .Font.name = fontNameValue
+        If .Font.size <> fontSizeValue Then .Font.size = fontSizeValue
+        If .Font.bold <> useBold Then .Font.bold = useBold
+        If cell.Field >= 0 Then .TextAlign = FieldAlignment(cell.Field)
+        .Height = MinLong(CLng(Height), CLng(fontSizeValue * 1.45 + 2))
+        .Left = leftEdge + CELL_PADDING
+        .Width = MaxSingle(0, rightEdge - leftEdge - 2 * CELL_PADDING)
+        .Top = rowTop + (Height - .Height) / 2
+        .Visible = Not isSurfaceTest
+    End With
+End Sub
+
+Private Sub PaintLine(ByVal slot As Long, ByVal leftEdge As Single, ByVal topEdge As Single, ByVal Width As Single, ByVal Height As Single)
+    Dim line As ExtendedListBoxLabel
+    Set line = PooledLabel(grid, slot)
+    line.Row = -2
+    line.label.Move leftEdge, topEdge, Width, Height
+    line.label.BackStyle = fmBackStyleOpaque
+    line.label.BackColor = lineColor
+    line.label.Visible = True
+End Sub
+
+Private Function HeaderText(ByVal columnIndex As Long) As String
+    If Not IsArray(headerValues) Then Exit Function
+    If LBound(headerValues) + columnIndex <= UBound(headerValues) Then
+        HeaderText = DisplayText(headerValues(LBound(headerValues) + columnIndex))
+    End If
+End Function
+
+Private Sub ColumnLayout(ByVal Width As Single, ByRef widths() As Single)
+    Dim fields() As String
+    Dim Field As Long
+    Dim autoCount As Long
+    Dim remaining As Single
+    Dim automatic As Single
+    ReDim widths(0 To columnCountValue - 1)
+    fields = Split(customWidths & ";", ";")
+    remaining = Width
+    For Field = 0 To columnCountValue - 1
+        widths(Field) = -1
+        If Field <= UBound(fields) Then
+            If Len(Trim$(fields(Field))) > 0 Then widths(Field) = ParseWidth(fields(Field))
+        End If
+        If widths(Field) < 0 Then
+            autoCount = autoCount + 1
+        Else
+            remaining = remaining - widths(Field)
+        End If
+    Next Field
+    If autoCount = 0 Then Exit Sub
+    automatic = MaxSingle(36, remaining / autoCount)
+    For Field = 0 To columnCountValue - 1
+        If widths(Field) < 0 Then widths(Field) = automatic
+    Next Field
+End Sub
+
+Private Function ParseWidth(ByVal specification As String) As Single
+    Dim magnitude As String
+    Dim factor As Single
+    specification = LCase$(Trim$(specification))
+    factor = 1
+    If Right$(specification, 2) = "pt" Then
+        specification = Left$(specification, Len(specification) - 2)
+    ElseIf Right$(specification, 2) = "cm" Then
+        factor = 72 / 2.54
+        specification = Left$(specification, Len(specification) - 2)
+    ElseIf Right$(specification, 2) = "in" Then
+        factor = 72
+        specification = Left$(specification, Len(specification) - 2)
+    End If
+    magnitude = Trim$(specification)
+    If Not IsNumeric(magnitude) Then Err.Raise 380, "ExtendedListBox.ColumnWidths"
+    ParseWidth = CSng(magnitude) * factor
+    If ParseWidth < 0 Then Err.Raise 380, "ExtendedListBox.ColumnWidths"
+End Function
+
+Private Sub ConfigureScroll(ByVal bar As MSForms.ScrollBar, ByVal position As Long, ByVal maximum As Long, ByVal page As Long)
+    Dim range As Long
+    range = MinLong(maximum, SCROLL_LIMIT)
+    If bar.value > range Then bar.value = range
+    bar.Max = range
+    bar.SmallChange = 1
+    If maximum = 0 Then Exit Sub
+    bar.LargeChange = MinLong(CLng(MaxSingle(1, range \ 2)), CLng(MaxSingle(1, CDbl(page) * range / maximum)))
+    bar.value = CLng(CDbl(position) * range / maximum)
+End Sub
+
+Private Sub Vertical_Change()
+    If isRendering Or vertical.Max = 0 Then Exit Sub
+    firstRow = CLng(CDbl(vertical.value) * lastTopRow / vertical.Max)
+    Render
+End Sub
+
+Private Sub Vertical_Scroll()
+    Vertical_Change
+End Sub
+
+Private Sub Horizontal_Change()
+    If isRendering Or horizontal.Max = 0 Then Exit Sub
+    scrollOffset = CLng(CDbl(horizontal.value) * maxOffset / horizontal.Max)
+    Render
+End Sub
+
+Private Sub Horizontal_Scroll()
+    Horizontal_Change
+End Sub
+
+Private Function MinLong(ByVal first As Long, ByVal second As Long) As Long
+    MinLong = first
+    If second < first Then MinLong = second
+End Function
+
+Private Function MaxSingle(ByVal first As Single, ByVal second As Single) As Single
+    MaxSingle = first
+    If second > first Then MaxSingle = second
+End Function
+
+Private Function DisplayText(ByVal value As Variant) As String
+    If IsError(value) Then
+        DisplayText = CStr(value)
+    ElseIf Not IsNull(value) Then
+        DisplayText = CStr(value)
+    End If
+End Function
+
+Private Function PooledLabel(ByVal pool As Collection, ByVal slot As Long) As ExtendedListBoxLabel
+    Dim item As ExtendedListBoxLabel
+    If slot > pool.count Then
+        Set item = New ExtendedListBoxLabel
+        Set item.label = surface.Controls.Add("Forms.Label.1")
+        Set item.owner = Me
+        With item.label
+            .Visible = False
+            .BackStyle = fmBackStyleTransparent
+            .BorderStyle = fmBorderStyleNone
+            .SpecialEffect = fmSpecialEffectFlat
+            .WordWrap = False
+        End With
+        pool.Add item
+    End If
+    Set PooledLabel = pool(slot)
+End Function
+
+Private Sub HideUnused(ByVal pool As Collection, ByVal used As Long)
+    Dim slot As Long
+    For slot = used + 1 To pool.count
+        pool(slot).label.Visible = False
+    Next slot
+End Sub
+
+Private Sub DetachPool(ByVal pool As Collection)
+    Dim item As ExtendedListBoxLabel
+    If pool Is Nothing Then Exit Sub
+    For Each item In pool
+        Set item.owner = Nothing
+        Set item.label = Nothing
+    Next item
+End Sub
+
+Public Sub Dispose()
+    Dim hadSurface As Boolean
+    Dim hadVertical As Boolean
+    Dim hadHorizontal As Boolean
+    If host Is Nothing Then Exit Sub
+    hadSurface = Not surface Is Nothing
+    hadVertical = Not vertical Is Nothing
+    hadHorizontal = Not horizontal Is Nothing
+    DetachPool labels
+    DetachPool backgrounds
+    DetachPool headers
+    DetachPool grid
+    DetachPool cellFills
+    Set labels = Nothing
+    Set backgrounds = Nothing
+    Set headers = Nothing
+    Set grid = Nothing
+    Set colors = Nothing
+    Set fills = Nothing
+    Set cellFills = Nothing
+    Set keyboard = Nothing
+    Set vertical = Nothing
+    Set horizontal = Nothing
+    Set surface = Nothing
+    If hadVertical Then host.Controls.Remove "ExtendedListBoxVertical"
+    If hadHorizontal Then host.Controls.Remove "ExtendedListBoxHorizontal"
+    If hadSurface Then host.Controls.Remove "ExtendedListBoxSurface"
+    Set host = Nothing
+    data = Empty
+    rowCount = 0
+    Erase selectedRows
+    Erase alignments
+    Erase layoutWidths
+    Erase resizeWidths
+    alignmentCount = 0
+    firstRow = 0
+    scrollOffset = 0
+    customWidths = vbNullString
+    tip = vbNullString
+    matchPrefix = vbNullString
+    lastSearch = 0
+    headerValues = Empty
+    multiMode = fmMultiSelectSingle
+    matchMode = fmMatchEntryFirstLetter
+    scrollBarMode = SCROLL_BARS_AUTO
+    hasHeaders = False
+    isSurfaceTest = False
+    isLocked = False
+    isResizing = False
+    canSort = False
+    canResize = False
+    hasHorizontalGrid = False
+    hasVerticalGrid = False
+    Set typeface = Nothing
+End Sub
+
+Public Property Get ColumnWidths() As String
+    ColumnWidths = customWidths
+End Property
+
+Public Property Let ColumnWidths(ByVal specification As String)
+    Dim part As Variant
+    Dim parsed As Single
+    For Each part In Split(specification, ";")
+        If Len(Trim$(part)) > 0 Then parsed = ParseWidth(CStr(part))
+    Next part
+    customWidths = specification
+    Render
+End Property
+
+Public Property Get ColumnHeads() As Boolean
+    ColumnHeads = hasHeaders
+End Property
+
+Public Property Let ColumnHeads(ByVal value As Boolean)
+    hasHeaders = value
+    Render
+End Property
+
+Public Sub SetHeaders(ByVal values As Variant)
+    Dim index As Long
+    Dim nextHeaders() As String
+    ReDim nextHeaders(0 To UBound(values) - LBound(values))
+    For index = LBound(values) To UBound(values)
+        nextHeaders(index - LBound(values)) = DisplayText(values(index))
+    Next index
+    headerValues = nextHeaders
+    ColumnHeads = True
+End Sub
+
+Public Sub SetColumnAlignment(ByVal columnIndex As Long, ByVal value As MSForms.fmTextAlign)
+    If columnIndex < 0 Or columnIndex >= columnCountValue Then Err.Raise 381, "ExtendedListBox.SetColumnAlignment"
+    If value < fmTextAlignLeft Or value > fmTextAlignRight Then Err.Raise 380, "ExtendedListBox.SetColumnAlignment"
+    ReDim Preserve alignments(0 To columnCountValue - 1)
+    alignmentCount = columnCountValue
+    alignments(columnIndex) = value
+    Render
+End Sub
+
+Private Function FieldAlignment(ByVal columnIndex As Long) As MSForms.fmTextAlign
+    FieldAlignment = fmTextAlignLeft
+    If columnIndex >= alignmentCount Then Exit Function
+    If alignments(columnIndex) <> 0 Then FieldAlignment = alignments(columnIndex)
+End Function
+
+Public Sub SetTextColor(ByVal color As Long, Optional ByVal Row As Long = -1, Optional ByVal columnIndex As Long = -1)
+    Dim key As String
+    If Row < -1 Or Row >= rowCount Or columnIndex < -1 Or columnIndex >= columnCountValue Then Err.Raise 381, "ExtendedListBox.SetTextColor"
+    If Row = -1 And columnIndex = -1 Then
+        ForeColor = color
+        Exit Sub
+    End If
+    key = ColorKey(Row, columnIndex)
+    RemoveColor colors, key
+    colors.Add color, key
+    Render
+End Sub
+
+Public Sub SetBackgroundColor(ByVal color As Long, Optional ByVal Row As Long = -1, Optional ByVal columnIndex As Long = -1)
+    Dim key As String
+    If Row < -1 Or Row >= rowCount Or columnIndex < -1 Or columnIndex >= columnCountValue Then Err.Raise 381, "ExtendedListBox.SetBackgroundColor"
+    If Row = -1 And columnIndex = -1 Then
+        BackColor = color
+        Exit Sub
+    End If
+    key = ColorKey(Row, columnIndex)
+    RemoveColor fills, key
+    fills.Add color, key
+    Render
+End Sub
+
+Private Function TryCellFill(ByVal Row As Long, ByVal columnIndex As Long, ByRef color As Long) As Boolean
+    TryCellFill = TryColor(fills, ColorKey(Row, columnIndex), color)
+    If Not TryCellFill Then TryCellFill = TryColor(fills, ColorKey(-1, columnIndex), color)
+End Function
+
+Public Sub SetRow(ByVal Row As Long, ByVal values As Variant)
+    Dim first As Long
+    Dim columnIndex As Long
+    CheckCell Row, 0
+    first = LBound(values)
+    If UBound(values) - first + 1 <> columnCountValue Then Err.Raise 380, "ExtendedListBox.SetRow"
+    For columnIndex = 0 To columnCountValue - 1
+        If IsObject(values(first + columnIndex)) Then Err.Raise 13, "ExtendedListBox.SetRow"
+    Next columnIndex
+    For columnIndex = 0 To columnCountValue - 1
+        data(Row, columnIndex) = values(first + columnIndex)
+    Next columnIndex
+    sortColumn = -1
+    If Row >= firstRow And Row < firstRow + pageRows Then Render
+    If Row = focusRow Then NotifyChange
+End Sub
+
+Private Function ColorKey(ByVal Row As Long, ByVal columnIndex As Long) As String
+    ColorKey = "r" & CStr(Row) & "c" & CStr(columnIndex)
+End Function
+
+Private Sub RemoveColor(ByVal palette As Collection, ByVal key As String)
+    On Error GoTo MissingKey
+    palette.Remove key
+    Exit Sub
+MissingKey:
+    If Err.number <> 5 Then Err.Raise Err.number, Err.Source, Err.Description
+End Sub
+
+Private Function TryColor(ByVal palette As Collection, ByVal key As String, ByRef color As Long) As Boolean
+    On Error GoTo MissingKey
+    color = palette(key)
+    TryColor = True
+    Exit Function
+MissingKey:
+    If Err.number <> 5 Then Err.Raise Err.number, Err.Source, Err.Description
+End Function
+
+Private Function BodyCellColor(ByVal Row As Long, ByVal columnIndex As Long) As Long
+    Dim color As Long
+    If colors.count > 0 Then
+        If TryColor(colors, ColorKey(Row, columnIndex), color) Then
+            BodyCellColor = color
+            Exit Function
+        End If
+        If TryColor(colors, ColorKey(Row, -1), color) Then
+            BodyCellColor = color
+            Exit Function
+        End If
+        If TryColor(colors, ColorKey(-1, columnIndex), color) Then
+            BodyCellColor = color
+            Exit Function
+        End If
+    End If
+    BodyCellColor = bodyForeColor
+End Function
+
+Public Sub ApplyTheme(ByVal theme As String)
+    Select Case LCase$(Trim$(theme))
+        Case "slate"
+            host.BackColor = vbWhite
+            stripeColor = RGB(245, 248, 252)
+            bodyForeColor = RGB(35, 49, 67)
+            headerFill = RGB(232, 239, 248)
+            headerInk = RGB(30, 53, 79)
+            selectedBackColor = RGB(36, 88, 148)
+            lineColor = RGB(217, 226, 236)
+            host.BorderColor = RGB(209, 218, 228)
+        Case "sage"
+            host.BackColor = vbWhite
+            stripeColor = RGB(244, 248, 245)
+            bodyForeColor = RGB(39, 55, 46)
+            headerFill = RGB(229, 239, 232)
+            headerInk = RGB(31, 66, 49)
+            selectedBackColor = RGB(42, 105, 75)
+            lineColor = RGB(216, 228, 220)
+            host.BorderColor = RGB(201, 218, 208)
+        Case Else
+            Err.Raise 380, "ExtendedListBox.ApplyTheme"
+    End Select
+    selectedForeColor = vbWhite
+    Render
+End Sub
+
+Public Property Get Font() As StdFont
+    Set Font = typeface
+End Property
+
+Public Sub Refresh()
+    Render
+End Sub
+
+Public Sub SetTypeface(ByVal name As String, ByVal size As Single, Optional ByVal bold As Boolean = False)
+    If size < 1 Or size > 72 Then Err.Raise 380, "ExtendedListBox.SetTypeface"
+    typeface.name = name
+    typeface.size = size
+    typeface.bold = bold
+    Render
+End Sub
+
+Public Sub Move(ByVal leftEdge As Single, ByVal topEdge As Single, Optional ByVal Width As Variant, Optional ByVal Height As Variant)
+    If IsMissing(Width) Then Width = host.Width
+    If IsMissing(Height) Then Height = host.Height
+    host.Move leftEdge, topEdge, CSng(Width), CSng(Height)
+    Render
+End Sub
+
+Public Sub SetFocus()
+    keyboard.SetFocus
+End Sub
+
+Public Sub CopySelection()
+    Dim clipboard As MSForms.DataObject
+    Dim lines() As String
+    Dim fields() As String
+    Dim Row As Long
+    Dim Field As Long
+    Dim count As Long
+    If rowCount = 0 Then Exit Sub
+    ReDim lines(0 To rowCount - 1)
+    ReDim fields(0 To columnCountValue - 1)
+    For Row = 0 To rowCount - 1
+        If selectedRows(Row) Then
+            For Field = 0 To columnCountValue - 1
+                fields(Field) = Replace(Replace(Replace(DisplayText(data(Row, Field)), vbTab, " "), vbCr, " "), vbLf, " ")
+            Next Field
+            lines(count) = Join(fields, vbTab)
+            count = count + 1
+        End If
+    Next Row
+    If count = 0 Then Exit Sub
+    ReDim Preserve lines(0 To count - 1)
+    Set clipboard = New MSForms.DataObject
+    clipboard.SetText Join(lines, vbCrLf)
+    clipboard.PutInClipboard
+End Sub
+
+Public Sub Sort(ByVal columnIndex As Long, Optional ByVal descending As Boolean = False)
+    Dim order() As Long
+    Dim scratch() As Long
+    Dim nextData() As Variant
+    Dim nextSelected() As Boolean
+    Dim Row As Long
+    Dim Field As Long
+    Dim nextFocus As Long
+    Dim nextAnchor As Long
+    If columnIndex < 0 Or columnIndex >= columnCountValue Then Err.Raise 381, "ExtendedListBox.Sort"
+    If rowCount < 2 Then Exit Sub
+
+    ReDim order(0 To rowCount - 1)
+    ReDim scratch(0 To rowCount - 1)
+    ReDim nextSelected(0 To rowCount - 1)
+    ReDim nextData(0 To rowCount - 1, 0 To columnCountValue - 1)
+    For Row = 0 To rowCount - 1
+        order(Row) = Row
+    Next Row
+    SortRange order, scratch, 0, rowCount - 1, columnIndex, descending
+    nextFocus = -1
+    nextAnchor = -1
+    For Row = 0 To rowCount - 1
+        For Field = 0 To columnCountValue - 1
+            nextData(Row, Field) = data(order(Row), Field)
+        Next Field
+        nextSelected(Row) = selectedRows(order(Row))
+        If order(Row) = focusRow Then nextFocus = Row
+        If order(Row) = anchorRow Then nextAnchor = Row
+    Next Row
+    data = nextData
+    selectedRows = nextSelected
+    focusRow = nextFocus
+    anchorRow = nextAnchor
+    Set colors = New Collection
+    Set fills = New Collection
+    sortColumn = columnIndex
+    isDescending = descending
+    RevealFocus
+    Render
+End Sub
+
+Private Sub SortRange(ByRef order() As Long, ByRef scratch() As Long, ByVal first As Long, ByVal last As Long, ByVal Field As Long, ByVal descending As Boolean)
+    Dim middle As Long
+    Dim leftRow As Long
+    Dim rightRow As Long
+    Dim target As Long
+    Dim useLeft As Boolean
+    Dim comparison As Long
+    If first >= last Then Exit Sub
+    middle = first + (last - first) \ 2
+    SortRange order, scratch, first, middle, Field, descending
+    SortRange order, scratch, middle + 1, last, Field, descending
+    leftRow = first
+    rightRow = middle + 1
+    For target = first To last
+        If leftRow > middle Then
+            useLeft = False
+        ElseIf rightRow > last Then
+            useLeft = True
+        Else
+            comparison = Compare(data(order(leftRow), Field), data(order(rightRow), Field))
+            If descending Then comparison = -comparison
+            useLeft = comparison <= 0
+        End If
+        If useLeft Then
+            scratch(target) = order(leftRow)
+            leftRow = leftRow + 1
+        Else
+            scratch(target) = order(rightRow)
+            rightRow = rightRow + 1
+        End If
+    Next target
+    For target = first To last
+        order(target) = scratch(target)
+    Next target
+End Sub
+
+Private Function Compare(ByVal first As Variant, ByVal second As Variant) As Long
+    Dim firstKind As Long
+    Dim secondKind As Long
+    firstKind = SortKind(first)
+    secondKind = SortKind(second)
+    If firstKind <> secondKind Then
+        Compare = Sgn(firstKind - secondKind)
+    ElseIf firstKind = 1 Or firstKind = 2 Then
+        If CDbl(first) < CDbl(second) Then Compare = -1
+        If CDbl(first) > CDbl(second) Then Compare = 1
+    Else
+        Compare = StrComp(DisplayText(first), DisplayText(second), vbTextCompare)
+    End If
+End Function
+
+Private Function SortKind(ByVal item As Variant) As Long
+    If IsEmpty(item) Or IsNull(item) Or IsError(item) Then Exit Function
+    If VarType(item) = vbDate Then
+        SortKind = 1
+    ElseIf IsNumeric(item) Then
+        SortKind = 2
+    Else
+        SortKind = 3
+    End If
+End Function
+
+Friend Sub HandleMouseDown(ByVal Row As Long, ByVal Field As Long, ByVal button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
+    Dim edge As Single
+    Dim index As Long
+    pendingClickRow = -2
+    RaiseEvent MouseDown(button, Shift, X, Y)
+    If button <> LEFT_BUTTON Or isLocked Then Exit Sub
+    If Row >= 0 Then
+        SetFocus
+        pendingClickRow = Row
+        SelectFromInput Row, Shift, True
+    ElseIf Row = -1 Then
+        pendingClickRow = Row
+        If canResize Then
+            edge = -scrollOffset
+            For index = 0 To columnCountValue - 1
+                edge = edge + layoutWidths(index)
+                If layoutWidths(index) > 0 And Abs(edge - X) <= 4 Then
+                    isResizing = True
+                    resizeField = index
+                    resizeStart = X
+                    resizeWidths = layoutWidths
+                    Exit For
+                End If
+            Next index
+        End If
+    End If
+End Sub
+
+Friend Sub HandleMouseMove(ByVal button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
+    RaiseEvent MouseMove(button, Shift, X, Y)
+    If isResizing And button = LEFT_BUTTON Then ResizeColumn X
+End Sub
+
+Friend Sub HandleMouseUp(ByVal Row As Long, ByVal Field As Long, ByVal button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
+    RaiseEvent MouseUp(button, Shift, X, Y)
+    If button <> LEFT_BUTTON Then Exit Sub
+    If isResizing Then
+        isResizing = False
+        ResizeColumn X
+    ElseIf Row >= 0 And pendingClickRow = Row Then
+        RaiseEvent Click
+    ElseIf Row = -1 And pendingClickRow = Row And canSort Then
+        If Field >= 0 Then Sort Field, (sortColumn = Field And Not isDescending)
+    End If
+    pendingClickRow = -2
+End Sub
+
+Private Sub ResizeColumn(ByVal X As Single)
+    Dim sections() As String
+    Dim Field As Long
+    ReDim sections(0 To columnCountValue - 1)
+    For Field = 0 To columnCountValue - 1
+        sections(Field) = CStr(resizeWidths(Field))
+    Next Field
+    sections(resizeField) = CStr(MaxSingle(18, resizeWidths(resizeField) + X - resizeStart))
+    ColumnWidths = Join(sections, ";")
+End Sub
+
+Friend Sub HandleDoubleClick(ByVal Row As Long, ByVal Cancel As MSForms.ReturnBoolean)
+    If Row >= 0 Then RaiseEvent DblClick(Cancel)
+End Sub
+
+Private Sub SelectFromInput(ByVal Row As Long, ByVal Shift As Integer, ByVal isToggle As Boolean)
+    Dim lower As Long
+    Dim upper As Long
+    Dim index As Long
+    Dim isSelected As Boolean
+    Dim hasChanged As Boolean
+    If multiMode = fmMultiSelectSingle Then
+        SelectOnly Row
+    ElseIf multiMode = fmMultiSelectMulti Then
+        focusRow = Row
+        RevealFocus
+        If isToggle Then Selected(Row) = Not Selected(Row)
+        Render
+    ElseIf (Shift And SHIFT_MASK) <> 0 Then
+        If anchorRow < 0 Then anchorRow = Row
+        lower = MinLong(anchorRow, Row)
+        upper = MaxSingle(anchorRow, Row)
+        For index = 0 To rowCount - 1
+            isSelected = index >= lower And index <= upper
+            If (Shift And CONTROL_MASK) <> 0 Then isSelected = isSelected Or selectedRows(index)
+            If selectedRows(index) <> isSelected Then hasChanged = True
+            selectedRows(index) = isSelected
+        Next index
+        focusRow = Row
+        RevealFocus
+        Render
+        If hasChanged Then NotifyChange
+    ElseIf (Shift And CONTROL_MASK) <> 0 Then
+        focusRow = Row
+        anchorRow = Row
+        RevealFocus
+        If isToggle Then Selected(Row) = Not Selected(Row)
+        Render
+    Else
+        SelectOnly Row
+    End If
+End Sub
+
+Private Sub Keyboard_KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+    Dim Row As Long
+    RaiseEvent KeyDown(KeyCode, Shift)
+    If isLocked Or rowCount = 0 Then Exit Sub
+    Row = focusRow
+    Select Case KeyCode.value
+        Case vbKeyDown
+            Row = MinLong(rowCount - 1, Row + 1)
+        Case vbKeyUp
+            Row = MaxSingle(0, Row - 1)
+        Case vbKeyHome
+            Row = 0
+        Case vbKeyEnd
+            Row = rowCount - 1
+        Case vbKeyPageDown
+            Row = MinLong(rowCount - 1, Row + pageRows)
+        Case vbKeyPageUp
+            Row = MaxSingle(0, Row - pageRows)
+        Case vbKeySpace
+            If Row >= 0 Then SelectFromInput Row, Shift, True
+            KeyCode.value = 0
+            Exit Sub
+        Case vbKeyC
+            If (Shift And CONTROL_MASK) <> 0 Then
+                CopySelection
+                KeyCode.value = 0
+            End If
+            Exit Sub
+        Case Else
+            Exit Sub
+    End Select
+    SelectFromInput Row, Shift, False
+    KeyCode.value = 0
+End Sub
+
+Private Sub Keyboard_KeyPress(ByVal KeyAscii As MSForms.ReturnInteger)
+    Dim Row As Long
+    Dim offset As Long
+    Dim start As Long
+    Dim prefix As String
+    Dim displayed As String
+    Dim Field As Long
+    Dim code As Long
+    RaiseEvent KeyPress(KeyAscii)
+    If isLocked Or rowCount = 0 Or matchMode = fmMatchEntryNone Then Exit Sub
+    code = KeyAscii.value
+    If code < 32 Then Exit Sub
+    Field = DisplayField() - 1
+    If Field < 0 Or Field >= columnCountValue Then Exit Sub
+    prefix = ChrW(code)
+    If matchMode = fmMatchEntryComplete And Timer - lastSearch < 1 And Timer >= lastSearch Then
+        prefix = matchPrefix & prefix
+    End If
+    lastSearch = Timer
+    matchPrefix = prefix
+    start = focusRow + 1
+    If Len(prefix) > 1 And focusRow >= 0 Then start = focusRow
+    For offset = 0 To rowCount - 1
+        Row = (start + offset) Mod rowCount
+        displayed = DisplayText(data(Row, Field))
+        If StrComp(Left$(displayed, Len(prefix)), prefix, vbTextCompare) = 0 Then
+            ListIndex = Row
+            Exit For
+        End If
+    Next offset
+    KeyAscii.value = 0
+End Sub
+
+Private Sub Keyboard_KeyUp(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+    RaiseEvent KeyUp(KeyCode, Shift)
+End Sub
+
+Public Property Get RowHeight() As Single
+    RowHeight = rowHeightValue
+End Property
+
+Public Property Let RowHeight(ByVal value As Single)
+    If value < 1 Then Err.Raise 380, "ExtendedListBox.RowHeight"
+    rowHeightValue = value
+    Render
+End Property
+
+Public Property Get HeaderHeight() As Single
+    HeaderHeight = headerHeightValue
+End Property
+
+Public Property Let HeaderHeight(ByVal value As Single)
+    If value < 1 Then Err.Raise 380, "ExtendedListBox.HeaderHeight"
+    headerHeightValue = value
+    Render
+End Property
+
+Public Property Get BackColor() As Long
+    BackColor = host.BackColor
+End Property
+
+Public Property Let BackColor(ByVal value As Long)
+    host.BackColor = value
+    Render
+End Property
+
+Public Property Get ForeColor() As Long
+    ForeColor = bodyForeColor
+End Property
+
+Public Property Let ForeColor(ByVal value As Long)
+    bodyForeColor = value
+    Render
+End Property
+
+Public Property Get AlternateBackColor() As Long
+    AlternateBackColor = stripeColor
+End Property
+
+Public Property Let AlternateBackColor(ByVal value As Long)
+    stripeColor = value
+    Render
+End Property
+
+Public Property Get HeaderBackColor() As Long
+    HeaderBackColor = headerFill
+End Property
+
+Public Property Let HeaderBackColor(ByVal value As Long)
+    headerFill = value
+    Render
+End Property
+
+Public Property Get HeaderForeColor() As Long
+    HeaderForeColor = headerInk
+End Property
+
+Public Property Let HeaderForeColor(ByVal value As Long)
+    headerInk = value
+    Render
+End Property
+
+Public Property Get SelectionBackColor() As Long
+    SelectionBackColor = selectedBackColor
+End Property
+
+Public Property Let SelectionBackColor(ByVal value As Long)
+    selectedBackColor = value
+    Render
+End Property
+
+Public Property Get SelectionForeColor() As Long
+    SelectionForeColor = selectedForeColor
+End Property
+
+Public Property Let SelectionForeColor(ByVal value As Long)
+    selectedForeColor = value
+    Render
+End Property
+
+Public Property Get GridColor() As Long
+    GridColor = lineColor
+End Property
+
+Public Property Let GridColor(ByVal value As Long)
+    lineColor = value
+    Render
+End Property
+
+Public Property Get VerticalGridlines() As Boolean
+    VerticalGridlines = hasVerticalGrid
+End Property
+
+Public Property Let VerticalGridlines(ByVal value As Boolean)
+    hasVerticalGrid = value
+    Render
+End Property
+
+Public Property Get HorizontalGridlines() As Boolean
+    HorizontalGridlines = hasHorizontalGrid
+End Property
+
+Public Property Let HorizontalGridlines(ByVal value As Boolean)
+    hasHorizontalGrid = value
+    Render
+End Property
+
+Public Property Get SortOnHeaderClick() As Boolean
+    SortOnHeaderClick = canSort
+End Property
+
+Public Property Let SortOnHeaderClick(ByVal value As Boolean)
+    canSort = value
+End Property
+
+Public Property Get AllowColumnResize() As Boolean
+    AllowColumnResize = canResize
+End Property
+
+Public Property Let AllowColumnResize(ByVal value As Boolean)
+    canResize = value
+End Property
+
+Public Property Get IntegralHeight() As Boolean
+    IntegralHeight = hasIntegralHeight
+End Property
+
+Public Property Let IntegralHeight(ByVal value As Boolean)
+    hasIntegralHeight = value
+    Render
+End Property
+
+Public Property Get MatchEntry() As MSForms.fmMatchEntry
+    MatchEntry = matchMode
+End Property
+
+Public Property Let MatchEntry(ByVal value As MSForms.fmMatchEntry)
+    matchMode = value
+End Property
+
+Public Property Get Left() As Single
+    Left = host.Left
+End Property
+
+Public Property Let Left(ByVal value As Single)
+    host.Left = value
+End Property
+
+Public Property Get Top() As Single
+    Top = host.Top
+End Property
+
+Public Property Let Top(ByVal value As Single)
+    host.Top = value
+End Property
+
+Public Property Get Width() As Single
+    Width = host.Width
+End Property
+
+Public Property Let Width(ByVal value As Single)
+    host.Width = value
+    Render
+End Property
+
+Public Property Get Height() As Single
+    Height = host.Height
+End Property
+
+Public Property Let Height(ByVal value As Single)
+    host.Height = value
+    Render
+End Property
+
+Public Property Get Visible() As Boolean
+    Visible = host.Visible
+End Property
+
+Public Property Let Visible(ByVal value As Boolean)
+    host.Visible = value
+End Property
+
+Public Property Get Enabled() As Boolean
+    Enabled = host.Enabled
+End Property
+
+Public Property Let Enabled(ByVal value As Boolean)
+    host.Enabled = value
+End Property
+
+Public Property Get Locked() As Boolean
+    Locked = isLocked
+End Property
+
+Public Property Let Locked(ByVal value As Boolean)
+    isLocked = value
+End Property
+
+Public Property Get BorderColor() As Long
+    BorderColor = host.BorderColor
+End Property
+
+Public Property Let BorderColor(ByVal value As Long)
+    host.BorderColor = value
+    Render
+End Property
+
+Public Property Get BorderStyle() As MSForms.fmBorderStyle
+    BorderStyle = host.BorderStyle
+End Property
+
+Public Property Let BorderStyle(ByVal value As MSForms.fmBorderStyle)
+    host.BorderStyle = value
+    Render
+End Property
+
+Public Property Get SpecialEffect() As MSForms.fmSpecialEffect
+    SpecialEffect = host.SpecialEffect
+End Property
+
+Public Property Let SpecialEffect(ByVal value As MSForms.fmSpecialEffect)
+    host.SpecialEffect = value
+    Render
+End Property
+
+Public Property Get ControlTipText() As String
+    ControlTipText = tip
+End Property
+
+Public Property Let ControlTipText(ByVal value As String)
+    tip = value
+    Render
+End Property
+
+Public Property Get Tag() As String
+    Tag = host.Tag
+End Property
+
+Public Property Let Tag(ByVal value As String)
+    host.Tag = value
+End Property
+
+Public Property Get TabIndex() As Integer
+    TabIndex = host.TabIndex
+End Property
+
+Public Property Let TabIndex(ByVal value As Integer)
+    host.TabIndex = value
+End Property
+
+Public Property Get TabStop() As Boolean
+    TabStop = hasTabStop
+End Property
+
+Public Property Let TabStop(ByVal value As Boolean)
+    hasTabStop = value
+    keyboard.TabStop = value
+End Property
+
+Private Sub Class_Terminate()
+    Dispose
+End Sub

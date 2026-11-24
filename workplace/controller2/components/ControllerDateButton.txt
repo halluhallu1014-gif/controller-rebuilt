@@ -1,0 +1,19 @@
+Option Explicit
+Private WithEvents action As MSForms.CommandButton
+Private owner As LedgerControllerForm
+Private fieldId As String
+
+Public Sub Bind(ByVal button As MSForms.CommandButton, ByVal form As LedgerControllerForm, ByVal id As String)
+    Set action = button
+    Set owner = form
+    fieldId = id
+End Sub
+
+Public Sub Unbind()
+    Set action = Nothing
+    Set owner = Nothing
+End Sub
+
+Private Sub action_Click()
+    owner.PickFieldDate fieldId
+End Sub

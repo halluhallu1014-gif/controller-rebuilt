@@ -1,0 +1,271 @@
+Option Explicit
+
+' Business controller: selects destinations and fields; does not write cells.
+' D / H / J flags are exact Japanese circle/cross values.
+Public Function PlanWeeklyImport(Optional ByVal sourcePath As String, Optional ByRef conflicts As Variant) As Collection
+    Dim records As Collection, pending As New Collection, issues As New Collection
+    Dim fields As Object, addresses As Object, indexes As Object, masterIndex As Object, branchIndex As Object
+    Dim masterId As String, branchId As String, key As String, details As String
+    Dim record As Object, branchRecord As Object, existing As Object
+    Dim report As Variant, issue As Variant, fileId As Variant, definition As Object, misplaced As String
+    Set PlanWeeklyImport = pending
+    If Len(sourcePath) = 0 Then
+        report = Application.GetOpenFilename(FileFilter:="Excel workbooks (*.xlsx),*.xlsx", _
+                                             title:="Select the weekly source workbook")
+        If VarType(report) = vbBoolean Then
+            If Not IsMissing(conflicts) Then Set conflicts = issues
+            Exit Function
+        End If
+        sourcePath = CStr(report)
+    End If
+    Set records = ReadWeeklySourceRecords(sourcePath)
+    Set fields = LoadLedgerFields(): Set addresses = LoadLedgerAddresses()
+    Set indexes = NewLedgerRecord()
+    masterId = MasterFileId(addresses)
+    Set masterIndex = IndexWeeklyDestination(masterId, fields)
+    For Each fileId In addresses.Keys
+        Set definition = addresses(fileId)
+        If definition("Role") = "Branch" Then indexes.Add fileId, IndexWeeklyDestination(CStr(fileId), fields)
+    Next fileId
+    For Each record In records
+        key = LedgerRecordKey(record, fields)
+        branchId = BranchFileId(addresses, RequiredOffice(record))
+        misplaced = vbNullString
+        For Each fileId In indexes.Keys
+            Set branchIndex = indexes(fileId)
+            If CStr(fileId) <> branchId And branchIndex.Exists(key) Then _
+                misplaced = misplaced & "Also exists in " & CStr(fileId) & ". "
+        Next fileId
+        Set branchIndex = indexes(branchId)
+        details = vbNullString
+        If Not masterIndex.Exists(key) And Not branchIndex.Exists(key) And Len(misplaced) = 0 Then
+            pending.Add record
+        Else
+            If masterIndex.Exists(key) Then
+                Set existing = masterIndex(key)
+                details = WeeklyDifferences(record, existing, masterId)
+            Else
+                details = "Missing from " & masterId & ". "
+            End If
+            If branchIndex.Exists(key) Then
+                Set branchRecord = SelectFields(record, fields, "Branch")
+                Set existing = branchIndex(key)
+                details = details & WeeklyDifferences(branchRecord, existing, branchId)
+            Else
+                details = details & "Missing from " & branchId & ". "
+            End If
+            details = details & misplaced
+            If Len(details) > 0 Then issues.Add key & ": " & details
+        End If
+    Next record
+    If IsMissing(conflicts) And issues.count > 0 Then
+        details = "Weekly conflicts: " & issues.count & "."
+        For Each issue In issues
+            details = details & vbCrLf & CStr(issue)
+            If Len(details) > 800 Then Exit For
+        Next issue
+        FlowError details
+    End If
+    If Not IsMissing(conflicts) Then Set conflicts = issues
+    Set PlanWeeklyImport = AuditOperationPlan(PlanNewRecords(pending), "WeeklyImport")
+End Function
+
+Private Function IndexWeeklyDestination(ByVal fileId As String, ByVal fields As Object) As Object
+    Dim records As Collection, record As Object, result As Object
+    Set records = ReadLedgerRecords(fileId)
+    Set result = NewLedgerRecord()
+    For Each record In records
+        result.Add LedgerRecordKey(record, fields), record
+    Next record
+    Set IndexWeeklyDestination = result
+End Function
+
+Private Function WeeklyDifferences(ByVal incoming As Object, ByVal existing As Object, ByVal fileId As String) As String
+    Dim fieldId As Variant, names As String
+    For Each fieldId In incoming.Keys
+        If Not LedgerValuesEqual(incoming(fieldId), existing(fieldId)) Then
+            If Len(names) > 0 Then names = names & ", "
+            names = names & CStr(fieldId)
+        End If
+    Next fieldId
+    If Len(names) > 0 Then WeeklyDifferences = fileId & " differs: " & names & ". "
+End Function
+
+Public Function PlanIndividualRegistration(ByVal record As Object) As Collection
+    Dim records As New Collection
+    records.Add record
+    Set PlanIndividualRegistration = AuditOperationPlan(PlanNewRecords(records), "IndividualRegistration")
+End Function
+
+Private Function PlanNewRecords(ByVal records As Collection) As Collection
+    Dim instructions As New Collection, fields As Object, addresses As Object
+    Dim record As Object, branchRecord As Object, masterId As String, branchId As String
+    Dim noBefore As Object
+    Set fields = LoadLedgerFields(): Set addresses = LoadLedgerAddresses()
+    ValidateFlags fields, "Branch"
+    masterId = MasterFileId(addresses)
+    For Each record In records
+        branchId = BranchFileId(addresses, RequiredOffice(record))
+        Set branchRecord = SelectFields(record, fields, "Branch")
+        instructions.Add NewLedgerInstruction(masterId, noBefore, record)
+        instructions.Add NewLedgerInstruction(branchId, noBefore, branchRecord)
+    Next record
+    Set PlanNewRecords = instructions
+End Function
+
+' Both before snapshots MUST be retained at the start of editing, not reconstructed at save time.
+' Changes contain only explicitly edited fields, with raw storage values.
+Public Function PlanIndividualUpdate(ByVal masterBefore As Object, ByVal branchBefore As Object, ByVal changes As Object) As Collection
+    Dim instructions As New Collection, fields As Object, addresses As Object, Field As Object
+    Dim masterPatch As Object, branchPatch As Object, fieldId As Variant, masterId As String, branchId As String
+    Set fields = LoadLedgerFields(): Set addresses = LoadLedgerAddresses()
+    ValidateFlags fields, "Branch": ValidateFlags fields, "Editable"
+    masterId = MasterFileId(addresses)
+    branchId = BranchFileId(addresses, RequiredOffice(masterBefore))
+    If RequiredOffice(masterBefore) <> RequiredOffice(branchBefore) Then FlowError "Office snapshots differ."
+    If LedgerRecordKey(masterBefore, fields) <> LedgerRecordKey(branchBefore, fields) Then FlowError "Snapshot keys differ."
+    RejectHandover masterBefore
+    RejectHandover branchBefore
+    Set masterPatch = NewLedgerRecord(): Set branchPatch = NewLedgerRecord()
+    For Each fieldId In changes.Keys
+        If Not fields.Exists(fieldId) Then FlowError "Unknown field: " & CStr(fieldId)
+        Set Field = fields(fieldId)
+        If Not LedgerValuesEqual(masterBefore(fieldId), changes(fieldId)) Then
+            If Field("Editable") <> ChrW(&H25CB) Then FlowError "Field is not editable: " & CStr(fieldId)
+            If CStr(fieldId) = "OfficeName" Or Field("Rank") > 0 Then FlowError "Office or key change requires a separate operation."
+            masterPatch.Add CStr(fieldId), changes(fieldId)
+            If Field("Branch") = ChrW(&H25CB) Then
+                If Not LedgerValuesEqual(masterBefore(fieldId), branchBefore(fieldId)) Then FlowError "Master and branch differ before edit: " & CStr(fieldId)
+                branchPatch.Add CStr(fieldId), changes(fieldId)
+            End If
+        End If
+    Next fieldId
+    If masterPatch.count > 0 Then
+        instructions.Add NewLedgerInstruction(masterId, masterBefore, masterPatch)
+        If branchPatch.count > 0 Then instructions.Add NewLedgerInstruction(branchId, branchBefore, branchPatch)
+    End If
+    Set PlanIndividualUpdate = AuditOperationPlan(instructions, "IndividualUpdate")
+End Function
+
+' Branches are authoritative ONLY for explicitly approved J-column fields.
+' Missing/ambiguous master records and cross-branch duplicate keys stop the entire plan.
+Public Function PlanBranchSynchronization() As Collection
+    Dim instructions As New Collection, fields As Object, addresses As Object, masterIndex As Object, branchSeen As Object
+    Dim masterRecords As Collection, branchRecords As Collection, branchRecord As Object, masterRecord As Object, definition As Object
+    Dim patch As Object, Field As Object, fileId As Variant, fieldId As Variant, key As String, masterId As String, syncCount As Long
+    Set fields = LoadLedgerFields(): Set addresses = LoadLedgerAddresses()
+    ValidateFlags fields, "Branch": ValidateFlags fields, "Sync"
+    For Each fieldId In fields.Keys
+        Set Field = fields(fieldId)
+        If Field("Sync") = ChrW(&H25CB) Then
+            If Field("Branch") <> ChrW(&H25CB) Or Field("Rank") > 0 Or CStr(fieldId) = "OfficeName" Then FlowError "Invalid sync field: " & CStr(fieldId)
+            syncCount = syncCount + 1
+        End If
+    Next fieldId
+    If syncCount = 0 Then FlowError "No synchronization fields approved."
+    masterId = MasterFileId(addresses)
+    Set masterRecords = ReadLedgerRecords(masterId)
+    Set masterIndex = NewLedgerRecord(): Set branchSeen = NewLedgerRecord()
+    For Each masterRecord In masterRecords
+        key = LedgerRecordKey(masterRecord, fields)
+        masterIndex.Add key, masterRecord
+    Next masterRecord
+    For Each fileId In addresses.Keys
+        Set definition = addresses(fileId)
+        If definition("Role") = "Branch" Then
+            Set branchRecords = ReadLedgerRecords(CStr(fileId))
+            For Each branchRecord In branchRecords
+                If RequiredOffice(branchRecord) <> CStr(definition("Office")) Then FlowError "Wrong office in branch: " & CStr(fileId)
+                key = LedgerRecordKey(branchRecord, fields)
+                If branchSeen.Exists(key) Then FlowError "Same key occurs in multiple branches."
+                branchSeen.Add key, True
+                If Not masterIndex.Exists(key) Then FlowError "Branch record missing from master: " & CStr(fileId)
+                Set masterRecord = masterIndex(key)
+                If RequiredOffice(masterRecord) <> RequiredOffice(branchRecord) Then FlowError "Master office differs from branch."
+                Set patch = NewLedgerRecord()
+                For Each fieldId In fields.Keys
+                    Set Field = fields(fieldId)
+                    If Field("Sync") = ChrW(&H25CB) Then
+                        If Not LedgerValuesEqual(masterRecord(fieldId), branchRecord(fieldId)) Then patch.Add CStr(fieldId), branchRecord(fieldId)
+                    End If
+                Next fieldId
+                If patch.count > 0 Then instructions.Add NewLedgerInstruction(masterId, masterRecord, patch)
+            Next branchRecord
+        End If
+    Next fileId
+    Set PlanBranchSynchronization = AuditOperationPlan(instructions, "BranchSynchronization")
+End Function
+
+Private Function MasterFileId(ByVal addresses As Object) As String
+    Dim fileId As Variant, definition As Object
+    For Each fileId In addresses.Keys
+        Set definition = addresses(fileId)
+        If definition("Role") = "Master" Then
+            If Len(MasterFileId) > 0 Then FlowError "Multiple master files."
+            MasterFileId = CStr(fileId)
+        End If
+    Next fileId
+    If Len(MasterFileId) = 0 Then FlowError "No master file."
+End Function
+
+Private Function BranchFileId(ByVal addresses As Object, ByVal office As String) As String
+    Dim fileId As Variant, definition As Object
+    For Each fileId In addresses.Keys
+        Set definition = addresses(fileId)
+        If definition("Role") = "Branch" And CStr(definition("Office")) = office Then
+            If Len(BranchFileId) > 0 Then FlowError "Multiple files for office: " & office
+            BranchFileId = CStr(fileId)
+        End If
+    Next fileId
+    If Len(BranchFileId) = 0 Then FlowError "Unknown office: " & office
+End Function
+
+Private Function RequiredOffice(ByVal record As Object) As String
+    If Not record.Exists("OfficeName") Then FlowError "Missing OfficeName."
+    RequiredOffice = CStr(record("OfficeName"))
+    If Len(RequiredOffice) = 0 Then FlowError "OfficeName is empty."
+End Function
+
+Private Function SelectFields(ByVal record As Object, ByVal fields As Object, ByVal flagName As String) As Object
+    Dim result As Object, Field As Object, fieldId As Variant
+    Set result = NewLedgerRecord()
+    For Each fieldId In record.Keys
+        If Not fields.Exists(fieldId) Then FlowError "Unknown field: " & CStr(fieldId)
+        Set Field = fields(fieldId)
+        If Field(flagName) = ChrW(&H25CB) Then result.Add CStr(fieldId), record(fieldId)
+    Next fieldId
+    Set SelectFields = result
+End Function
+
+Private Sub ValidateFlags(ByVal fields As Object, ByVal flagName As String)
+    Dim fieldId As Variant, Field As Object, flag As String
+    For Each fieldId In fields.Keys
+        Set Field = fields(fieldId)
+        flag = CStr(Field(flagName))
+        If flag <> ChrW(&H25CB) And flag <> ChrW(&HD7) Then FlowError "Missing or invalid " & flagName & " flag: " & CStr(fieldId)
+    Next fieldId
+End Sub
+
+Private Sub RejectHandover(ByVal record As Object)
+    If record.Exists("OfficeHandoverDate") Then
+        If Not IsEmpty(record("OfficeHandoverDate")) Then
+            If Len(CStr(record("OfficeHandoverDate"))) > 0 Then FlowError "Transferred case is locked."
+        End If
+    End If
+End Sub
+
+Private Sub FlowError(ByVal message As String)
+    Err.Raise vbObjectError + 7500, "LedgerTransferFlows", message
+End Sub
+
+
+
+
+Private Function AuditOperationPlan(ByVal instructions As Collection, ByVal operation As String) As Collection
+    Dim instruction As Object, entries As Collection
+    For Each instruction In instructions
+        instruction.Add "Operation", operation
+    Next instruction
+    If instructions.count = 0 Then AppendOperationAudit OperationActor(), operation, vbNullString, "NO_CHANGES", vbNullString, entries
+    Set AuditOperationPlan = instructions
+End Function
