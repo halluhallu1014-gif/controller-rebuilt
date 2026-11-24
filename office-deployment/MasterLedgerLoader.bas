@@ -35,6 +35,29 @@ Public Function GetMasterLedgerPath() As String
     Err.Raise vbObjectError + 902, "GetMasterLedgerPath", "Addressにzentai行がありません。"
 End Function
 
+' Addressのzentai行のD列から全体管理簿のシート名を取得する。
+Public Function GetMasterLedgerSheetName() As String
+    Dim settings As Worksheet
+    Dim settingRow As Long
+    Dim lastRow As Long
+    Dim sheetName As String
+
+    Set settings = ThisWorkbook.Worksheets("Address")
+    lastRow = settings.Cells(settings.Rows.Count, "A").End(xlUp).Row
+    For settingRow = 2 To lastRow
+        If StrComp(Trim$(CStr(settings.Cells(settingRow, "A").Value2)), "zentai", vbTextCompare) = 0 Then
+            sheetName = Trim$(CStr(settings.Cells(settingRow, "D").Value2))
+            If Len(sheetName) = 0 Then
+                Err.Raise vbObjectError + 906, "GetMasterLedgerSheetName", _
+                    "AddressのD" & settingRow & "に全体管理簿のシート名を入力してください。"
+            End If
+            GetMasterLedgerSheetName = sheetName
+            Exit Function
+        End If
+    Next settingRow
+    Err.Raise vbObjectError + 907, "GetMasterLedgerSheetName", "Addressにzentai行がありません。"
+End Function
+
 ' Sheet2の項目名を、管理簿と同じ順番で取得する。
 ' 重複する項目名には2件目以降に連番を付ける。
 Public Function GetMasterFieldNames() As Variant
@@ -97,7 +120,7 @@ Public Function LoadMasterRecords() As Collection
     Set records = New Collection
     fieldNames = GetMasterFieldNames()
     Set targetBook = Workbooks.Open(Filename:=GetMasterLedgerPath(), ReadOnly:=True, UpdateLinks:=0)
-    Set targetSheet = targetBook.Worksheets("管理簿")
+    Set targetSheet = targetBook.Worksheets(GetMasterLedgerSheetName())
     ValidateMasterHeaders targetSheet
     lastRow = targetSheet.Cells(targetSheet.Rows.Count, 1).End(xlUp).Row
     If lastRow >= 2 Then
