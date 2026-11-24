@@ -31,7 +31,7 @@ Public Sub BuildOfficeController()
     Exit Sub
 Failed:
     Application.ScreenUpdating = True
-    MsgBox "作成に失敗しました: " & Err.Description, vbExclamation
+    MsgBox "作成に失敗しました (" & Err.Number & "): " & Err.Description, vbExclamation
 End Sub
 
 Private Sub BuildSearchLayout(ByVal sh As Worksheet)
@@ -215,7 +215,7 @@ Private Sub BuildSearchLayout(ByVal sh As Worksheet)
     sh.Range("P19").Value2 = "文書名"
     sh.Range("T19").Value2 = "状態"
     sh.Range("C39").Value2 = "補助操作"
-    sh.Range("E9").ClearContents
+    sh.Range("E9").MergeArea.ClearContents
     sh.Range("C17").Value2 = "検索結果 0件"
     AddCommandButton sh, "E12", "検索", "SearchCases"
     AddCommandButton sh, "C36", "詳細を開く", "ShowSelectedCaseDetail"
@@ -618,7 +618,7 @@ Private Sub BuildDetailLayout(ByVal sh As Worksheet)
     sh.Range("AZ108").Value2 = "架空発送文書1"
     sh.Range("AZ109").Value2 = "架空発送文書2"
     sh.Range("AZ110").Value2 = "架空発送文書3"
-    sh.Range("Q9").ClearContents
+    sh.Range("Q9").MergeArea.ClearContents
     sh.Range("D53").MergeArea.ClearContents
     sh.Range("D54").MergeArea.ClearContents
     sh.Range("D55").MergeArea.ClearContents
