@@ -24,6 +24,7 @@ Public Sub SaveCurrentCase()
     Dim previousEvents As Boolean
     Dim eventsChanged As Boolean
     Dim errorText As String
+    Dim parsedDate As Date
 
     On Error GoTo SaveFailed
     Set record = GetDisplayedCaseRecord()
@@ -44,11 +45,23 @@ Public Sub SaveCurrentCase()
             fieldColumns.Add fieldName, ColumnFromSettings(definitions.Cells(settingRow, "B").Value2)
             inputValue = detailSheet.Range(targetAddress).MergeArea.Cells(1, 1).Value2
             originalValue = record.Value(fieldName)
-            If Not AreMasterValuesEqual(fieldName, originalValue, inputValue, record) Then
+            If Not AreMasterValuesEqual(fieldName, originalValue, inputValue, record, detailSheet.Parent.Date1904) Then
                 If fieldName = "共通番号" Or fieldName = "枝番号" Or fieldName = "番号" Or fieldName = "署名" Then
                     Err.Raise vbObjectError + 914, , "識別項目・署名の変更は通常更新できません: " & fieldName
                 End If
-                changes.Add fieldName, inputValue
+                If IsLedgerDateField(fieldName) Then
+                    If IsBlankDateValue(inputValue) Then
+                        changes.Add fieldName, Empty
+                    Else
+                        If Not TryParseDateValue(inputValue, parsedDate, detailSheet.Parent.Date1904) Then
+                            Err.Raise vbObjectError + 920, , "日付が正しくありません: " & fieldName
+                        End If
+                        ' Normalize before opening the master; validate destination range before writing.
+                        changes.Add fieldName, ExcelDateSerial(parsedDate, record.SourceUses1904)
+                    End If
+                Else
+                    changes.Add fieldName, inputValue
+                End If
             End If
         End If
     Next settingRow
@@ -64,6 +77,7 @@ Public Sub SaveCurrentCase()
     eventsChanged = True
     Set targetBook = Workbooks.Open(Filename:=GetMasterLedgerPath(), ReadOnly:=False, UpdateLinks:=0)
     If targetBook.ReadOnly Then Err.Raise vbObjectError + 915, , "全体ファイルが読み取り専用です。"
+    If targetBook.Date1904 <> record.SourceUses1904 Then Err.Raise vbObjectError + 921, , "全体ファイルの日付システムが変わりました。再検索してください。"
     Set targetSheet = targetBook.Worksheets(GetMasterLedgerSheetName())
     ValidateMasterHeaders targetSheet
     recordRow = FindMasterRecordRow(targetSheet, record)
@@ -74,7 +88,7 @@ Public Sub SaveCurrentCase()
         fieldName = CStr(item)
         latestValue = targetSheet.Cells(recordRow, CLng(fieldColumns(fieldName))).Value2
         originalValue = record.Value(fieldName)
-        If Not AreMasterValuesEqual(fieldName, latestValue, originalValue, record) Then
+        If Not AreMasterValuesEqual(fieldName, latestValue, originalValue, record, record.SourceUses1904) Then
             Err.Raise vbObjectError + 917, , "ほかの職員による変更を検出しました: " & fieldName & vbCrLf & "再検索してください。"
         End If
     Next item
@@ -82,7 +96,18 @@ Public Sub SaveCurrentCase()
     ' 変更項目だけを保存。ほかのセルは書き換えない。
     For Each item In changes.Keys
         fieldName = CStr(item)
-        targetSheet.Cells(recordRow, CLng(fieldColumns(fieldName))).Value2 = changes(item)
+        With targetSheet.Cells(recordRow, CLng(fieldColumns(fieldName)))
+            If IsLedgerDateField(fieldName) Then
+                If IsEmpty(changes(item)) Then
+                    .ClearContents
+                Else
+                    .NumberFormat = "yyyy/mm/dd"
+                    .Value2 = changes(item)
+                End If
+            Else
+                .Value2 = changes(item)
+            End If
+        End With
     Next item
     targetBook.Save
     wasSaved = True
@@ -131,57 +156,14 @@ Private Function FindMasterRecordRow(ByVal targetSheet As Worksheet, ByVal recor
     If matchCount <> 1 Then FindMasterRecordRow = 0
 End Function
 
-' 日付項目はExcelの日付シリアル値と画面の日付表記を同一基準で比較する。
+' Compare date fields using the same parser as the detail display.
 Private Function AreMasterValuesEqual(ByVal fieldName As String, ByVal firstValue As Variant, _
-                                      ByVal secondValue As Variant, ByVal record As CaseRecord) As Boolean
-    Dim firstDate As Long
-    Dim secondDate As Long
-
-    If record.SameValue(firstValue, secondValue) Then
-        AreMasterValuesEqual = True
-        Exit Function
-    End If
-    If IsError(firstValue) Or IsError(secondValue) Then Exit Function
-    If IsNull(firstValue) Or IsNull(secondValue) Then Exit Function
-
-    Select Case fieldName
-        Case "申請日", "処理期限", "署引継日", "取下書収受日", _
-             "処理年月日", "施行年月日", "仮装経理に係る最終処理年月日"
-            If TryGetMasterDate(firstValue, firstDate) And _
-               TryGetMasterDate(secondValue, secondDate) Then
-                AreMasterValuesEqual = (firstDate = secondDate)
-            End If
-    End Select
-End Function
-
-' Excel内部の数値・日付型・画面上の日付文字列を、日単位の数値へ揃える。
-Private Function TryGetMasterDate(ByVal sourceValue As Variant, ByRef dateNumber As Long) As Boolean
-    Dim numericValue As Double
-    Dim textValue As String
-
-    If IsError(sourceValue) Or IsNull(sourceValue) Or IsEmpty(sourceValue) Then Exit Function
-
-    If VarType(sourceValue) = vbDate Then
-        dateNumber = CLng(Fix(CDbl(sourceValue)))
-        TryGetMasterDate = True
-        Exit Function
-    End If
-
-    textValue = Trim$(CStr(sourceValue))
-    If Len(textValue) = 0 Then Exit Function
-
-    ' Value2で取得したExcel日付は数値として渡される。
-    If IsNumeric(sourceValue) Then
-        numericValue = CDbl(sourceValue)
-        If numericValue < 1 Or numericValue > 2958465 Then Exit Function
-        dateNumber = CLng(Fix(numericValue))
-        TryGetMasterDate = True
-        Exit Function
-    End If
-
-    If IsDate(textValue) Then
-        dateNumber = CLng(Fix(CDbl(CDate(textValue))))
-        TryGetMasterDate = True
+                                      ByVal secondValue As Variant, ByVal record As CaseRecord, _
+                                      ByVal secondUses1904 As Boolean) As Boolean
+    If IsLedgerDateField(fieldName) Then
+        AreMasterValuesEqual = AreDateValuesEqual(firstValue, secondValue, record.SourceUses1904, secondUses1904)
+    Else
+        AreMasterValuesEqual = record.SameValue(firstValue, secondValue)
     End If
 End Function
 

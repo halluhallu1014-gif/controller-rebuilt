@@ -7,6 +7,16 @@ Option Explicit
 
 Private fieldValues As Object
 Private originalValues As Object
+Private uses1904Dates As Boolean
+
+' Date system of the workbook supplying this record's raw Value2 data.
+Public Property Get SourceUses1904() As Boolean
+    SourceUses1904 = uses1904Dates
+End Property
+
+Public Property Let SourceUses1904(ByVal newValue As Boolean)
+    uses1904Dates = newValue
+End Property
 
 Private Sub Class_Initialize()
     Set fieldValues = CreateObject("Scripting.Dictionary")

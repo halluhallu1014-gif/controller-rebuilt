@@ -21,6 +21,7 @@ Public Sub ShowSelectedCaseDetail()
 
     previousScreenUpdating = Application.ScreenUpdating
     On Error GoTo DisplayFailed
+    Set displayedRecord = Nothing
 
     Set selectedRecord = GetSelectedSearchRecord()
     If selectedRecord Is Nothing Then
@@ -79,17 +80,11 @@ Public Sub ShowSelectedCaseDetail()
     For Each address In targetCells.Keys
         fieldName = CStr(targetCells(address))
         fieldValue = selectedRecord.Value(fieldName)
-        If Not IsError(fieldValue) Then
-            If Not IsNull(fieldValue) Then
-                If Not IsEmpty(fieldValue) Then
-                    Set targetCell = detailSheet.Range(CStr(address))
-                    If IsDetailDateField(fieldName) And IsNumeric(fieldValue) Then
-                        targetCell.Value2 = Format$(CDate(fieldValue), "yyyy/mm/dd")
-                    Else
-                        targetCell.Value2 = fieldValue
-                    End If
-                End If
-            End If
+        Set targetCell = detailSheet.Range(CStr(address))
+        If IsLedgerDateField(fieldName) Then
+            DisplayDateValue targetCell, fieldValue, selectedRecord.SourceUses1904
+        ElseIf Not IsError(fieldValue) And Not IsNull(fieldValue) And Not IsEmpty(fieldValue) Then
+            targetCell.Value2 = fieldValue
         End If
     Next address
 
@@ -114,13 +109,4 @@ End Sub
 ' 現在表示中の事案を取得する。
 Public Function GetDisplayedCaseRecord() As CaseRecord
     Set GetDisplayedCaseRecord = displayedRecord
-End Function
-
-' 日付表示が必要な項目を判定する。配置先の変更には影響しない。
-Private Function IsDetailDateField(ByVal fieldName As String) As Boolean
-    Select Case fieldName
-        Case "申請日", "処理期限", "署引継日", "取下書収受日", _
-             "処理年月日", "施行年月日", "仮装経理に係る最終処理年月日"
-            IsDetailDateField = True
-    End Select
 End Function

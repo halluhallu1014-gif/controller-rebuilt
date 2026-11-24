@@ -131,6 +131,7 @@ Public Function LoadMasterRecords() As Collection
             If Len(Trim$(CStr(data(rowIndex, 1)))) > 0 Then
                 Set record = New CaseRecord
                 record.LoadData data, rowIndex, fieldNames
+                record.SourceUses1904 = targetBook.Date1904
                 records.Add record
             End If
         Next rowIndex
@@ -159,3 +160,12 @@ Failed:
     Debug.Print "MASTER_LOAD=ERROR : " & Err.Description
     MsgBox Err.Description, vbExclamation, "全体読み込み"
 End Sub
+
+' 日付表示が必要な項目を判定する。配置先の変更には影響しない。
+Public Function IsLedgerDateField(ByVal fieldName As String) As Boolean
+    Select Case fieldName
+        Case "申請日", "処理期限", "署引継日", "取下書収受日", _
+             "処理年月日", "施行年月日", "仮装経理に係る最終処理年月日"
+            IsLedgerDateField = True
+    End Select
+End Function
