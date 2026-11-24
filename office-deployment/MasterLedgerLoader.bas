@@ -21,7 +21,8 @@ Public Function GetMasterLedgerPath() As String
             If Len(folderPath) = 0 Or Len(fileName) = 0 Then
                 Err.Raise vbObjectError + 901, "GetMasterLedgerPath", "Addressのzentai行にパスまたはファイル名がありません。"
             End If
-            If LCase$(Right$(fileName, 5)) <> ".xlsx" Then fileName = fileName & ".xlsx"
+            ' 拡張子付きはそのまま使い、未指定時のみxlsxを補完する。
+            If InStrRev(fileName, ".") = 0 Then fileName = fileName & ".xlsx"
             separator = "\"
             If LCase$(Left$(folderPath, 4)) = "http" Then separator = "/"
             If Right$(folderPath, 1) <> "\" And Right$(folderPath, 1) <> "/" Then
