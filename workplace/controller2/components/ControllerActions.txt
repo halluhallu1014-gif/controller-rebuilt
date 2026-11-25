@@ -145,17 +145,48 @@ Failed:
 End Function
 
 Public Sub OpenLedgerController()
-    Dim owner As Window
+    OpenLedgerControllerWithBatch Nothing
+End Sub
+
+Public Sub OpenLedgerControllerWithBatch(ByVal batch As LedgerReadBatch)
+    Dim owner As window
     On Error GoTo Failed
     If ThisWorkbook.Windows.count = 0 Then Exit Sub
     Set owner = ThisWorkbook.Windows(1)
     owner.Activate
+
+    If Not batch Is Nothing Then RefreshControllerData batch
     LedgerControllerForm.ShowInitial
     Exit Sub
 Failed:
     MsgBox Err.Description, vbExclamation, "管理簿コントローラー"
 End Sub
 
-Public Sub RedisplayLedgerController()
-    LedgerControllerForm.ShowRequested
+Public Function CloseLedgerController() As Boolean
+    Dim item As Object, controller As LedgerControllerForm
+    For Each item In VBA.UserForms
+        If TypeOf item Is LedgerControllerForm Then
+            Set controller = item
+            Exit For
+        End If
+    Next item
+    If Not controller Is Nothing Then
+        If Not controller.PermitWorkbookClose() Then Exit Function
+    End If
+    If Not controller Is Nothing Then Unload controller
+    CloseLedgerController = True
+End Function
+
+Public Sub ControllerVerifyUpdate(ByVal masterBefore As Object, ByVal branchBefore As Object)
+    VerifyControllerSnapshot masterBefore, ReadLatestControllerMaster(masterBefore), "全体"
+    VerifyControllerSnapshot branchBefore, ReadLatestControllerBranch(masterBefore), "対象署"
+End Sub
+
+Private Sub VerifyControllerSnapshot(ByVal before As Object, ByVal latest As Object, ByVal fileLabel As String)
+    Dim fieldId As Variant
+    If ControllerLocked(latest) Then Err.Raise 5, , fileLabel & "の事案に署引継日が入力済みのため更新できません。"
+    For Each fieldId In before.keys
+        If Not LedgerValuesEqual(before(fieldId), latest(fieldId)) Then _
+            Err.Raise 5, , fileLabel & "の事案が編集開始後に変更されました。変更内容を控えて再読込みしてください。"
+    Next fieldId
 End Sub

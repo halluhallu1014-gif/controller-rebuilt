@@ -1,6 +1,18 @@
 Option Explicit
 
 Private Sub Workbook_Open()
-    RunConfiguredDailyBackup
-    If Application.Visible Then OpenLedgerController
+    Dim batch As LedgerReadBatch
+    If Application.Visible Then Set batch = New LedgerReadBatch
+    RunConfiguredDailyBackup batch
+    If Application.Visible Then OpenLedgerControllerWithBatch batch
+End Sub
+
+Private Sub Workbook_BeforeClose(Cancel As Boolean)
+    On Error GoTo Failed
+    If Cancel Then Exit Sub
+    Cancel = Not CloseLedgerController()
+    Exit Sub
+Failed:
+    Cancel = True
+    MsgBox "終了処理を完了できませんでした。" & vbCrLf & Err.Description, vbExclamation, "管理簿コントローラー"
 End Sub

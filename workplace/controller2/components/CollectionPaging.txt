@@ -1,0 +1,31 @@
+Option Explicit
+
+Public Type PageWindow
+    Page As Long
+    PageCount As Long
+    FirstIndex As Long
+    LastIndex As Long
+    ItemCount As Long
+End Type
+
+Public Function GetPageWindow(ByVal total As Long, ByVal requested As Long, ByVal pageSize As Long) As PageWindow
+    Dim result As PageWindow, remaining As Long
+    If total < 0 Or pageSize < 1 Then Err.Raise 5, "CollectionPaging", "Invalid total or page size."
+    If total > 0 Then
+        result.PageCount = (total - 1) \ pageSize + 1
+        result.Page = requested
+        If result.Page < 1 Then result.Page = 1
+        If result.Page > result.PageCount Then result.Page = result.PageCount
+        result.FirstIndex = (result.Page - 1) * pageSize + 1
+        remaining = total - result.FirstIndex + 1
+        result.ItemCount = pageSize
+        If remaining < pageSize Then result.ItemCount = remaining
+        result.LastIndex = result.FirstIndex + (result.ItemCount - 1)
+    End If
+    GetPageWindow = result
+End Function
+
+Public Function PageForItem(ByVal itemIndex As Long, ByVal pageSize As Long) As Long
+    If itemIndex < 1 Or pageSize < 1 Then Err.Raise 5, "CollectionPaging", "Invalid item index or page size."
+    PageForItem = (itemIndex - 1) \ pageSize + 1
+End Function

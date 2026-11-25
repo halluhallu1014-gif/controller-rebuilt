@@ -193,5 +193,3 @@ Private Function IsHolidayDate(ByVal value As Date) As Boolean
     Err.Clear
     On Error GoTo 0
 End Function
-
-

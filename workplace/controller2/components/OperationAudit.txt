@@ -29,7 +29,7 @@ End Function
 Public Sub AppendOperationAudit(ByVal actor As String, ByVal operation As String, ByVal transaction As String, _
                                ByVal result As String, ByVal message As String, ByVal entries As Collection)
     Dim path As String, book As Workbook, sheet As Worksheet, candidate As Workbook
-    Dim headers As Variant, data() As Variant, item As Variant, count As Long, firstRow As Long, Row As Long, col As Long
+    Dim headers As Variant, data() As Variant, item As Variant, count As Long, firstRow As Long, row As Long, col As Long
     Dim oldEvents As Boolean, oldSecurity As Long, timestamp As Double, fileName As String, hasAutoSave As Boolean
     Dim checkedOut As Boolean
     lastLogError = vbNullString
@@ -67,26 +67,26 @@ Public Sub AppendOperationAudit(ByVal actor As String, ByVal operation As String
             If CStr(sheet.Cells(1, col + 1).Value2) <> CStr(headers(col)) Then Err.Raise 5, , "Unexpected audit workbook schema."
         Next col
     End If
-    firstRow = sheet.Cells(sheet.rows.count, 2).End(xlUp).Row + 1
+    firstRow = sheet.Cells(sheet.rows.count, 2).End(xlUp).row + 1
     If Not entries Is Nothing Then count = entries.count
     If count = 0 Then count = 1
     If firstRow + count - 1 > sheet.rows.count Then Err.Raise 5, , "Audit workbook capacity exceeded."
     ReDim data(1 To count, 1 To 11)
     timestamp = CDbl(Now)
-    For Row = 1 To count
-        data(Row, 1) = "'" & actor: data(Row, 2) = timestamp
-        data(Row, 3) = "'" & operation: data(Row, 4) = "'" & transaction
+    For row = 1 To count
+        data(row, 1) = "'" & actor: data(row, 2) = timestamp
+        data(row, 3) = "'" & operation: data(row, 4) = "'" & transaction
         If Not entries Is Nothing Then
             If entries.count > 0 Then
-                item = entries(Row)
+                item = entries(row)
                 For col = 0 To 4
-                    If Len(CStr(item(col))) > 0 Then data(Row, col + 5) = "'" & CStr(item(col))
+                    If Len(CStr(item(col))) > 0 Then data(row, col + 5) = "'" & CStr(item(col))
                 Next col
             End If
         End If
-        data(Row, 10) = "'" & result
-        If Len(message) > 0 Then data(Row, 11) = "'" & Left$(message, 32760)
-    Next Row
+        data(row, 10) = "'" & result
+        If Len(message) > 0 Then data(row, 11) = "'" & Left$(message, 32760)
+    Next row
     sheet.Cells(firstRow, 2).Resize(count, 1).NumberFormat = "yyyy-mm-dd hh:mm:ss"
     sheet.Cells(firstRow, 1).Resize(count, 11).Value2 = data
     book.Save
@@ -112,5 +112,3 @@ Cleanup:
     If Not book Is Nothing Then book.Close False
     Application.EnableEvents = oldEvents: Application.AutomationSecurity = oldSecurity
 End Sub
-
-

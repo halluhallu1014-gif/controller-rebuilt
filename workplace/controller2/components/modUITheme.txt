@@ -159,4 +159,3 @@ Private Function UITheme_IsSecondaryButton(ByVal controlName As String) As Boole
             UITheme_IsSecondaryButton = False
     End Select
 End Function
-

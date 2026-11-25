@@ -51,8 +51,8 @@ End Function
 ' The workbook is a SharePoint-compatible container for daily typed CSV tables.
 ' Targets is a dictionary of stable identifiers to absolute Excel workbook URLs or paths.
 Public Function CreateDailyBackup(ByVal archivePath As String, ByVal targets As Object, _
-                                  ByVal retentionDays As Long, Optional ByVal asOf As Date) As Boolean
-    Dim archive As Workbook, snapshot As Worksheet, fileId As Variant, records As New Collection
+                                  ByVal retentionDays As Long, Optional ByVal asOf As Date, Optional ByVal observer As Object) As Boolean
+    Dim archive As Workbook, snapshot As Worksheet, fileId As Variant, Records As New Collection
     Dim day As Date, cutoff As Date, data As Variant, index As Long, name As String, nameDate As Date
     Dim oldAlerts As Boolean, number As Long, message As String, checkedOut As Boolean
     oldAlerts = Application.DisplayAlerts
@@ -63,7 +63,7 @@ Public Function CreateDailyBackup(ByVal archivePath As String, ByVal targets As 
     If asOf = 0 Then asOf = Date
     day = DateValue(asOf)
     cutoff = DateAdd("d", 1 - retentionDays, day)
-    For Each fileId In targets.Keys
+    For Each fileId In targets.keys
         If StrComp(Replace(archivePath, "\", "/"), Replace(CStr(targets(fileId)), "\", "/"), vbTextCompare) = 0 Then _
             Err.Raise 5, , "Archive must be separate from all backup targets."
     Next fileId
@@ -72,11 +72,11 @@ Public Function CreateDailyBackup(ByVal archivePath As String, ByVal targets As 
     ValidateArchive archive
     Set snapshot = SheetNamed(archive, SnapshotName(day))
     If snapshot Is Nothing Then
-        For Each fileId In targets.Keys
-            CollectBackupFile records, CStr(fileId), CStr(targets(fileId))
+        For Each fileId In targets.keys
+            CollectBackupFile Records, CStr(fileId), CStr(targets(fileId)), observer
         Next fileId
-        If records.count >= archive.Worksheets(1).rows.count Then Err.Raise 5, , "Backup sheet capacity exceeded."
-        data = SnapshotArray(records, day)
+        If Records.count >= archive.Worksheets(1).rows.count Then Err.Raise 5, , "Backup sheet capacity exceeded."
+        data = SnapshotArray(Records, day)
         Set snapshot = archive.Worksheets.Add(After:=archive.Worksheets(archive.Worksheets.count))
         snapshot.name = SnapshotName(day)
         snapshot.range("A1").Resize(UBound(data, 1), 7).Value2 = data
@@ -155,31 +155,32 @@ Private Sub ValidateArchive(ByVal book As Workbook)
     Next sheet
 End Sub
 
-Private Sub CollectBackupFile(ByVal records As Collection, ByVal fileId As String, ByVal path As String)
+Private Sub CollectBackupFile(ByVal Records As Collection, ByVal fileId As String, ByVal path As String, ByVal observer As Object)
     Dim book As Workbook, sheet As Worksheet, cell As range, used As range, values As Variant
-    Dim Row As Long, col As Long, value As Variant, kind As String, payload As String
+    Dim row As Long, col As Long, value As Variant, kind As String, payload As String
     Dim number As Long, message As String
     On Error GoTo Failed
     Set book = BackupBook(path, True)
-    records.Add Array("W", fileId, "", 0&, 0&, "B", IIf(book.Date1904, "1", "0"))
+    If Not observer Is Nothing Then CallByName observer, "ReadOpenWorkbook", VbMethod, fileId, book
+    Records.Add Array("W", fileId, "", 0&, 0&, "B", IIf(book.Date1904, "1", "0"))
     For Each sheet In book.Worksheets
-        records.Add Array("S", fileId, sheet.name, 0&, 0&, "", "")
+        Records.Add Array("S", fileId, sheet.name, 0&, 0&, "", "")
         Set used = sheet.UsedRange
         values = used.Value2
-        For Row = 1 To used.rows.count
+        For row = 1 To used.rows.count
             For col = 1 To used.columns.count
                 If IsArray(values) Then
-                    value = values(Row, col)
+                    value = values(row, col)
                 Else
                     value = values
                 End If
                 If Not IsEmpty(value) Then
-                    Set cell = used.Cells(Row, col)
+                    Set cell = used.Cells(row, col)
                     EncodeBackupCell cell, value, kind, payload
-                    records.Add Array("C", fileId, sheet.name, cell.Row, cell.column, kind, payload)
+                    Records.Add Array("C", fileId, sheet.name, cell.row, cell.column, kind, payload)
                 End If
             Next col
-        Next Row
+        Next row
     Next sheet
     book.Close False
     Exit Sub
@@ -188,7 +189,7 @@ Failed:
     On Error Resume Next
     If Not book Is Nothing Then book.Close False
     On Error GoTo 0
-    If Not cell Is Nothing Then message = message & " / cell row " & Row & ", column " & col
+    If Not cell Is Nothing Then message = message & " / cell row " & row & ", column " & col
     Err.Raise number, "CollectBackupFile", fileId & ": " & message
 End Sub
 
@@ -231,30 +232,30 @@ Private Function NumberFromHex(ByVal payload As String) As Double
     NumberFromHex = number.value
 End Function
 
-Private Function SnapshotArray(ByVal records As Collection, ByVal day As Date) As Variant
-    Dim data() As Variant, item As Variant, Row As Long
-    ReDim data(1 To records.count + 2, 1 To 7)
-    data(1, 1) = SNAPSHOT_SCHEMA: data(1, 2) = CDbl(day): data(1, 3) = records.count
+Private Function SnapshotArray(ByVal Records As Collection, ByVal day As Date) As Variant
+    Dim data() As Variant, item As Variant, row As Long
+    ReDim data(1 To Records.count + 2, 1 To 7)
+    data(1, 1) = SNAPSHOT_SCHEMA: data(1, 2) = CDbl(day): data(1, 3) = Records.count
     data(2, 1) = "Record": data(2, 2) = "FileId": data(2, 3) = "Worksheet"
     data(2, 4) = "Row": data(2, 5) = "Column": data(2, 6) = "Type": data(2, 7) = "Payload"
-    Row = 2
-    For Each item In records
-        Row = Row + 1
-        data(Row, 1) = item(0): data(Row, 2) = "S" & item(1): data(Row, 3) = "S" & item(2)
-        data(Row, 4) = item(3): data(Row, 5) = item(4)
-        data(Row, 6) = "S" & item(5): data(Row, 7) = "S" & item(6)
+    row = 2
+    For Each item In Records
+        row = row + 1
+        data(row, 1) = item(0): data(row, 2) = "S" & item(1): data(row, 3) = "S" & item(2)
+        data(row, 4) = item(3): data(row, 5) = item(4)
+        data(row, 6) = "S" & item(5): data(row, 7) = "S" & item(6)
     Next item
     data(1, 4) = SnapshotDigest(data)
     SnapshotArray = data
 End Function
 
 Private Function SnapshotDigest(ByRef data As Variant) As String
-    Dim Row As Long, col As Long, i As Long, value As String, hash As Double, mixed As Double
+    Dim row As Long, col As Long, i As Long, value As String, hash As Double, mixed As Double
     Const PRIME As Double = 2147483647#
     hash = 17#
-    For Row = 2 To UBound(data, 1)
+    For row = 2 To UBound(data, 1)
         For col = 1 To 7
-            value = CStr(data(Row, col))
+            value = CStr(data(row, col))
             mixed = hash * 65599# + Len(value)
             hash = mixed - PRIME * Fix(mixed / PRIME)
             For i = 1 To Len(value)
@@ -262,7 +263,7 @@ Private Function SnapshotDigest(ByRef data As Variant) As String
                 hash = mixed - PRIME * Fix(mixed / PRIME)
             Next i
         Next col
-    Next Row
+    Next row
     SnapshotDigest = "D" & Hex$(CLng(hash))
 End Function
 
@@ -271,7 +272,7 @@ Private Sub ValidateSnapshot(ByVal snapshot As Worksheet)
     With snapshot
         If CStr(.range("A1").Value2) <> SNAPSHOT_SCHEMA Then Err.Raise 5, , "Invalid backup schema."
         If SnapshotName(CDate(.range("B1").Value2)) <> .name Then Err.Raise 5, , "Backup date does not match its name."
-        lastRow = .Cells(.rows.count, 1).End(xlUp).Row
+        lastRow = .Cells(.rows.count, 1).End(xlUp).row
         If lastRow < 3 Or lastRow - 2 <> CLng(.range("C1").Value2) Then Err.Raise 5, , "Incomplete backup table."
         data = .range("A1:G" & lastRow).Value2
         If CStr(data(1, 4)) <> SnapshotDigest(data) Then Err.Raise 5, , "Backup content verification failed."
@@ -279,15 +280,15 @@ Private Sub ValidateSnapshot(ByVal snapshot As Worksheet)
 End Sub
 
 Private Sub VerifySnapshot(ByVal snapshot As Worksheet, ByVal expected As Variant)
-    Dim actual As Variant, Row As Long, col As Long
+    Dim actual As Variant, row As Long, col As Long
     ValidateSnapshot snapshot
     actual = snapshot.range("A1").Resize(UBound(expected, 1), 7).Value2
-    For Row = 1 To UBound(expected, 1)
+    For row = 1 To UBound(expected, 1)
         For col = 1 To 7
-            If StrComp(CStr(expected(Row, col)), CStr(actual(Row, col)), vbBinaryCompare) <> 0 Then _
-                Err.Raise 5, , "Saved backup differs at row " & Row & ", column " & col
+            If StrComp(CStr(expected(row, col)), CStr(actual(row, col)), vbBinaryCompare) <> 0 Then _
+                Err.Raise 5, , "Saved backup differs at row " & row & ", column " & col
         Next col
-    Next Row
+    Next row
 End Sub
 
 Public Sub RestoreBackupData(ByVal archivePath As String, ByVal day As Date, ByVal fileId As String, ByVal targetPath As String)
@@ -323,7 +324,7 @@ Public Sub RestoreBackupCsv(ByVal csvPath As String, ByVal fileId As String, ByV
                                         Array(4, xlTextFormat), Array(5, xlTextFormat), Array(6, xlTextFormat), Array(7, xlTextFormat))
     Set csv = Workbooks(fileName)
     Set sheet = csv.Worksheets(1)
-    lastRow = sheet.Cells(sheet.rows.count, 1).End(xlUp).Row
+    lastRow = sheet.Cells(sheet.rows.count, 1).End(xlUp).row
     If lastRow < 3 Then Err.Raise 5, , "Incomplete CSV."
     content = sheet.range("A1:G" & lastRow).Value2
     If CStr(content(1, 1)) <> SNAPSHOT_SCHEMA Or CLng(content(1, 3)) <> lastRow - 2 Then _
@@ -343,28 +344,28 @@ End Sub
 
 Private Sub RestoreBackupRows(ByRef data As Variant, ByVal fileId As String, ByVal targetPath As String)
     Dim target As Workbook, sheet As Worksheet, name As Variant
-    Dim Row As Long, sheets As Object, found As Boolean, checkedOut As Boolean
+    Dim row As Long, sheets As Object, found As Boolean, checkedOut As Boolean
     Dim number As Long, message As String
     On Error GoTo Failed
     checkedOut = BeginBackupCheckout(targetPath)
     Set target = BackupBook(targetPath, False)
     Set sheets = CreateObject("Scripting.Dictionary")
-    For Row = 1 To UBound(data, 1)
-        If data(Row, 2) = "S" & fileId Then
-            If data(Row, 1) = "W" Then
+    For row = 1 To UBound(data, 1)
+        If data(row, 2) = "S" & fileId Then
+            If data(row, 1) = "W" Then
                 If found Then Err.Raise 5, , "Duplicate workbook manifest."
                 found = True
-                If CBool(Val(Mid$(data(Row, 7), 2))) <> target.Date1904 Then Err.Raise 5, , "Date system mismatch."
-            ElseIf data(Row, 1) = "S" Then
-                name = Mid$(data(Row, 3), 2)
+                If CBool(Val(Mid$(data(row, 7), 2))) <> target.Date1904 Then Err.Raise 5, , "Date system mismatch."
+            ElseIf data(row, 1) = "S" Then
+                name = Mid$(data(row, 3), 2)
                 Set sheet = target.Worksheets(CStr(name))
                 If sheet.ProtectContents Then Err.Raise 5, , "Protected restore worksheet: " & name
                 sheets.Add name, sheet
             End If
         End If
-    Next Row
+    Next row
     If Not found Or sheets.count <> target.Worksheets.count Then Err.Raise 5, , "Restore target workbook layout differs."
-    For Each name In sheets.Keys
+    For Each name In sheets.keys
         Set sheet = sheets(name)
         sheet.UsedRange.ClearContents
     Next name
@@ -390,14 +391,14 @@ Failed:
 End Sub
 
 Private Sub ApplyBackupData(ByVal data As Variant, ByVal fileId As String, ByVal sheets As Object, ByVal verifyOnly As Boolean)
-    Dim Row As Long, sheet As Worksheet, cell As range, kind As String, payload As String, actualKind As String, actualPayload As String
+    Dim row As Long, sheet As Worksheet, cell As range, kind As String, payload As String, actualKind As String, actualPayload As String
     Dim codes As Variant
     codes = Array(0, xlErrNull, xlErrDiv0, xlErrValue, xlErrRef, xlErrName, xlErrNum, xlErrNA, xlErrGettingData)
-    For Row = 1 To UBound(data, 1)
-        If data(Row, 1) = "C" And data(Row, 2) = "S" & fileId Then
-            Set sheet = sheets(Mid$(data(Row, 3), 2))
-            Set cell = sheet.Cells(CLng(data(Row, 4)), CLng(data(Row, 5)))
-            kind = Mid$(data(Row, 6), 2): payload = Mid$(data(Row, 7), 2)
+    For row = 1 To UBound(data, 1)
+        If data(row, 1) = "C" And data(row, 2) = "S" & fileId Then
+            Set sheet = sheets(Mid$(data(row, 3), 2))
+            Set cell = sheet.Cells(CLng(data(row, 4)), CLng(data(row, 5)))
+            kind = Mid$(data(row, 6), 2): payload = Mid$(data(row, 7), 2)
             If verifyOnly Then
                 EncodeBackupCell cell, cell.Value2, actualKind, actualPayload
                 If actualKind <> kind Or StrComp(actualPayload, payload, vbBinaryCompare) <> 0 Then _
@@ -415,7 +416,7 @@ Private Sub ApplyBackupData(ByVal data As Variant, ByVal fileId As String, ByVal
                 End Select
             End If
         End If
-    Next Row
+    Next row
 End Sub
 
 Public Sub ExportBackupCsv(ByVal archivePath As String, ByVal day As Date, ByVal csvPath As String)
@@ -437,7 +438,3 @@ Failed:
     On Error GoTo 0
     Err.Raise number, "ExportBackupCsv", message
 End Sub
-
-
-
-

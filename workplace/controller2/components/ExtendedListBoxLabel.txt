@@ -2,11 +2,11 @@ Option Explicit
 
 Public WithEvents label As MSForms.label
 Public owner As ExtendedListBox
-Public Row As Long
+Public row As Long
 Public Field As Long
 
 Private Sub Label_MouseDown(ByVal button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
-    owner.HandleMouseDown Row, Field, button, Shift, label.Left + X, label.Top + Y
+    owner.HandleMouseDown row, Field, button, Shift, label.Left + X, label.Top + Y
 End Sub
 
 Private Sub Label_MouseMove(ByVal button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
@@ -14,9 +14,9 @@ Private Sub Label_MouseMove(ByVal button As Integer, ByVal Shift As Integer, ByV
 End Sub
 
 Private Sub Label_MouseUp(ByVal button As Integer, ByVal Shift As Integer, ByVal X As Single, ByVal Y As Single)
-    owner.HandleMouseUp Row, Field, button, Shift, label.Left + X, label.Top + Y
+    owner.HandleMouseUp row, Field, button, Shift, label.Left + X, label.Top + Y
 End Sub
 
 Private Sub Label_DblClick(ByVal Cancel As MSForms.ReturnBoolean)
-    owner.HandleDoubleClick Row, Cancel
+    owner.HandleDoubleClick row, Cancel
 End Sub

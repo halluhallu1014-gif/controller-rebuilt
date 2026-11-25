@@ -5,27 +5,31 @@ Private cachedFields As Object
 Private cachedAddresses As Object
 Private cachedTypes As Object
 Private masterId As String
+Private masterByKey As Object
+Private branchesByOffice As Object
+Private cacheRequiresReload As Boolean
 
-Public Sub RefreshControllerData()
-    Dim fields As Object, addresses As Object, rows As Collection, kinds As Object, definition As Object
+Public Sub RefreshControllerData(Optional ByVal batch As LedgerReadBatch)
+    Dim fields As Object, Addresses As Object, rows As Collection, kinds As Object, definition As Object
     Dim fileId As Variant, fieldId As Variant, record As Object, currentMaster As String, kind As Long
-    Set fields = LoadLedgerFields()
-    Set addresses = LoadLedgerAddresses()
-    For Each fileId In addresses.Keys
-        Set definition = addresses(fileId)
+    If batch Is Nothing Then Set batch = New LedgerReadBatch
+    Set fields = batch.fields
+    Set Addresses = batch.Addresses
+    For Each fileId In Addresses.keys
+        Set definition = Addresses(fileId)
         If definition("Role") = "Master" Then
             If Len(currentMaster) > 0 Then Err.Raise 5, , "全体管理簿が複数設定されています。"
             currentMaster = CStr(fileId)
         End If
     Next fileId
     If Len(currentMaster) = 0 Then Err.Raise 5, , "全体管理簿が設定されていません。"
-    Set rows = ReadLedgerRecords(currentMaster)
+    Set rows = batch.Records(currentMaster)
     Set kinds = NewLedgerRecord()
-    For Each fieldId In fields.Keys
+    For Each fieldId In fields.keys
         kinds.Add fieldId, CLng(vbEmpty)
     Next fieldId
     For Each record In rows
-        For Each fieldId In fields.Keys
+        For Each fieldId In fields.keys
             kind = VarType(record(fieldId))
             If kind <> vbEmpty Then
                 If kinds(fieldId) = vbEmpty Then
@@ -36,11 +40,30 @@ Public Sub RefreshControllerData()
             End If
         Next fieldId
     Next record
-    Set cachedFields = fields: Set cachedAddresses = addresses
+    Dim nextMaster As Object, nextBranches As Object, branchRows As Object
+    Set nextMaster = IndexControllerRows(rows, fields)
+    Set nextBranches = NewLedgerRecord()
+    For Each fileId In Addresses.keys
+        Set definition = Addresses(fileId)
+        If definition("Role") = "Branch" Then
+            Set branchRows = TryReadBranchIndex(CStr(fileId), fields, batch)
+            nextBranches.Add CStr(definition("Office")), branchRows
+        End If
+    Next fileId
+    Set masterByKey = nextMaster
+    Set branchesByOffice = nextBranches
+    Set cachedFields = fields: Set cachedAddresses = Addresses
+
     Set cachedTypes = kinds: Set cachedRows = rows: masterId = currentMaster
+    cacheRequiresReload = False
+End Sub
+
+Public Sub InvalidateControllerData()
+    cacheRequiresReload = True
 End Sub
 
 Public Sub EnsureControllerData()
+    If cacheRequiresReload Then Err.Raise 5, , "保存後の再取得が完了していません。「再読込」を実行してください。"
     If cachedRows Is Nothing Then RefreshControllerData
 End Sub
 
@@ -57,25 +80,70 @@ End Function
 Public Function ControllerOfficeNames() As Collection
     Dim names As New Collection, id As Variant, item As Object
     EnsureControllerData
-    For Each id In cachedAddresses.Keys
+    For Each id In cachedAddresses.keys
         Set item = cachedAddresses(id)
         If item("Role") = "Branch" Then names.Add CStr(item("Office"))
     Next id
     Set ControllerOfficeNames = names
 End Function
 
+Private Function IndexControllerRows(ByVal rows As Collection, ByVal fields As Object) As Object
+    Dim index As Object, record As Object
+    Set index = NewLedgerRecord()
+    For Each record In rows
+        index.Add LedgerRecordKey(record, fields), record
+    Next record
+    Set IndexControllerRows = index
+End Function
+
+Private Function TryReadBranchIndex(ByVal fileId As String, ByVal fields As Object, ByVal batch As LedgerReadBatch) As Object
+    On Error GoTo Unavailable
+    Set TryReadBranchIndex = IndexControllerRows(batch.Records(fileId), fields)
+    Exit Function
+Unavailable:
+    Debug.Print "Branch cache " & fileId & ": " & Err.number & " " & Err.Description
+End Function
+
+Private Function SnapshotControllerRecord(ByVal record As Object) As Object
+    Dim snapshot As Object, fieldId As Variant
+    Set snapshot = NewLedgerRecord()
+    For Each fieldId In record.keys
+        snapshot.Add fieldId, record(fieldId)
+    Next fieldId
+    Set SnapshotControllerRecord = snapshot
+End Function
+
 Public Function ControllerMasterRecord(ByVal identity As Object) As Object
+    Dim key As String
     EnsureControllerData
-    Set ControllerMasterRecord = ReadLedgerRecord(masterId, identity)
+    key = LedgerRecordKey(identity, cachedFields)
+    If Not masterByKey.Exists(key) Then Err.Raise 5, , "全体管理簿の取得済みデータに対象事案がありません。"
+    Set ControllerMasterRecord = SnapshotControllerRecord(masterByKey(key))
 End Function
 
 Public Function ControllerBranchRecord(ByVal identity As Object) As Object
-    Dim id As Variant, item As Object
+    Dim office As String, key As String, index As Object
     EnsureControllerData
-    For Each id In cachedAddresses.Keys
-        Set item = cachedAddresses(id)
-        If item("Role") = "Branch" And CStr(item("Office")) = CStr(identity("OfficeName")) Then
-            Set ControllerBranchRecord = ReadLedgerRecord(CStr(id), identity)
+    office = CStr(identity("OfficeName"))
+    If Not branchesByOffice.Exists(office) Then Exit Function
+    Set index = branchesByOffice(office)
+    If index Is Nothing Then Exit Function
+    key = LedgerRecordKey(identity, cachedFields)
+    If index.Exists(key) Then Set ControllerBranchRecord = SnapshotControllerRecord(index(key))
+End Function
+
+Public Function ReadLatestControllerMaster(ByVal identity As Object) As Object
+    EnsureControllerData
+    Set ReadLatestControllerMaster = ReadLedgerRecord(masterId, identity)
+End Function
+
+Public Function ReadLatestControllerBranch(ByVal identity As Object) As Object
+    Dim id As Variant, definition As Object
+    EnsureControllerData
+    For Each id In cachedAddresses.keys
+        Set definition = cachedAddresses(id)
+        If definition("Role") = "Branch" And CStr(definition("Office")) = CStr(identity("OfficeName")) Then
+            Set ReadLatestControllerBranch = ReadLedgerRecord(CStr(id), identity)
             Exit Function
         End If
     Next id
@@ -93,7 +161,7 @@ End Function
 
 Public Sub OpenControllerSource(ByVal identity As Object)
     Dim item As Object, book As Workbook, current As Workbook, sheet As Worksheet, wanted As Object, keyFields As Object
-    Dim Field As Object, fieldId As Variant, key As String, Row As Long, column As Long, lastRow As Long
+    Dim Field As Object, fieldId As Variant, key As String, row As Long, column As Long, lastRow As Long
     Dim openedHere As Boolean, number As Long, message As String, match As Long
     EnsureControllerData
     Set item = cachedAddresses(masterId)
@@ -110,26 +178,26 @@ Public Sub OpenControllerSource(ByVal identity As Object)
     End If
     Set sheet = book.Worksheets(CStr(item("Sheet")))
     Set keyFields = NewLedgerRecord()
-    For Each fieldId In cachedFields.Keys
+    For Each fieldId In cachedFields.keys
         Set Field = cachedFields(fieldId)
         If Field("Rank") > 0 Then
             column = CLng(Field("Column"))
             If CStr(sheet.Cells(CLng(item("HeaderRow")), column).Value2) <> CStr(Field("Header")) Then Err.Raise 5, , "照合キーの見出しが一致しません。"
             keyFields.Add fieldId, column
-            Row = sheet.Cells(sheet.rows.count, column).End(xlUp).Row
-            If Row > lastRow Then lastRow = Row
+            row = sheet.Cells(sheet.rows.count, column).End(xlUp).row
+            If row > lastRow Then lastRow = row
         End If
     Next fieldId
-    For Row = CLng(item("FirstRow")) To lastRow
+    For row = CLng(item("FirstRow")) To lastRow
         Set wanted = NewLedgerRecord()
-        For Each fieldId In keyFields.Keys
-            wanted.Add fieldId, sheet.Cells(Row, keyFields(fieldId)).Value2
+        For Each fieldId In keyFields.keys
+            wanted.Add fieldId, sheet.Cells(row, keyFields(fieldId)).Value2
         Next fieldId
         If ControllerKeysMatch(wanted, identity, keyFields) Then
             If match > 0 Then Err.Raise 5, , "照合キーに一致する行が複数あります。"
-            match = Row
+            match = row
         End If
-    Next Row
+    Next row
     If match = 0 Then Err.Raise 5, , "元の管理簿に対象行がありません。"
     book.Activate
     Application.GoTo sheet.Cells(match, 1), True
@@ -144,7 +212,7 @@ End Sub
 
 Private Function ControllerKeysMatch(ByVal record As Object, ByVal identity As Object, ByVal keyFields As Object) As Boolean
     Dim fieldId As Variant
-    For Each fieldId In keyFields.Keys
+    For Each fieldId In keyFields.keys
         If Not LedgerValuesEqual(record(fieldId), identity(fieldId)) Then Exit Function
     Next fieldId
     ControllerKeysMatch = True

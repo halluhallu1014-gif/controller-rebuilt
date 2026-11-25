@@ -1,0 +1,39 @@
+Option Explicit
+
+' A single startup or reload owns this batch. Only successfully validated reads are retained.
+Private fieldDefinitions As Object
+Private addressDefinitions As Object
+Private recordsByFile As Object
+
+Private Sub Class_Initialize()
+    Set recordsByFile = NewLedgerRecord()
+End Sub
+
+Public Property Get fields() As Object
+    If fieldDefinitions Is Nothing Then Set fieldDefinitions = LoadLedgerFields()
+    Set fields = fieldDefinitions
+End Property
+
+Public Property Get Addresses() As Object
+    If addressDefinitions Is Nothing Then Set addressDefinitions = LoadLedgerAddresses()
+    Set Addresses = addressDefinitions
+End Property
+
+Public Function Records(ByVal fileId As String) As Collection
+    If Not recordsByFile.Exists(fileId) Then recordsByFile.Add fileId, ReadLedgerRecords(fileId, Addresses, fields)
+    Set Records = recordsByFile(fileId)
+End Function
+
+Public Sub ReadOpenWorkbook(ByVal fileId As String, ByVal book As Workbook)
+    Dim definitions As Object
+    ' The backup can still succeed when a ledger cannot be used by the controller.
+    ' Cache loading reports or handles the failed read through its usual path.
+    On Error GoTo Unavailable
+    Set definitions = Addresses
+    If Not recordsByFile.Exists(fileId) Then
+        recordsByFile.Add fileId, ReadOpenLedgerRecords(book, definitions(fileId), fields, fileId)
+    End If
+    Exit Sub
+Unavailable:
+    Debug.Print "Startup ledger preload " & fileId & ": " & Err.Description
+End Sub
