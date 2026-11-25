@@ -20,46 +20,25 @@ Public Sub InstallController2()
     If project.VBComponents("Controller2Setup").Type <> 1 Then Err.Raise 5, , "貼付先は Controller2Setup 標準モジュールです。"
 
     Application.EnableEvents = False
-    phase = "旧VBAコンポーネントの取外し"
-    For index = project.VBComponents.Count To 1 Step -1
-        Set component = project.VBComponents(index)
-        If component.Type <> 100 And component.Name <> "Controller2Setup" Then project.VBComponents.Remove component
-    Next index
-    phase = "VBAコンポーネントの再構築"
-    Set component = project.VBComponents.Add(1)
-    component.Name = "LedgerTransfer"
-    Set component = project.VBComponents.Add(1)
-    component.Name = "LedgerTransferFlows"
-    Set component = project.VBComponents.Add(1)
-    component.Name = "OperationAudit"
-    Set component = project.VBComponents.Add(1)
-    component.Name = "DailyBackup"
-    Set component = project.VBComponents.Add(3)
-    component.Name = "LedgerControllerForm"
+    phase = "VBAコンポーネントの更新"
+    Set component = EnsureSetupComponent(project, "LedgerTransfer", 1)
+    Set component = EnsureSetupComponent(project, "LedgerTransferFlows", 1)
+    Set component = EnsureSetupComponent(project, "OperationAudit", 1)
+    Set component = EnsureSetupComponent(project, "DailyBackup", 1)
+    Set component = EnsureSetupComponent(project, "LedgerControllerForm", 3)
     DesignLedgerControllerForm component
-    Set component = project.VBComponents.Add(1)
-    component.Name = "ControllerData"
-    Set component = project.VBComponents.Add(1)
-    component.Name = "ControllerActions"
-    Set component = project.VBComponents.Add(2)
-    component.Name = "ExtendedListBox"
-    Set component = project.VBComponents.Add(2)
-    component.Name = "ExtendedListBoxLabel"
-    Set component = project.VBComponents.Add(2)
-    component.Name = "CCalendarDayButton"
-    Set component = project.VBComponents.Add(3)
-    component.Name = "frmCalendar"
+    Set component = EnsureSetupComponent(project, "ControllerData", 1)
+    Set component = EnsureSetupComponent(project, "ControllerActions", 1)
+    Set component = EnsureSetupComponent(project, "ExtendedListBox", 2)
+    Set component = EnsureSetupComponent(project, "ExtendedListBoxLabel", 2)
+    Set component = EnsureSetupComponent(project, "CCalendarDayButton", 2)
+    Set component = EnsureSetupComponent(project, "frmCalendar", 3)
     DesignfrmCalendar component
-    Set component = project.VBComponents.Add(1)
-    component.Name = "modCalendar"
-    Set component = project.VBComponents.Add(1)
-    component.Name = "modUITheme"
-    Set component = project.VBComponents.Add(2)
-    component.Name = "ControllerDateButton"
-    Set component = project.VBComponents.Add(1)
-    component.Name = "CollectionPaging"
-    Set component = project.VBComponents.Add(2)
-    component.Name = "LedgerReadBatch"
+    Set component = EnsureSetupComponent(project, "modCalendar", 1)
+    Set component = EnsureSetupComponent(project, "modUITheme", 1)
+    Set component = EnsureSetupComponent(project, "ControllerDateButton", 2)
+    Set component = EnsureSetupComponent(project, "CollectionPaging", 1)
+    Set component = EnsureSetupComponent(project, "LedgerReadBatch", 2)
     phase = "Insert code"
     WriteCode project.VBComponents("ThisWorkbook"), SourceThisWorkbook()
     WriteCode project.VBComponents(ThisWorkbook.Worksheets("Address").CodeName), SourceSheet1()
@@ -89,6 +68,32 @@ Failed:
     MsgBox phase & vbCrLf & Err.Description & vbCrLf & "この作業コピーを保存せずに閉じてください。", vbExclamation
 End Sub
 
+Private Function EnsureSetupComponent(ByVal project As Object, ByVal componentName As String, ByVal componentType As Long) As Object
+    Dim item As Object
+    For Each item In project.VBComponents
+        If StrComp(item.Name, componentName, vbTextCompare) = 0 Then
+            If item.Type <> componentType Then Err.Raise 5, , "Component type mismatch: " & componentName
+            Set EnsureSetupComponent = item
+            Exit Function
+        End If
+    Next item
+    Set item = project.VBComponents.Add(componentType)
+    item.Name = componentName
+    Set EnsureSetupComponent = item
+End Function
+
+Private Function EnsureSetupControl(ByVal controls As Object, ByVal programId As String, ByVal controlName As String) As Object
+    Dim item As Object
+    For Each item In controls
+        If StrComp(item.Name, controlName, vbTextCompare) = 0 Then
+            If StrComp(TypeName(item), Split(programId, ".")(1), vbTextCompare) <> 0 Then Err.Raise 5, , "Control type mismatch: " & controlName
+            Set EnsureSetupControl = item
+            Exit Function
+        End If
+    Next item
+    Set EnsureSetupControl = controls.Add(programId, controlName, True)
+End Function
+
 Private Sub WriteCode(ByVal component As Object, ByVal source As String)
     Dim code As Object
     Set code = component.CodeModule
@@ -103,13 +108,13 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     component.Properties("StartUpPosition").Value = 0
     component.Properties("ShowModal").Value = False
     component.Properties("Caption").Value = "管理簿コントローラー"
-    Set pages = d.Controls.Add("Forms.MultiPage.1", "pages", True)
+    Set pages = EnsureSetupControl(d.Controls, "Forms.MultiPage.1", "pages")
     pages.Left = 0
     pages.Top = 0
     pages.Width = 824
     pages.Height = 532
     pages.Style = 2
-    Set c = pages.Pages(0).Controls.Add("Forms.Label.1", "lblSearchTitle", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.Label.1", "lblSearchTitle")
     c.Left = 18
     c.Top = 12
     c.Width = 782
@@ -124,7 +129,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 1
     c.WordWrap = True
-    Set c = pages.Pages(0).Controls.Add("Forms.CommandButton.1", "cmdMode", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.CommandButton.1", "cmdMode")
     c.Left = 526
     c.Top = 455
     c.Width = 140
@@ -140,7 +145,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 1
-    Set c = pages.Pages(0).Controls.Add("Forms.Label.1", "lblName", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.Label.1", "lblName")
     c.Left = 20
     c.Top = 89
     c.Width = 104
@@ -155,7 +160,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 1
     c.WordWrap = True
-    Set c = pages.Pages(0).Controls.Add("Forms.TextBox.1", "txtName", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.TextBox.1", "txtName")
     c.Left = 123
     c.Top = 84
     c.Width = 285
@@ -175,7 +180,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.ScrollBars = 0
     c.WordWrap = True
     c.EnterKeyBehavior = False
-    Set c = pages.Pages(0).Controls.Add("Forms.CheckBox.1", "chkPending", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.CheckBox.1", "chkPending")
     c.Left = 18
     c.Top = 148
     c.Width = 145
@@ -190,7 +195,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.TabStop = True
     c.TabIndex = 4
     c.BackStyle = 1
-    Set c = pages.Pages(0).Controls.Add("Forms.CommandButton.1", "cmdSearch", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.CommandButton.1", "cmdSearch")
     c.Left = 684
     c.Top = 84
     c.Width = 116
@@ -206,7 +211,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 5
-    Set c = pages.Pages(0).Controls.Add("Forms.Label.1", "lblCount", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.Label.1", "lblCount")
     c.Left = 166
     c.Top = 150
     c.Width = 365
@@ -221,7 +226,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.BackStyle = 0
     c.TextAlign = 1
     c.WordWrap = True
-    Set c = pages.Pages(0).Controls.Add("Forms.Frame.1", "fraOffices", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.Frame.1", "fraOffices")
     c.Left = 121
     c.Top = 115
     c.Width = 545
@@ -236,7 +241,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.ScrollBars = 0
     c.KeepScrollBarsVisible = 3
     c.SpecialEffect = 3
-    Set c = pages.Pages(0).Controls.Add("Forms.Frame.1", "fraResults", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.Frame.1", "fraResults")
     c.Left = 18
     c.Top = 176
     c.Width = 782
@@ -251,7 +256,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.ScrollBars = 0
     c.KeepScrollBarsVisible = 3
     c.SpecialEffect = 0
-    Set c = pages.Pages(0).Controls.Add("Forms.TextBox.1", "txtNotice", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.TextBox.1", "txtNotice")
     c.Left = 18
     c.Top = 485
     c.Width = 782
@@ -271,7 +276,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.ScrollBars = 2
     c.WordWrap = True
     c.EnterKeyBehavior = False
-    Set c = pages.Pages(0).Controls.Add("Forms.CommandButton.1", "cmdWeekly", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.CommandButton.1", "cmdWeekly")
     c.Left = 297
     c.Top = 455
     c.Width = 118
@@ -287,7 +292,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 10
-    Set c = pages.Pages(0).Controls.Add("Forms.CommandButton.1", "cmdReload", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.CommandButton.1", "cmdReload")
     c.Left = 18
     c.Top = 455
     c.Width = 120
@@ -303,7 +308,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 11
-    Set c = pages.Pages(0).Controls.Add("Forms.CommandButton.1", "cmdRecover", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.CommandButton.1", "cmdRecover")
     c.Left = 148
     c.Top = 455
     c.Width = 139
@@ -319,7 +324,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 12
-    Set c = pages.Pages(0).Controls.Add("Forms.CommandButton.1", "cmdNew", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.CommandButton.1", "cmdNew")
     c.Left = 684
     c.Top = 116
     c.Width = 116
@@ -335,7 +340,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 13
-    Set c = pages.Pages(0).Controls.Add("Forms.Label.1", "lblSearchBand", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.Label.1", "lblSearchBand")
     c.Left = 18
     c.Top = 54
     c.Width = 782
@@ -350,7 +355,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 1
     c.WordWrap = True
-    Set c = pages.Pages(0).Controls.Add("Forms.Label.1", "lblOfficeBand", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.Label.1", "lblOfficeBand")
     c.Left = 18
     c.Top = 118
     c.Width = 99
@@ -365,7 +370,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 1
     c.WordWrap = True
-    Set c = pages.Pages(0).Controls.Add("Forms.Label.1", "lblSupportBand", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.Label.1", "lblSupportBand")
     c.Left = 18
     c.Top = 431
     c.Width = 782
@@ -380,7 +385,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 1
     c.WordWrap = True
-    Set c = pages.Pages(0).Controls.Add("Forms.CommandButton.1", "cmdSearchPreviousPage", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.CommandButton.1", "cmdSearchPreviousPage")
     c.Left = 538
     c.Top = 146
     c.Width = 74
@@ -396,7 +401,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 17
-    Set c = pages.Pages(0).Controls.Add("Forms.CommandButton.1", "cmdSearchNextPage", True)
+    Set c = EnsureSetupControl(pages.Pages(0).Controls, "Forms.CommandButton.1", "cmdSearchNextPage")
     c.Left = 620
     c.Top = 146
     c.Width = 74
@@ -412,7 +417,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 18
-    Set c = pages.Pages(1).Controls.Add("Forms.Label.1", "lblDetail", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.Label.1", "lblDetail")
     c.Left = 492
     c.Top = 78
     c.Width = 308
@@ -427,7 +432,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.BackStyle = 0
     c.TextAlign = 1
     c.WordWrap = True
-    Set c = pages.Pages(1).Controls.Add("Forms.Label.1", "lblDetailNote", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.Label.1", "lblDetailNote")
     c.Left = 492
     c.Top = 104
     c.Width = 308
@@ -441,7 +446,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 1
     c.WordWrap = True
-    Set c = pages.Pages(1).Controls.Add("Forms.CommandButton.1", "cmdDetailMode", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.CommandButton.1", "cmdDetailMode")
     c.Left = 678
     c.Top = 128
     c.Width = 122
@@ -457,7 +462,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 2
-    Set c = pages.Pages(1).Controls.Add("Forms.CommandButton.1", "cmdBack", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.CommandButton.1", "cmdBack")
     c.Left = 18
     c.Top = 477
     c.Width = 113
@@ -473,7 +478,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 3
-    Set c = pages.Pages(1).Controls.Add("Forms.Frame.1", "fraFields", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.Frame.1", "fraFields")
     c.Left = 18
     c.Top = 161
     c.Width = 782
@@ -488,7 +493,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.ScrollBars = 2
     c.KeepScrollBarsVisible = 2
     c.SpecialEffect = 0
-    Set c = pages.Pages(1).Controls.Add("Forms.Label.1", "lblRelated", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.Label.1", "lblRelated")
     c.Left = 18
     c.Top = 53
     c.Width = 330
@@ -503,7 +508,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 1
     c.WordWrap = True
-    Set c = pages.Pages(1).Controls.Add("Forms.Frame.1", "fraRelated", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.Frame.1", "fraRelated")
     c.Left = 18
     c.Top = 75
     c.Width = 462
@@ -518,7 +523,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.ScrollBars = 0
     c.KeepScrollBarsVisible = 3
     c.SpecialEffect = 0
-    Set c = pages.Pages(1).Controls.Add("Forms.CommandButton.1", "cmdPrev", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.CommandButton.1", "cmdPrev")
     c.Left = 492
     c.Top = 128
     c.Width = 87
@@ -534,7 +539,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 7
-    Set c = pages.Pages(1).Controls.Add("Forms.CommandButton.1", "cmdNext", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.CommandButton.1", "cmdNext")
     c.Left = 585
     c.Top = 128
     c.Width = 87
@@ -550,7 +555,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 8
-    Set c = pages.Pages(1).Controls.Add("Forms.CommandButton.1", "cmdSource", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.CommandButton.1", "cmdSource")
     c.Left = 141
     c.Top = 477
     c.Width = 135
@@ -566,7 +571,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 9
-    Set c = pages.Pages(1).Controls.Add("Forms.CommandButton.1", "cmdSave", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.CommandButton.1", "cmdSave")
     c.Left = 663
     c.Top = 477
     c.Width = 137
@@ -582,7 +587,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 10
-    Set c = pages.Pages(1).Controls.Add("Forms.Label.1", "lblLegacyDetailTitle", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.Label.1", "lblLegacyDetailTitle")
     c.Left = 18
     c.Top = 12
     c.Width = 782
@@ -597,7 +602,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 1
     c.WordWrap = True
-    Set c = pages.Pages(1).Controls.Add("Forms.Label.1", "lblCurrentBand", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.Label.1", "lblCurrentBand")
     c.Left = 492
     c.Top = 53
     c.Width = 308
@@ -612,7 +617,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 1
     c.WordWrap = True
-    Set c = pages.Pages(1).Controls.Add("Forms.CommandButton.1", "cmdRelatedPreviousPage", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.CommandButton.1", "cmdRelatedPreviousPage")
     c.Left = 351
     c.Top = 53
     c.Width = 62
@@ -628,7 +633,7 @@ Private Sub DesignLedgerControllerForm(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 13
-    Set c = pages.Pages(1).Controls.Add("Forms.CommandButton.1", "cmdRelatedNextPage", True)
+    Set c = EnsureSetupControl(pages.Pages(1).Controls, "Forms.CommandButton.1", "cmdRelatedNextPage")
     c.Left = 417
     c.Top = 53
     c.Width = 63
@@ -651,7 +656,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     component.Properties("Width").Value = 516
     component.Properties("Height").Value = 478
     component.Properties("StartUpPosition").Value = 1
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdPrev", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdPrev")
     c.Left = 18
     c.Top = 14
     c.Width = 48
@@ -667,7 +672,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 0
-    Set c = d.Controls.Add("Forms.Label.1", "lblMonth", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.Label.1", "lblMonth")
     c.Left = 78
     c.Top = 17
     c.Width = 210
@@ -681,7 +686,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 2
     c.WordWrap = True
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdNext", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdNext")
     c.Left = 300
     c.Top = 14
     c.Width = 48
@@ -697,7 +702,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 2
-    Set c = d.Controls.Add("Forms.Label.1", "lblWeek1", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.Label.1", "lblWeek1")
     c.Left = 18
     c.Top = 52
     c.Width = 44
@@ -712,7 +717,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 2
     c.WordWrap = True
-    Set c = d.Controls.Add("Forms.Label.1", "lblWeek2", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.Label.1", "lblWeek2")
     c.Left = 66
     c.Top = 52
     c.Width = 44
@@ -727,7 +732,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 2
     c.WordWrap = True
-    Set c = d.Controls.Add("Forms.Label.1", "lblWeek3", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.Label.1", "lblWeek3")
     c.Left = 114
     c.Top = 52
     c.Width = 44
@@ -742,7 +747,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 2
     c.WordWrap = True
-    Set c = d.Controls.Add("Forms.Label.1", "lblWeek4", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.Label.1", "lblWeek4")
     c.Left = 162
     c.Top = 52
     c.Width = 44
@@ -757,7 +762,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 2
     c.WordWrap = True
-    Set c = d.Controls.Add("Forms.Label.1", "lblWeek5", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.Label.1", "lblWeek5")
     c.Left = 210
     c.Top = 52
     c.Width = 44
@@ -772,7 +777,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 2
     c.WordWrap = True
-    Set c = d.Controls.Add("Forms.Label.1", "lblWeek6", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.Label.1", "lblWeek6")
     c.Left = 258
     c.Top = 52
     c.Width = 44
@@ -787,7 +792,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 2
     c.WordWrap = True
-    Set c = d.Controls.Add("Forms.Label.1", "lblWeek7", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.Label.1", "lblWeek7")
     c.Left = 306
     c.Top = 52
     c.Width = 44
@@ -802,7 +807,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.BackStyle = 1
     c.TextAlign = 2
     c.WordWrap = True
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay01", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay01")
     c.Left = 18
     c.Top = 74
     c.Width = 44
@@ -817,7 +822,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 10
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay02", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay02")
     c.Left = 66
     c.Top = 74
     c.Width = 44
@@ -832,7 +837,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 11
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay03", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay03")
     c.Left = 114
     c.Top = 74
     c.Width = 44
@@ -847,7 +852,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 12
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay04", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay04")
     c.Left = 162
     c.Top = 74
     c.Width = 44
@@ -862,7 +867,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 13
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay05", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay05")
     c.Left = 210
     c.Top = 74
     c.Width = 44
@@ -877,7 +882,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 14
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay06", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay06")
     c.Left = 258
     c.Top = 74
     c.Width = 44
@@ -892,7 +897,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 15
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay07", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay07")
     c.Left = 306
     c.Top = 74
     c.Width = 44
@@ -907,7 +912,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 16
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay08", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay08")
     c.Left = 18
     c.Top = 110
     c.Width = 44
@@ -922,7 +927,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 17
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay09", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay09")
     c.Left = 66
     c.Top = 110
     c.Width = 44
@@ -937,7 +942,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 18
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay10", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay10")
     c.Left = 114
     c.Top = 110
     c.Width = 44
@@ -952,7 +957,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 19
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay11", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay11")
     c.Left = 162
     c.Top = 110
     c.Width = 44
@@ -967,7 +972,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 20
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay12", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay12")
     c.Left = 210
     c.Top = 110
     c.Width = 44
@@ -982,7 +987,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 21
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay13", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay13")
     c.Left = 258
     c.Top = 110
     c.Width = 44
@@ -997,7 +1002,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 22
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay14", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay14")
     c.Left = 306
     c.Top = 110
     c.Width = 44
@@ -1012,7 +1017,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 23
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay15", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay15")
     c.Left = 18
     c.Top = 146
     c.Width = 44
@@ -1027,7 +1032,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 24
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay16", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay16")
     c.Left = 66
     c.Top = 146
     c.Width = 44
@@ -1042,7 +1047,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 25
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay17", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay17")
     c.Left = 114
     c.Top = 146
     c.Width = 44
@@ -1057,7 +1062,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 26
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay18", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay18")
     c.Left = 162
     c.Top = 146
     c.Width = 44
@@ -1072,7 +1077,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 27
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay19", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay19")
     c.Left = 210
     c.Top = 146
     c.Width = 44
@@ -1087,7 +1092,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 28
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay20", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay20")
     c.Left = 258
     c.Top = 146
     c.Width = 44
@@ -1102,7 +1107,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 29
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay21", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay21")
     c.Left = 306
     c.Top = 146
     c.Width = 44
@@ -1117,7 +1122,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 30
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay22", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay22")
     c.Left = 18
     c.Top = 182
     c.Width = 44
@@ -1132,7 +1137,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 31
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay23", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay23")
     c.Left = 66
     c.Top = 182
     c.Width = 44
@@ -1147,7 +1152,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 32
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay24", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay24")
     c.Left = 114
     c.Top = 182
     c.Width = 44
@@ -1162,7 +1167,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 33
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay25", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay25")
     c.Left = 162
     c.Top = 182
     c.Width = 44
@@ -1177,7 +1182,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 34
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay26", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay26")
     c.Left = 210
     c.Top = 182
     c.Width = 44
@@ -1192,7 +1197,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 35
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay27", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay27")
     c.Left = 258
     c.Top = 182
     c.Width = 44
@@ -1207,7 +1212,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 36
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay28", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay28")
     c.Left = 306
     c.Top = 182
     c.Width = 44
@@ -1222,7 +1227,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 37
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay29", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay29")
     c.Left = 18
     c.Top = 218
     c.Width = 44
@@ -1237,7 +1242,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 38
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay30", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay30")
     c.Left = 66
     c.Top = 218
     c.Width = 44
@@ -1252,7 +1257,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 39
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay31", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay31")
     c.Left = 114
     c.Top = 218
     c.Width = 44
@@ -1267,7 +1272,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 40
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay32", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay32")
     c.Left = 162
     c.Top = 218
     c.Width = 44
@@ -1282,7 +1287,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 41
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay33", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay33")
     c.Left = 210
     c.Top = 218
     c.Width = 44
@@ -1297,7 +1302,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 42
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay34", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay34")
     c.Left = 258
     c.Top = 218
     c.Width = 44
@@ -1312,7 +1317,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 43
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay35", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay35")
     c.Left = 306
     c.Top = 218
     c.Width = 44
@@ -1327,7 +1332,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 44
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay36", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay36")
     c.Left = 18
     c.Top = 254
     c.Width = 44
@@ -1342,7 +1347,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 45
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay37", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay37")
     c.Left = 66
     c.Top = 254
     c.Width = 44
@@ -1357,7 +1362,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 46
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay38", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay38")
     c.Left = 114
     c.Top = 254
     c.Width = 44
@@ -1372,7 +1377,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 47
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay39", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay39")
     c.Left = 162
     c.Top = 254
     c.Width = 44
@@ -1387,7 +1392,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 48
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay40", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay40")
     c.Left = 210
     c.Top = 254
     c.Width = 44
@@ -1402,7 +1407,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 49
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay41", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay41")
     c.Left = 258
     c.Top = 254
     c.Width = 44
@@ -1417,7 +1422,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 50
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdDay42", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdDay42")
     c.Left = 306
     c.Top = 254
     c.Width = 44
@@ -1432,7 +1437,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 51
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdToday", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdToday")
     c.Left = 174
     c.Top = 296
     c.Width = 82
@@ -1448,7 +1453,7 @@ Private Sub DesignfrmCalendar(ByVal component As Object)
     c.Cancel = False
     c.TabStop = True
     c.TabIndex = 52
-    Set c = d.Controls.Add("Forms.CommandButton.1", "cmdCancel", True)
+    Set c = EnsureSetupControl(d.Controls, "Forms.CommandButton.1", "cmdCancel")
     c.Left = 266
     c.Top = 296
     c.Width = 82
