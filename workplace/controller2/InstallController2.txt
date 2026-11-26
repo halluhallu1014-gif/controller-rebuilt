@@ -3,6 +3,7 @@ Option Explicit
 ' Paste this complete file into a standard module named Controller2Setup.
 Public Sub InstallController2()
     Dim project As Object, component As Object, sheet As Worksheet
+    Dim controllerForm As Object, calendarForm As Object
     Dim previousEvents As Boolean, index As Long, phase As String
     previousEvents = Application.EnableEvents
     On Error GoTo Failed
@@ -25,15 +26,18 @@ Public Sub InstallController2()
     Set component = EnsureSetupComponent(project, "LedgerTransferFlows", 1)
     Set component = EnsureSetupComponent(project, "OperationAudit", 1)
     Set component = EnsureSetupComponent(project, "DailyBackup", 1)
-    Set component = EnsureSetupComponent(project, "LedgerControllerForm", 3)
-    DesignLedgerControllerForm component
+    phase = "操作画面の準備"
+    Set controllerForm = EnsureSetupForm(project, "LedgerControllerForm", "pages")
+    DesignLedgerControllerForm controllerForm
     Set component = EnsureSetupComponent(project, "ControllerData", 1)
     Set component = EnsureSetupComponent(project, "ControllerActions", 1)
     Set component = EnsureSetupComponent(project, "ExtendedListBox", 2)
     Set component = EnsureSetupComponent(project, "ExtendedListBoxLabel", 2)
     Set component = EnsureSetupComponent(project, "CCalendarDayButton", 2)
-    Set component = EnsureSetupComponent(project, "frmCalendar", 3)
-    DesignfrmCalendar component
+    phase = "カレンダーの準備"
+    Set calendarForm = EnsureSetupForm(project, "frmCalendar", "lblMonth")
+    DesignfrmCalendar calendarForm
+    phase = "残りのVBAコンポーネントの更新"
     Set component = EnsureSetupComponent(project, "modCalendar", 1)
     Set component = EnsureSetupComponent(project, "modUITheme", 1)
     Set component = EnsureSetupComponent(project, "ControllerDateButton", 2)
@@ -48,16 +52,16 @@ Public Sub InstallController2()
     WriteCode project.VBComponents("OperationAudit"), SourceOperationAudit()
     WriteCode project.VBComponents("DailyBackup"), SourceDailyBackup()
     WriteCode project.VBComponents(ThisWorkbook.Worksheets("Operations").CodeName), SourceSheet3()
-    WriteCode project.VBComponents("LedgerControllerForm"), SourceLedgerControllerForm()
+    WriteCode controllerForm, SourceLedgerControllerForm()
     WriteCode project.VBComponents("ControllerData"), SourceControllerData()
-    WriteCode project.VBComponents("ControllerActions"), SourceControllerActions()
+    WriteCode project.VBComponents("ControllerActions"), Replace(SourceControllerActions(), "LedgerControllerForm", controllerForm.Name, 1, -1, vbTextCompare)
     WriteCode project.VBComponents("ExtendedListBox"), SourceExtendedListBox()
     WriteCode project.VBComponents("ExtendedListBoxLabel"), SourceExtendedListBoxLabel()
-    WriteCode project.VBComponents("CCalendarDayButton"), SourceCCalendarDayButton()
-    WriteCode project.VBComponents("frmCalendar"), SourcefrmCalendar()
-    WriteCode project.VBComponents("modCalendar"), SourcemodCalendar()
+    WriteCode project.VBComponents("CCalendarDayButton"), Replace(SourceCCalendarDayButton(), "frmCalendar", calendarForm.Name, 1, -1, vbTextCompare)
+    WriteCode calendarForm, SourcefrmCalendar()
+    WriteCode project.VBComponents("modCalendar"), Replace(SourcemodCalendar(), "frmCalendar", calendarForm.Name, 1, -1, vbTextCompare)
     WriteCode project.VBComponents("modUITheme"), SourcemodUITheme()
-    WriteCode project.VBComponents("ControllerDateButton"), SourceControllerDateButton()
+    WriteCode project.VBComponents("ControllerDateButton"), Replace(SourceControllerDateButton(), "LedgerControllerForm", controllerForm.Name, 1, -1, vbTextCompare)
     WriteCode project.VBComponents("CollectionPaging"), SourceCollectionPaging()
     WriteCode project.VBComponents("LedgerReadBatch"), SourceLedgerReadBatch()
     Application.EnableEvents = previousEvents
@@ -67,6 +71,32 @@ Failed:
     Application.EnableEvents = previousEvents
     MsgBox phase & vbCrLf & Err.Description & vbCrLf & "この作業コピーを保存せずに閉じてください。", vbExclamation
 End Sub
+
+Private Function EnsureSetupForm(ByVal project As Object, ByVal preferredName As String, ByVal markerName As String) As Object
+    Dim item As Object, candidate As Object, control As Object
+    For Each item In project.VBComponents
+        If StrComp(item.Name, preferredName, vbTextCompare) = 0 Then
+            If item.Type <> 3 Then Err.Raise 5, , "Component type mismatch: " & preferredName
+            Set EnsureSetupForm = item
+            Exit Function
+        End If
+    Next item
+    For Each item In project.VBComponents
+        If item.Type = 3 Then
+            For Each control In item.Designer.Controls
+                If StrComp(control.Name, markerName, vbTextCompare) = 0 Then
+                    If Not candidate Is Nothing Then Err.Raise 5, , "Ambiguous form: " & preferredName
+                    Set candidate = item
+                    Exit For
+                End If
+            Next control
+        End If
+    Next item
+    If candidate Is Nothing Then
+        Set candidate = project.VBComponents.Add(3)
+    End If
+    Set EnsureSetupForm = candidate
+End Function
 
 Private Function EnsureSetupComponent(ByVal project As Object, ByVal componentName As String, ByVal componentType As Long) As Object
     Dim item As Object
